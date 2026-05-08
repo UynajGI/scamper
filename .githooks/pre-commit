@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Scuttle pre-commit hook — format check + clippy + test
+# Runs only on staged Rust files under Carlo.rs/, QMC.rs/, CMC.rs/
+
+CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+RUST_FILES=$(echo "$CHANGED_FILES" | grep '\.rs$' || true)
+
+if [ -z "$RUST_FILES" ]; then
+    exit 0
+fi
+
+# Determine which crates are affected
+CRATES=""
+for f in $CHANGED_FILES; do
+    case "$f" in
+        Carlo.rs/*) CRATES="$CRATES -p carlo-rs" ;;
+        QMC.rs/*)   CRATES="$CRATES -p qmc-rs" ;;
+        CMC.rs/*)   CRATES="$CRATES -p cmc-rs" ;;
+    esac
+done
+CRATES=$(echo "$CRATES" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+
+if [ -z "$CRATES" ]; then
+    exit 0
+fi
+
+echo "==> cargo fmt --check $CRATES"
+cargo fmt --check $CRATES
+
+echo "==> cargo clippy --all-targets $CRATES -- -D warnings"
+cargo clippy --all-targets $CRATES -- -D warnings
+
+echo "==> cargo test $CRATES"
+cargo test $CRATES
+
+echo "==> pre-commit OK"
