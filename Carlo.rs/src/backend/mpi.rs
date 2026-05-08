@@ -106,6 +106,11 @@ impl<T: mpi::datatype::Equivalence + Copy> MpiSerializable for T {
 mod tags {
     pub const WORKER_MSG: i32 = 4355;
     pub const CONTROLLER_MSG: i32 = 4356;
+    pub const RESULT_HEADER: i32 = 4359;
+    pub const RESULT_DATA: i32 = 4360;
+    pub const RUN_BCAST: i32 = 4361;
+    pub const RUN_BCAST_DATA: i32 = 4362;
+    pub const FOLLOWER_PROGRESS: i32 = 4363;
 }
 
 /// Worker status message
@@ -207,6 +212,129 @@ impl ControllerCmdMsg {
     pub fn is_finish_and_new(&self) -> bool {
         self.action == 3
     }
+}
+
+/// Result transfer header (fixed-size, sent before variable-length JSON bytes).
+#[cfg(feature = "mpi")]
+#[derive(Debug, Clone, Copy, Equivalence, Default)]
+pub struct ResultHeaderMsg {
+    pub task_id: u64,
+    pub byte_count: u64,
+}
+
+/// Broadcast from run leader to followers within a run group.
+#[cfg(feature = "mpi")]
+#[derive(Debug, Clone, Copy, Equivalence, Default)]
+struct RunBcastMsg {
+    action: i32, // 0=assign, 1=continue, 2=exit, 3=timeup
+    task_id: u64,
+    run_id: u64,
+    sweeps_hint: u64,
+    thermalization: u64,
+    measurement: u64,
+    binsize: u64,
+    base_seed: u64,
+    params_json_len: u64,
+}
+
+#[cfg(feature = "mpi")]
+impl RunBcastMsg {
+    fn assign(
+        task_id: usize,
+        run_id: u64,
+        sweeps_hint: u64,
+        thermalization: u64,
+        measurement: u64,
+        binsize: u64,
+        base_seed: u64,
+        params_json_len: u64,
+    ) -> Self {
+        Self {
+            action: 0,
+            task_id: task_id as u64,
+            run_id,
+            sweeps_hint,
+            thermalization,
+            measurement,
+            binsize,
+            base_seed,
+            params_json_len,
+        }
+    }
+    fn continue_(sweeps_hint: u64) -> Self {
+        Self {
+            action: 1,
+            sweeps_hint,
+            ..Default::default()
+        }
+    }
+    fn exit() -> Self {
+        Self {
+            action: 2,
+            ..Default::default()
+        }
+    }
+    fn timeup() -> Self {
+        Self {
+            action: 3,
+            ..Default::default()
+        }
+    }
+    fn is_assign(&self) -> bool {
+        self.action == 0
+    }
+    fn is_continue(&self) -> bool {
+        self.action == 1
+    }
+    fn is_exit(&self) -> bool {
+        self.action == 2
+    }
+    fn is_timeup(&self) -> bool {
+        self.action == 3
+    }
+}
+
+/// Progress report from follower to run leader.
+#[cfg(feature = "mpi")]
+#[derive(Debug, Clone, Copy, Equivalence, Default)]
+struct FollowerProgressMsg {
+    task_id: u64,
+    sweeps_done: u64,
+}
+
+/// Send serialized Results as length-prefixed JSON bytes over MPI.
+#[cfg(feature = "mpi")]
+fn send_results(
+    comm: &SimpleCommunicator,
+    dest: i32,
+    task_id: usize,
+    results: &crate::Results,
+) -> Result<(), MpiError> {
+    let json = serde_json::to_vec(results).map_err(|e| MpiError::Communication(e.to_string()))?;
+    let header = ResultHeaderMsg {
+        task_id: task_id as u64,
+        byte_count: json.len() as u64,
+    };
+    header.send_mpi(comm, dest, tags::RESULT_HEADER)?;
+    comm.process_at_rank(dest)
+        .send_with_tag(&json[..], tags::RESULT_DATA);
+    Ok(())
+}
+
+/// Receive serialized Results from a worker.
+#[cfg(feature = "mpi")]
+fn recv_results(
+    comm: &SimpleCommunicator,
+    source: i32,
+) -> Result<(usize, crate::Results), MpiError> {
+    let header = ResultHeaderMsg::recv_mpi(comm, source, tags::RESULT_HEADER)?;
+    let len = header.byte_count as usize;
+    let mut buf = vec![0u8; len];
+    comm.process_at_rank(source)
+        .receive_with_tag(&mut buf[..], tags::RESULT_DATA);
+    let results: crate::Results =
+        serde_json::from_slice(&buf).map_err(|e| MpiError::Communication(e.to_string()))?;
+    Ok((header.task_id as usize, results))
 }
 
 // ============================================================================
@@ -579,18 +707,24 @@ where
     } else {
         mpi::topology::Color::undefined()
     };
-    let leader_comm =
-        world
-            .split_by_color(leader_color)
-            .ok_or_else(|| CarloError::InvalidConfig {
-                field: "leader_comm".into(),
-                reason: "Failed to create leader communicator".into(),
-            })?;
+    let leader_comm = world.split_by_color(leader_color);
 
     if world_rank == 0 {
-        run_controller(&leader_comm, &config)
+        let lc = leader_comm.ok_or_else(|| CarloError::InvalidConfig {
+            field: "leader_comm".into(),
+            reason: "Controller must have leader communicator".into(),
+        })?;
+        run_controller(&lc, &config)
+    } else if let Some(lc) = leader_comm {
+        // Run leader: communicates with controller, coordinates run group
+        run_worker::<MC, R>(world_rank, &lc, run_comm.as_ref(), &config)
     } else {
-        run_worker::<MC, R>(world_rank, &leader_comm, run_comm.as_ref(), &config)
+        // Follower: follows run leader via run_comm broadcast
+        let rc = run_comm.ok_or_else(|| CarloError::InvalidConfig {
+            field: "run_comm".into(),
+            reason: "Follower must have run communicator".into(),
+        })?;
+        run_follower::<MC, R>(&rc, &config)
     }
 }
 
@@ -601,8 +735,9 @@ fn run_controller(
 ) -> Result<Vec<Results>, CarloError> {
     let num_workers = leader_comm.size() - 1;
     let mut tasks = TaskStream::new(config.tasks.clone());
-    let aggregator = ResultsAggregator::new();
+    let mut aggregator = ResultsAggregator::new();
     let mut active_workers = num_workers;
+    let mut next_run_id: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
 
     leader_comm.barrier();
 
@@ -615,8 +750,9 @@ fn run_controller(
             if let Some(task) = task_opt {
                 let task_id = task.id;
                 tasks.start_run(task_id);
+                let run_id = next_run_id.get(&task_id).copied().unwrap_or(1);
+                next_run_id.insert(task_id, run_id + 1);
                 let hint = tasks.sweeps_hint(task_id, active_workers);
-                let run_id = 1; // Simplified
                 let cmd = ControllerCmdMsg::assign_task(task_id, run_id, hint);
                 cmd.send_mpi(leader_comm, source, tags::CONTROLLER_MSG)?;
             } else {
@@ -643,7 +779,14 @@ fn run_controller(
                 )?;
             }
         } else if status.is_complete() {
-            // Would receive results here
+            match recv_results(leader_comm, source) {
+                Ok((_task_id, results)) => {
+                    aggregator.add(&results);
+                }
+                Err(_) => {
+                    // Worker finished but result transfer failed; continue
+                }
+            }
         } else if status.is_timeup() {
             active_workers -= 1;
         }
@@ -657,14 +800,14 @@ fn run_controller(
 fn run_worker<MC, R>(
     world_rank: i32,
     leader_comm: &SimpleCommunicator,
-    _run_comm: Option<&SimpleCommunicator>,
+    run_comm: Option<&SimpleCommunicator>,
     config: &DistributedConfig,
 ) -> Result<Vec<Results>, CarloError>
 where
     MC: MonteCarlo + FromParams<Rng = R>,
     R: Rng + SeedableRng + Send,
 {
-    let mut worker = Worker::<Idle>::new(world_rank, leader_comm, None);
+    let mut worker = Worker::<Idle>::new(world_rank, leader_comm, run_comm);
     let mut results = Vec::new();
     let time_start = Instant::now();
     #[allow(unused_mut)]
@@ -739,6 +882,31 @@ where
         let mut run = run;
         let mut w = w;
 
+        // Broadcast task assignment to followers in the run group
+        let has_followers = run_comm.is_some_and(|rc| rc.size() > 1);
+        if has_followers {
+            let rc = run_comm.as_ref().unwrap();
+            let params_json =
+                serde_json::to_vec(params).map_err(|e| MpiError::Communication(e.to_string()))?;
+            let bcast = RunBcastMsg::assign(
+                task_id,
+                w.run_id(),
+                task.target_sweeps,
+                task.thermalization,
+                task.target_sweeps,
+                run_config.binsize as u64,
+                run_config.base_seed,
+                params_json.len() as u64,
+            );
+            rc.broadcast_into(&bcast);
+            if !params_json.is_empty() {
+                for rank in 1..rc.size() {
+                    rc.process_at_rank(rank)
+                        .send_with_tag(&params_json[..], tags::RUN_BCAST_DATA);
+                }
+            }
+        }
+
         // Run simulation with progress reporting and checkpointing
         loop {
             run.step();
@@ -757,8 +925,34 @@ where
                     last_checkpoint = Instant::now();
                 }
 
+                // Collect follower progress before reporting
+                let total_sweeps = if has_followers {
+                    let rc = run_comm.as_ref().unwrap();
+                    let mut sum = run.sweeps_done();
+                    for _ in 1..rc.size() {
+                        let (prog, _) = rc.any_process().receive::<FollowerProgressMsg>();
+                        sum = sum.saturating_add(prog.sweeps_done);
+                    }
+                    sum
+                } else {
+                    run.sweeps_done()
+                };
+
                 // Report progress
-                let cmd = w.send_progress(run.sweeps_done())?;
+                let cmd = w.send_progress(total_sweeps)?;
+
+                // Broadcast controller response to followers
+                if has_followers {
+                    let rc = run_comm.as_ref().unwrap();
+                    let fbcast = if cmd.is_continue() {
+                        RunBcastMsg::continue_(cmd.sweeps_hint)
+                    } else if cmd.is_finish_and_new() {
+                        RunBcastMsg::continue_(0) // signal to finish
+                    } else {
+                        RunBcastMsg::exit()
+                    };
+                    rc.broadcast_into(&fbcast);
+                }
 
                 if should_finish && !run.is_complete() {
                     // Write final checkpoint on timeup
@@ -776,19 +970,122 @@ where
                     return Ok(results); // Worker exits on timeup
                 }
 
-                // Reset worker for next task iteration
-                worker = w.finish()?.reset();
-
+                // Finalize and send results before finishing worker
                 if cmd.is_finish_and_new() || run.is_complete() {
                     let result = run.finalize(config.run_config.base_seed);
+                    send_results(&w.leader_comm, 0, task_id, &result)?;
                     results.push(result);
                 }
+
+                // Reset worker for next task iteration
+                worker = w.finish()?.reset();
 
                 break; // inner loop
             }
         }
     }
 
+    Ok(results)
+}
+
+/// Follower loop: receives broadcasts from run leader, runs sweeps locally.
+#[cfg(feature = "mpi")]
+fn run_follower<MC, R>(
+    run_comm: &SimpleCommunicator,
+    config: &DistributedConfig,
+) -> Result<Vec<Results>, CarloError>
+where
+    MC: MonteCarlo + FromParams<Rng = R>,
+    R: Rng + SeedableRng + Send,
+{
+    let mut results = Vec::new();
+    let time_start = Instant::now();
+    let rank_in_run = run_comm.rank();
+
+    run_comm.barrier();
+
+    loop {
+        let mut bcast = RunBcastMsg::default();
+        run_comm.broadcast_into(&mut bcast);
+
+        if bcast.is_exit() || bcast.is_timeup() {
+            break;
+        }
+
+        if bcast.is_assign() {
+            let task_id = bcast.task_id as usize;
+            let params: Params = if bcast.params_json_len > 0 {
+                let len = bcast.params_json_len as usize;
+                let mut buf = vec![0u8; len];
+                run_comm
+                    .process_at_rank(0)
+                    .receive_with_tag(&mut buf[..], tags::RUN_BCAST_DATA);
+                serde_json::from_slice(&buf).map_err(|e| MpiError::Communication(e.to_string()))?
+            } else {
+                Params::new()
+            };
+
+            let run_config = RunConfig {
+                measurement_sweeps: bcast.measurement,
+                thermalization_sweeps: bcast.thermalization,
+                binsize: bcast.binsize as usize,
+                base_seed: bcast.base_seed,
+                progress_interval: config.run_config.progress_interval,
+                checkpoint_interval: config.run_config.checkpoint_interval,
+            };
+
+            let seed = bcast
+                .base_seed
+                .wrapping_add((task_id as u64) * 10000)
+                .wrapping_add(bcast.run_id)
+                .wrapping_add(rank_in_run as u64);
+
+            let mut run: Run<MC, R> = Run::new(
+                &params,
+                TaskId::new(task_id),
+                RunId::new(bcast.run_id),
+                &run_config,
+                seed,
+            )?;
+
+            let mut sweeps_hint = bcast.sweeps_hint;
+
+            loop {
+                // Run sweeps in batches
+                let batch = sweeps_hint.min(100).max(1);
+                for _ in 0..batch {
+                    run.step();
+                }
+
+                let elapsed = time_start.elapsed();
+                let should_checkpoint = config.checkpoint_time.is_some_and(|ct| elapsed >= ct);
+                let should_finish = config.run_time.is_some_and(|rt| elapsed >= rt);
+
+                if should_checkpoint || should_finish || run.is_complete() {
+                    FollowerProgressMsg {
+                        task_id: task_id as u64,
+                        sweeps_done: run.sweeps_done(),
+                    }
+                    .send_mpi(run_comm, 0, tags::FOLLOWER_PROGRESS)?;
+
+                    let mut next = RunBcastMsg::default();
+                    run_comm.broadcast_into(&mut next);
+
+                    if next.is_continue() {
+                        sweeps_hint = next.sweeps_hint;
+                    } else {
+                        if run.is_complete() {
+                            let result = run.finalize(config.run_config.base_seed);
+                            results.push(result);
+                        }
+                        break; // exit or timeup
+                    }
+                }
+            }
+        }
+    }
+
+    run_comm.barrier();
     Ok(results)
 }
 
@@ -955,11 +1252,11 @@ pub fn run_distributed_compat<
         .tasks
         .iter()
         .enumerate()
-        .map(|(i, _)| TaskSpec {
+        .map(|(i, params)| TaskSpec {
             id: i,
             target_sweeps: config.run_config.measurement_sweeps,
             thermalization: config.run_config.thermalization_sweeps,
-            params: Params::new(),
+            params: params.clone(),
         })
         .collect();
 
