@@ -2,7 +2,6 @@
 set -euo pipefail
 
 # Scuttle pre-commit hook — format check + clippy + test
-# Runs only on staged Rust files under Carlo.rs/, QMC.rs/, CMC.rs/
 
 CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 RUST_FILES=$(echo "$CHANGED_FILES" | grep '\.rs$' || true)
@@ -11,28 +10,29 @@ if [ -z "$RUST_FILES" ]; then
     exit 0
 fi
 
-# Determine which crates are affected
-CRATES=""
-for f in $CHANGED_FILES; do
+# Collect affected crates (deduplicated via sort -u)
+CRATES=$(for f in $CHANGED_FILES; do
     case "$f" in
-        Carlo.rs/*) CRATES="$CRATES -p carlo-rs" ;;
-        QMC.rs/*)   CRATES="$CRATES -p qmc-rs" ;;
-        CMC.rs/*)   CRATES="$CRATES -p cmc-rs" ;;
+        Carlo.rs/*) echo "carlo-rs" ;;
+        QMC.rs/*)   echo "qmc-rs" ;;
+        CMC.rs/*)   echo "cmc-rs" ;;
     esac
-done
-CRATES=$(echo "$CRATES" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+done | sort -u)
 
 if [ -z "$CRATES" ]; then
     exit 0
 fi
 
-echo "==> cargo fmt --check $CRATES"
-cargo fmt --check $CRATES
+# Build -p flags
+PKG_FLAGS=""
+for c in $CRATES; do
+    PKG_FLAGS="$PKG_FLAGS -p $c"
+done
 
-echo "==> cargo clippy --all-targets $CRATES -- -D warnings"
-cargo clippy --all-targets $CRATES -- -D warnings
+echo "==> cargo clippy --all-targets ${PKG_FLAGS} -- -D warnings"
+cargo clippy --all-targets ${PKG_FLAGS} -- -D warnings
 
-echo "==> cargo test $CRATES"
-cargo test $CRATES
+echo "==> cargo test ${PKG_FLAGS}"
+cargo test ${PKG_FLAGS}
 
 echo "==> pre-commit OK"

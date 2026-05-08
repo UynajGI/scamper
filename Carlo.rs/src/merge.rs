@@ -35,7 +35,7 @@
 //! ```
 
 use ndarray::ArrayD;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::PathBuf;
 
 #[cfg(feature = "hdf5")]
@@ -93,7 +93,11 @@ impl<T> ObservableType<T> {
 }
 
 /// Merged observable with statistics.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// JSON serialization mirrors Carlo.jl's `JSON.lower(::ResultObservable)`:
+/// `mean`, `error`, `rebin_len`, `autocorr_time` (scalar max), `rebin_count`,
+/// `internal_bin_len`, and optionally `covariance`.
+#[derive(Debug, Clone)]
 pub struct ResultObservable<T> {
     /// Internal bin length from measurement.
     pub internal_bin_length: u64,
@@ -116,6 +120,40 @@ pub struct ResultObservable<T> {
     /// Rebin means for jackknife analysis.
     pub rebin_means: ArrayD<T>,
 }
+
+/// Number of rebinned bins = last dimension of rebin_means.
+pub fn rebin_count<T>(obs: &ResultObservable<T>) -> u64 {
+    obs.rebin_means.shape().last().copied().unwrap_or(0) as u64
+}
+
+impl<T: Serialize> Serialize for ResultObservable<T> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let autocorr_scalar = self
+            .autocorrelation_time
+            .iter()
+            .cloned()
+            .fold(0.0_f64, f64::max);
+
+        let n_fields = if self.covariance.is_some() { 7 } else { 6 };
+        let mut st = s.serialize_struct("ResultObservable", n_fields)?;
+        st.serialize_field("mean", &self.mean)?;
+        st.serialize_field("error", &self.error)?;
+        st.serialize_field("rebin_len", &self.rebin_length)?;
+        st.serialize_field("autocorr_time", &autocorr_scalar)?;
+        st.serialize_field("rebin_count", &rebin_count(self))?;
+        st.serialize_field("internal_bin_len", &self.internal_bin_length)?;
+        if let Some(ref cov) = self.covariance {
+            st.serialize_field("covariance", cov)?;
+        }
+        st.end()
+    }
+}
+
+// Deserialize is not implemented — ResultObservable is written in Carlo.jl
+// JSON format and read back via `measurement_from_obs()` in resulttools.rs.
+// Use the manual JSON reader there instead of serde Deserialize.
 
 /// Compute regular autocorrelation time from variance ratio.
 /// τ = 0.5 * ((σ_binned / σ_unbinned)^2 - 1)
