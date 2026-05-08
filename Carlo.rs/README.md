@@ -159,6 +159,7 @@ just bench
 | Parallel tempering | ✓ | ✓ |
 | HDF5 checkpoint | ✓ | ✓ |
 | Jackknife resampling | ✓ | ✓ |
+| ResultTools (dataframe, read-back) | ✓ | ✓ |
 | Complex observables | (via ResultTools) | Native support |
 | Progress bars | ✗ | ✓ |
 | Performance monitoring | ✗ | ✓ |

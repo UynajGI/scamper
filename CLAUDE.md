@@ -42,6 +42,13 @@ just bench
 just install-deps
 ```
 
+## Git Hooks
+
+Pre-commit hooks live in `.githooks/` and run on staged Rust changes:
+- `cargo fmt --check` → `cargo clippy -- -D warnings` → `cargo test`
+
+The repo is configured with `git config core.hooksPath .githooks`. Clone the repo then run `git config core.hooksPath .githooks` to enable.
+
 ## Architecture
 
 ### Core Trait: MonteCarlo
@@ -76,8 +83,9 @@ Users implement `sweep()` for configuration updates and optionally `measure()` f
 ### Results and Analysis
 
 - **Measurements** ([Carlo.rs/src/measurements.rs](Carlo.rs/src/measurements.rs)): Binned accumulation during simulation
-- **Merge** ([Carlo.rs/src/merge.rs](Carlo.rs/src/merge.rs)): Rebinning and autocorrelation time estimation after simulation
+- **Merge** ([Carlo.rs/src/merge.rs](Carlo.rs/src/merge.rs)): Rebinning and autocorrelation time estimation after simulation. `merge_task_results()` extends merge with evaluator callback (mirrors Carlo.jl `merge_results(::Type{MC}, ...)`)
 - **Evaluable** ([Carlo.rs/src/evaluable.rs](Carlo.rs/src/evaluable.rs)): Jackknife analysis for derived observables
+- **ResultTools** ([Carlo.rs/src/output/resulttools.rs](Carlo.rs/src/output/resulttools.rs)): Load and analyze `*.results.json` files — `dataframe()`, `measurement_from_obs()`, `recursive_stack()` mirror Carlo.jl ResultTools.jl
 
 ### CLI Commands
 
