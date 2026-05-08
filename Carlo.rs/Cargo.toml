@@ -1,0 +1,44 @@
+[package]
+name = "carlo-rs"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Core Monte Carlo framework for Scuttle"
+
+[dependencies]
+rand = { workspace = true }
+rand_core = { workspace = true }
+rand_xoshiro = { workspace = true }
+rayon = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+ndarray = { workspace = true }
+num-traits = "0.2"
+nalgebra = { workspace = true }
+clap = { workspace = true }
+regex = { workspace = true }
+shellexpand = { workspace = true }
+indicatif = { workspace = true }
+termcolor = { workspace = true }
+
+# Optional dependencies
+hdf5 = { workspace = true, optional = true }
+mpi = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "scheduler_bench"
+harness = false
+
+[features]
+default = []
+strict-repro = []  # Use jump sequence for RNG
+hdf5 = ["dep:hdf5"]
+mpi = ["dep:mpi", "mpi?/derive"]

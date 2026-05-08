@@ -1,0 +1,19 @@
+[package]
+name = "qmc-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Scuttle Team"]
+description = "Quantum Monte Carlo algorithm toolbox (SSE, Directed Loop)"
+
+[dependencies]
+carlo-rs = { path = "../Carlo.rs" }
+rand = "0.10.0"
+rand_xoshiro = "0.8"
+
+[dev-dependencies]
+approx = "0.5"
+
+[features]
+default = []
+hdf5 = ["carlo-rs/hdf5"]
+mpi = ["carlo-rs/mpi"]

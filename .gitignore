@@ -1,0 +1,54 @@
+# Jujutsu
+.jj/
+
+# Build artifacts
+target/
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (for future bindings)
+__pycache__/
+*.pyc
+.pyvenv/
+
+# HDF5 outputs (user data)
+*.h5
+*.hdf5
+
+# Benchmarks
+criterion/
+
+# Logs
+*.log
+
+# Temporary
+*.tmp
+*.temp
+.tmp/
+.temp/
+
+# Claude Code
+.claude/
+.agents/
+
+skills-lock.json
+
+# venv
+.venv/
+.env/
+
+# Reference PDFs (too large for version control)
+docs/ref
+graphify-out/
+# Added by code-review-graph
+.code-review-graph/

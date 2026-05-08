@@ -1,0 +1,19 @@
+[package]
+name = "cmc-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Scuttle Team"]
+description = "Classical Monte Carlo algorithm toolbox (Metropolis, Wolff, Swendsen-Wang)"
+
+[dependencies]
+carlo-rs = { path = "../Carlo.rs" }
+rand = "0.10.0"
+rand_xoshiro = "0.8"
+
+[dev-dependencies]
+approx = "0.5"
+
+[features]
+default = []
+hdf5 = ["carlo-rs/hdf5"]
+mpi = ["carlo-rs/mpi"]
