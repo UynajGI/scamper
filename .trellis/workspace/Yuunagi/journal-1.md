@@ -77,3 +77,38 @@ ResultObservable 自定义 Serialize 对齐 Carlo.jl JSON.lower()（rebin_len/au
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Complete MPI backend: results transfer, multi-rank coordination, comm-aware sweep, checkpoint sync
+
+**Date**: 2026-05-08
+**Task**: Complete MPI backend: results transfer, multi-rank coordination, comm-aware sweep, checkpoint sync
+**Package**: carlo-rs
+**Branch**: `master`
+
+### Summary
+
+Brought MPI backend from ~70% skeleton to ~95% parity with Carlo.jl scheduler_mpi.jl. Added results transfer protocol over MPI, controller result aggregation, per-task run_id tracking, multi-rank run_comm coordination (run_follower with broadcast), MonteCarlo sweep_with_comm/measure_with_comm trait methods, Run::step_with_comm, MPI-coordinated checkpoint (rank-specific paths, broadcast existence). Created quality-gate-commit-sync skill combining trellis-check → commit → neat-freak.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9b59517` | (see git log) |
+| `5964049` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

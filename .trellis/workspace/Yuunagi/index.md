@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
+- **Total Sessions**: 3
 - **Last Active**: 2026-05-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~79 | Active |
+| `journal-1.md` | ~114 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-05-08 | Complete MPI backend: results transfer, multi-rank coordination, comm-aware sweep, checkpoint sync | `9b59517`, `5964049` | `master` |
 | 2 | 2026-05-08 | Carlo.rs JSON 格式对齐 Carlo.jl + CLAUDE.md 精简 | `56c6f1d`, `6c490bd`, `6f7ae36` | `master` |
 | 1 | 2026-05-08 | Carlo.rs 对齐 Carlo.jl — ResultTools + .githooks + 文档整理 | `98e643c`, `979d96e`, `8a67ae0` | `master` |
 <!-- @@@/auto:session-history -->
