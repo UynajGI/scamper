@@ -1,151 +1,50 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Scuttle — Monte Carlo framework. Carlo.rs (Rust, primary) ports Carlo.jl (Julia, reference).
 
-## Project Overview
-
-Scuttle is a Monte Carlo simulation framework for (quantum) Monte Carlo algorithms. It consists of:
-- **Carlo.rs** (Rust): Core framework implementation being developed here
-- **Carlo.jl** (Julia): Reference implementation from [lukas-weber/Carlo.jl](https://github.com/lukas-weber/Carlo.jl)
-- **StochasticSeriesExpansion.jl** (Julia): SSE QMC algorithm built on Carlo.jl
-
-The framework handles model-independent tasks: autocorrelation/error analysis, MPI scheduling, checkpointing, while leaving MC update/estimator implementation to users.
-
-## Build Commands
+## Commands
 
 ```bash
-# Quick check (format + lint + test)
-just check
-
-# Build release
-just build
-
-# Build with MPI support (requires MPI installed)
-just build-mpi
-
-# Run all tests
-just test
-
-# Run unit tests only
-just test-unit
-
-# Run integration tests only
-just test-integration
-
-# Run MPI tests (requires mpirun)
-just test-mpi
-
-# Run benchmarks
-just bench
-
-# Install system dependencies (Ubuntu/Debian)
-just install-deps
+just check          # fmt + clippy + test
+just test           # cargo test --workspace
+just build          # cargo build --release
+just bench          # cargo bench
+just install-deps   # apt-get libhdf5-dev openmpi-bin libopenmpi-dev
 ```
 
-## Git Hooks
-
-Pre-commit hooks live in `.githooks/` and run on staged Rust changes:
-- `cargo fmt --check` → `cargo clippy -- -D warnings` → `cargo test`
-
-The repo is configured with `git config core.hooksPath .githooks`. Clone the repo then run `git config core.hooksPath .githooks` to enable.
+Pre-commit hook (`.githooks/pre-commit`) runs `fmt --check` → `clippy -- -D warnings` → `test` on staged `.rs` files. Enable: `git config core.hooksPath .githooks`.
 
 ## Architecture
 
-### Core Trait: MonteCarlo
-
-The `MonteCarlo` trait ([Carlo.rs/src/monte_carlo.rs](Carlo.rs/src/monte_carlo.rs)) is the central abstraction:
-
-```rust
-pub trait MonteCarlo: Sized {
-    type Rng: Rng + SeedableRng + Send;
-    fn sweep(&mut self, ctx: &mut Context<Self::Rng>);
-    fn measure(&mut self, _ctx: &mut Context<Self::Rng>) {}
-}
-```
-
-Users implement `sweep()` for configuration updates and optionally `measure()` for observables. The `FromParams` trait constructs models from parameter dictionaries.
-
-### Execution Pipeline
-
-1. **Backend** ([Carlo.rs/src/backend/mod.rs](Carlo.rs/src/backend/mod.rs)): Parallel execution abstraction
-   - `RayonBackend`: Thread-parallel (default)
-   - `MpiBackend`: Distributed MPI (requires `mpi` feature)
-
-2. **Scheduler** ([Carlo.rs/src/scheduler.rs](Carlo.rs/src/scheduler.rs)): Orchestrates runs
-   - Thermalization phase → Measurement phase
-   - `run_one()` for single task, `run_parallel()` for multiple
-
-3. **Context** ([Carlo.rs/src/context.rs](Carlo.rs/src/context.rs)): Runtime state
-   - Holds RNG, measurements accumulator, sweep counter
-   - `ctx.measure(name, value)` records observables
-   - `ctx.is_thermalized()` checks thermalization status
-
-### Results and Analysis
-
-- **Measurements** ([Carlo.rs/src/measurements.rs](Carlo.rs/src/measurements.rs)): Binned accumulation during simulation
-- **Merge** ([Carlo.rs/src/merge.rs](Carlo.rs/src/merge.rs)): Rebinning and autocorrelation time estimation after simulation. `merge_task_results()` extends merge with evaluator callback (mirrors Carlo.jl `merge_results(::Type{MC}, ...)`)
-- **Evaluable** ([Carlo.rs/src/evaluable.rs](Carlo.rs/src/evaluable.rs)): Jackknife analysis for derived observables
-- **ResultTools** ([Carlo.rs/src/output/resulttools.rs](Carlo.rs/src/output/resulttools.rs)): Load and analyze `*.results.json` files — `dataframe()`, `measurement_from_obs()`, `recursive_stack()` mirror Carlo.jl ResultTools.jl
-
-### CLI Commands
-
-The CLI ([Carlo.rs/src/cli.rs](Carlo.rs/src/cli.rs)) provides:
-- `carlo run`: Start simulation
-- `carlo status`: Check progress
-- `carlo merge`: Combine results
-- `carlo delete`: Clean data
+| Module | File | Purpose |
+|--------|------|---------|
+| `MonteCarlo` trait | `monte_carlo.rs` | Core: `sweep(ctx)`, `measure(ctx)`, `Rng` type |
+| `FromParams` trait | `monte_carlo.rs` | Construct model from `Params` dict |
+| `Context` | `context.rs` | RNG, measurements, sweep counter, `ctx.measure(name, val)` |
+| `Run` | `run.rs` | Single run lifecycle, `step()`, checkpoint/restart |
+| `Scheduler` | `scheduler.rs` | Thermalization → measurement loop, `run_one` / `run_parallel` |
+| `Backend` | `backend/` | `RayonBackend` (threads), `MpiBackend` (MPI) |
+| `Measurements` | `measurements.rs` | Binned `Accumulator`, complex observables |
+| `Merge` | `merge.rs` | Rebinning, autocorr time, `merge_results`, `merge_task_results` |
+| `Evaluable` | `evaluable.rs` | Jackknife resampling, `Evaluator`, `MultiplexEvaluator` |
+| `ResultTools` | `output/resulttools.rs` | `dataframe()`, `measurement_from_obs()` — read-back `results.json` |
+| `ParallelTempering` | `parallel_tempering.rs` | PT MC with chain scheduling |
+| `CLI` | `cli.rs` | `carlo run/status/merge/delete` |
+| `Job` | `job/` | `JobInfo`, `TaskInfo`, `TaskMaker`, progress tracking |
 
 ## Features
 
-- `hdf5`: HDF5 checkpoint/measurement files (requires `libhdf5-dev`)
-- `mpi`: MPI distributed backend (requires `libopenmpi-dev`)
-- `strict-repro`: Use jump sequence for RNG (strict reproducibility mode)
+- `hdf5` — checkpoint/measurement files (needs `libhdf5-dev`)
+- `mpi` — distributed backend (needs `libopenmpi-dev`)
 
 ## Key Patterns
 
-When implementing a new Monte Carlo model:
+1. Define struct with config state
+2. `impl MonteCarlo` — `type Rng`, `fn sweep()`, optional `fn measure()`
+3. `impl FromParams` — construct from `Params`
+4. Call `ctx.measure("Name", value)` in `sweep()` or `measure()`
+5. Optional: `impl MonteCarloCheckpoint` for HDF5 save/load
 
-1. Define struct holding configuration state
-2. Implement `MonteCarlo` trait with `sweep()` method
-3. Implement `FromParams` trait for construction from params
-4. Optionally implement `MonteCarloCheckpoint` for HDF5 checkpointing (requires `hdf5` feature)
-5. Call `ctx.measure("ObservableName", value)` in `sweep()` or `measure()` methods
+## MCP Tools
 
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
-
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
-
-### When to use graph tools FIRST
-
-- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
-- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
-- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
-- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview` + `list_communities`
-
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
-
-### Key Tools
-
-| Tool | Use when |
-|------|----------|
-| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context` | Need source snippets for review — token-efficient |
-| `get_impact_radius` | Understanding blast radius of a change |
-| `get_affected_flows` | Finding which execution paths are impacted |
-| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes` | Finding functions/classes by name or keyword |
-| `get_architecture_overview` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
-
-### Workflow
-
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes` for code review.
-3. Use `get_affected_flows` to understand impact.
-4. Use `query_graph` pattern="tests_for" to check coverage.
+Use `code-review-graph` MCP **before** Grep/Glob/Read: `semantic_search_nodes`, `query_graph` (callers_of/callees_of/tests_for), `get_impact_radius`, `detect_changes`. The graph auto-updates on file changes.
