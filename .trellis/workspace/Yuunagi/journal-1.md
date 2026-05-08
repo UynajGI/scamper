@@ -41,3 +41,39 @@ P1: 新建 output/resulttools.rs，实现 dataframe、measurement_from_obs、rec
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Carlo.rs JSON 格式对齐 Carlo.jl + CLAUDE.md 精简
+
+**Date**: 2026-05-08
+**Task**: Carlo.rs JSON 格式对齐 Carlo.jl + CLAUDE.md 精简
+**Package**: carlo-rs
+**Branch**: `master`
+
+### Summary
+
+ResultObservable 自定义 Serialize 对齐 Carlo.jl JSON.lower()（rebin_len/autocorr_time scalar/rebin_count/internal_bin_len）。修复 pre-commit hook 去重 bug，去掉 hook 中的 cargo fmt。CLAUDE.md 从 152 行精简到 50 行，修正项目描述。记忆系统初始化。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `56c6f1d` | (see git log) |
+| `6c490bd` | (see git log) |
+| `6f7ae36` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
