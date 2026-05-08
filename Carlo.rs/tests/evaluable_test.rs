@@ -61,14 +61,10 @@ fn test_multiplex_evaluator_register() {
     let mut multi_eval = MultiplexEvaluator::new(2);
 
     // Register evaluator for chain 0
-    multi_eval.evaluate("energy", &["magnetization"], |args| {
-        args[0].clone() * 2.0
-    });
+    multi_eval.evaluate("energy", &["magnetization"], |args| args[0].clone() * 2.0);
 
     // Register evaluator for chain 1
-    multi_eval.evaluate("energy", &["magnetization"], |args| {
-        args[0].clone() * 3.0
-    });
+    multi_eval.evaluate("energy", &["magnetization"], |args| args[0].clone() * 3.0);
 
     assert_eq!(multi_eval.len(), 1);
     assert!(!multi_eval.is_empty());

@@ -107,27 +107,30 @@ pub use error::CarloError;
 pub use estimate::{ComplexEstimate, Estimate};
 pub use evaluable::{jackknife, Evaluator, MultiplexEvaluator};
 pub use job::{parse_duration, JobInfo, TaskInfo, TaskMaker};
-pub use measurements::{
-    Accumulator, ComplexAccumulator, ComplexValue, Measurements,
-};
+pub use measurements::{Accumulator, ComplexAccumulator, ComplexValue, Measurements};
 pub use merge::{
-    AddSamplesState, calc_rebin_count, calc_rebin_length, compute_decorrelated_autocorr_time,
-    compute_regular_autocorr_time, cov_of_mean, list_meas_files,
-    MergeOptions, ObservableType, ResultObservable,
+    calc_rebin_count, calc_rebin_length, compute_decorrelated_autocorr_time,
+    compute_regular_autocorr_time, cov_of_mean, list_meas_files, AddSamplesState, MergeOptions,
+    ObservableType, ResultObservable,
 };
 #[cfg(feature = "hdf5")]
-pub use merge::{iterate_measfile_observables, merge_results, merge_results_from_files};
+pub use merge::{
+    iterate_measfile_observables, merge_results, merge_results_from_files, merge_task_results,
+};
 #[cfg(feature = "hdf5")]
 pub use monte_carlo::MonteCarloCheckpoint;
 pub use monte_carlo::{FromParams, MonteCarlo, MonteCarloExt};
 pub use progress::{print_status_table, spinner, MultiTaskProgress, SimProgress};
 pub use rng_checkpoint::{RngCheckpointHdf5, RNG_TYPE, RNG_VERSION};
-pub use run::{Run, RunId, TaskId, timing};
+pub use run::{timing, Run, RunId, TaskId};
 pub use version::Version;
 
 // Re-export CLI types for library users
 pub use cli::run as cli_run;
-pub use output::{save_hdf5, save_json};
+pub use output::{
+    dataframe, make_scalar, make_scalar_owned, measurement_from_obs, recursive_stack, save_hdf5,
+    save_json, ResultRow,
+};
 pub use parallel_tempering::{
     ParallelTemperingCompatible, ParallelTemperingConfig, ParallelTemperingMC,
 };

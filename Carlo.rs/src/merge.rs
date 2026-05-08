@@ -35,6 +35,7 @@
 //! ```
 
 use ndarray::ArrayD;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[cfg(feature = "hdf5")]
@@ -92,7 +93,7 @@ impl<T> ObservableType<T> {
 }
 
 /// Merged observable with statistics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResultObservable<T> {
     /// Internal bin length from measurement.
     pub internal_bin_length: u64,
@@ -232,11 +233,8 @@ pub fn compute_decorrelated_autocorr_time(
 
     // Eigenvalue decomposition using nalgebra (pure Rust, no BLAS dependency)
     use nalgebra::{DMatrix, SymmetricEigen};
-    let eigen_matrix: DMatrix<f64> = DMatrix::from_row_iterator(
-        obs_dim,
-        obs_dim,
-        sigma_unbinned.iter().cloned(),
-    );
+    let eigen_matrix: DMatrix<f64> =
+        DMatrix::from_row_iterator(obs_dim, obs_dim, sigma_unbinned.iter().cloned());
     let eigen_decomp = SymmetricEigen::new(eigen_matrix);
     let eigenvalues = eigen_decomp.eigenvalues;
     let eigenvectors = eigen_decomp.eigenvectors;
@@ -245,25 +243,35 @@ pub fn compute_decorrelated_autocorr_time(
     let tolerance = 1e-10;
     let lambda_inv_sqrt: Vec<f64> = eigenvalues
         .iter()
-        .map(|&lambda| if lambda > tolerance { 1.0 / lambda.sqrt() } else { 0.0 })
+        .map(|&lambda| {
+            if lambda > tolerance {
+                1.0 / lambda.sqrt()
+            } else {
+                0.0
+            }
+        })
         .collect();
 
-    let transform: ndarray::Array2<f64> = ndarray::Array2::from_diag(&ndarray::Array1::from_vec(lambda_inv_sqrt))
-        .dot(&ndarray::Array2::from_shape_fn((obs_dim, obs_dim), |(i, j)| eigenvectors[(j, i)]));
+    let transform: ndarray::Array2<f64> =
+        ndarray::Array2::from_diag(&ndarray::Array1::from_vec(lambda_inv_sqrt)).dot(
+            &ndarray::Array2::from_shape_fn((obs_dim, obs_dim), |(i, j)| eigenvectors[(j, i)]),
+        );
 
     // Reshape binned_cov to 2D
-    let binned_cov_2d: ndarray::Array2<f64> = if binned_cov.ndim() == 2 && binned_cov.shape()[0] == obs_dim {
-        binned_cov
-            .view()
-            .into_shape_with_order((obs_dim, obs_dim))
-            .unwrap()
-            .to_owned()
-    } else {
-        ndarray::Array2::eye(obs_dim)
-    };
+    let binned_cov_2d: ndarray::Array2<f64> =
+        if binned_cov.ndim() == 2 && binned_cov.shape()[0] == obs_dim {
+            binned_cov
+                .view()
+                .into_shape_with_order((obs_dim, obs_dim))
+                .unwrap()
+                .to_owned()
+        } else {
+            ndarray::Array2::eye(obs_dim)
+        };
 
     // Transform binned covariance: Σ_binned_decorr = T Σ_binned T^T
-    let sigma_binned_decorr: ndarray::Array2<f64> = transform.dot(&binned_cov_2d).dot(&transform.t());
+    let sigma_binned_decorr: ndarray::Array2<f64> =
+        transform.dot(&binned_cov_2d).dot(&transform.t());
 
     // Extract diagonal (variances in decorrelated basis)
     let binned_variances_decorr: ndarray::Array1<f64> =
@@ -366,20 +374,20 @@ pub fn merge_results_from_files(
     // First pass: collect observable types and counts
     let obs_types: HashMap<String, ObservableType<f64>> =
         iterate_measfile_observables(filenames, |name, group, state| {
-            let bin_length: u64 = group
-                .dataset("bin_length")?
-                .read_1d::<u64>()
-                .map_err(|e| crate::CarloError::InvalidConfig {
-                    field: "hdf5".into(),
-                    reason: format!("Cannot read bin_length for {}: {}", name, e),
-                })?[0];
-
-            let samples = group.dataset("samples").map_err(|e| {
+            let bin_length: u64 = group.dataset("bin_length")?.read_1d::<u64>().map_err(|e| {
                 crate::CarloError::InvalidConfig {
                     field: "hdf5".into(),
-                    reason: format!("Cannot read samples for {}: {}", name, e),
+                    reason: format!("Cannot read bin_length for {}: {}", name, e),
                 }
-            })?;
+            })?[0];
+
+            let samples =
+                group
+                    .dataset("samples")
+                    .map_err(|e| crate::CarloError::InvalidConfig {
+                        field: "hdf5".into(),
+                        reason: format!("Cannot read samples for {}: {}", name, e),
+                    })?;
 
             let shape = samples.shape()[..samples.shape().len() - 1].to_vec();
             let sample_count = samples.shape()[samples.shape().len() - 1] as u64;
@@ -401,16 +409,11 @@ pub fn merge_results_from_files(
     let results: HashMap<String, ResultObservable<f64>> = obs_types
         .into_iter()
         .map(|(name, obs_type)| {
-            let rebin_len =
-                calc_rebin_length(obs_type.total_sample_count, options.rebin_length);
+            let rebin_len = calc_rebin_length(obs_type.total_sample_count, options.rebin_length);
             match accumulate_and_compute(&name, &obs_type, filenames, options, rebin_len) {
                 Ok(result) => (name, result),
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to compute statistics for {}: {}",
-                        name,
-                        e
-                    );
+                    tracing::warn!("Failed to compute statistics for {}: {}", name, e);
                     ResultObservable {
                         internal_bin_length: obs_type.internal_bin_length,
                         rebin_length: rebin_len,
@@ -446,11 +449,9 @@ fn accumulate_and_compute(
 
     // Read samples from all files and accumulate rebin bins
     for filename in filenames {
-        let file = Hdf5File::open(filename).map_err(|e| {
-            crate::CarloError::InvalidConfig {
-                field: "hdf5".into(),
-                reason: format!("Cannot open {}: {}", filename.display(), e),
-            }
+        let file = Hdf5File::open(filename).map_err(|e| crate::CarloError::InvalidConfig {
+            field: "hdf5".into(),
+            reason: format!("Cannot open {}: {}", filename.display(), e),
         })?;
 
         let obs = file
@@ -465,12 +466,13 @@ fn accumulate_and_compute(
                 reason: format!("Observable {} not found", name),
             })?;
 
-        let samples: ArrayD<f64> = obs.dataset("samples")?.read().map_err(|e| {
-            crate::CarloError::InvalidConfig {
-                field: "hdf5".into(),
-                reason: format!("Cannot read samples for {}: {}", name, e),
-            }
-        })?;
+        let samples: ArrayD<f64> =
+            obs.dataset("samples")?
+                .read()
+                .map_err(|e| crate::CarloError::InvalidConfig {
+                    field: "hdf5".into(),
+                    reason: format!("Cannot read samples for {}: {}", name, e),
+                })?;
 
         // Accumulate rebin bins from samples
         let n_samples = samples.shape().last().copied().unwrap_or(0);
@@ -499,8 +501,7 @@ fn accumulate_and_compute(
     let sigma_no_rebin = state.std_of_mean_no_rebin();
 
     // Compute autocorrelation time
-    let autocorrelation_time =
-        compute_autocorrelation_time(&state, &mu, &sigma, &sigma_no_rebin);
+    let autocorrelation_time = compute_autocorrelation_time(&state, &mu, &sigma, &sigma_no_rebin);
 
     // Compute covariance if requested and observable is multi-component
     let covariance = if options.estimate_covariance
@@ -520,21 +521,14 @@ fn accumulate_and_compute(
     };
 
     // Compute decorrelated autocorrelation time if covariance was computed
-    let autocorrelation_time = if options.estimate_covariance
-        && covariance.is_some()
-        && obs_type.shape.len() > 0
-    {
-        let rebin_bins = state.rebin_bins_array().unwrap();
-        let cov = covariance.as_ref().unwrap();
-        compute_decorrelated_autocorr_time(
-            &rebin_bins,
-            &mu,
-            cov,
-            state.bin_count(),
-        )
-    } else {
-        autocorrelation_time
-    };
+    let autocorrelation_time =
+        if options.estimate_covariance && covariance.is_some() && obs_type.shape.len() > 0 {
+            let rebin_bins = state.rebin_bins_array().unwrap();
+            let cov = covariance.as_ref().unwrap();
+            compute_decorrelated_autocorr_time(&rebin_bins, &mu, cov, state.bin_count())
+        } else {
+            autocorrelation_time
+        };
 
     Ok(ResultObservable {
         internal_bin_length: obs_type.internal_bin_length,
@@ -550,6 +544,7 @@ fn accumulate_and_compute(
 /// Compute autocorrelation time from accumulated statistics.
 /// For scalar observables: uses variance ratio.
 /// For array observables: computes per-element autocorrelation time.
+#[allow(dead_code)]
 fn compute_autocorrelation_time(
     _state: &AddSamplesState<f64>,
     mu: &ArrayD<f64>,
@@ -558,7 +553,7 @@ fn compute_autocorrelation_time(
 ) -> ArrayD<f64> {
     // For scalar observables (shape == [] or [1]), return scalar wrapped in 1D array
     let shape = mu.shape();
-    if shape.is_empty() || shape == &[1] {
+    if shape.is_empty() || shape == [1] {
         let sigma_val = if shape.is_empty() {
             sigma[ndarray::IxDyn(&[])]
         } else {
@@ -777,4 +772,49 @@ pub fn merge_results(
 ) -> Result<HashMap<String, ResultObservable<f64>>, crate::CarloError> {
     let files = list_meas_files(taskdir)?;
     merge_results_from_files(&files, options)
+}
+
+/// Merge raw observables, then let the model register derived observables
+/// (evaluables) via `register_fn`, mirroring Carlo.jl's
+/// `merge_results(::Type{MC}, taskdir; parameters...)`.
+///
+/// The callback receives an [`Evaluator`](crate::evaluable::Evaluator)
+/// pre-loaded with the merged observables. Use
+/// [`Evaluator::evaluate()`](crate::evaluable::Evaluator::evaluate) to
+/// register derived quantities (ratios, variances, etc.).
+///
+/// Evaluable means are appended to the result map. For full error bars
+/// on evaluables, prefer using the `Evaluator` directly.
+#[cfg(feature = "hdf5")]
+pub fn merge_task_results<F>(
+    taskdir: &PathBuf,
+    options: &MergeOptions,
+    register_fn: F,
+) -> Result<HashMap<String, ResultObservable<f64>>, crate::CarloError>
+where
+    F: FnOnce(&mut crate::evaluable::Evaluator),
+{
+    let results = merge_results(taskdir, options)?;
+
+    let estimate_covariance = options.estimate_covariance;
+    let mut evaluator = crate::evaluable::Evaluator::new(results.clone(), estimate_covariance);
+
+    register_fn(&mut evaluator);
+
+    // Merge evaluable means into result map
+    let mut results = results;
+    for (name, mean_array) in evaluator.evaluables() {
+        let obs = ResultObservable {
+            internal_bin_length: 0, // evaluables don't have internal bins
+            rebin_length: 0,
+            mean: mean_array.clone(),
+            error: ArrayD::zeros(mean_array.shape()),
+            covariance: None,
+            autocorrelation_time: ArrayD::zeros(mean_array.shape()),
+            rebin_means: mean_array.clone(),
+        };
+        results.insert(name.clone(), obs);
+    }
+
+    Ok(results)
 }

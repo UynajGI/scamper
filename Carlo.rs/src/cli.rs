@@ -181,9 +181,30 @@ fn cli_merge(job: &JobInfo) -> Result<(), CarloError> {
             let task_dir = job.task_dir(task);
             match merge_results(&task_dir, &MergeOptions::default()) {
                 Ok(results) => {
-                    // Write results.json for this task
+                    // Convert params (String→String) to JSON with typed values
+                    let params_json: serde_json::Map<String, serde_json::Value> = task
+                        .params()
+                        .iter()
+                        .map(|(k, v)| {
+                            // Try integer, then float, fall back to string
+                            let val = v
+                                .parse::<i64>()
+                                .map(serde_json::Value::from)
+                                .or_else(|_| v.parse::<f64>().map(serde_json::Value::from))
+                                .unwrap_or_else(|_| serde_json::Value::String(v.clone()));
+                            (k.clone(), val)
+                        })
+                        .collect();
+
+                    // Build Carlo.jl-compatible task result wrapper
+                    let task_result = serde_json::json!({
+                        "task": task.name(),
+                        "parameters": params_json,
+                        "results": results,
+                    });
+
                     let result_file = task_dir.join("results.json");
-                    let output = serde_json::to_string_pretty(&results)
+                    let output = serde_json::to_string_pretty(&task_result)
                         .map_err(|e| CarloError::SerializationError(e))?;
                     std::fs::write(&result_file, output).map_err(|e| CarloError::IoError {
                         path: result_file,

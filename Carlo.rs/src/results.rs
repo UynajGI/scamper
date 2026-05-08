@@ -252,11 +252,9 @@ impl Results {
                     if total_bins == 0 {
                         return Estimate::from_bins(&[]);
                     }
-                    let weighted_mean: f64 = ests
-                        .iter()
-                        .map(|e| e.mean * e.n_bins as f64)
-                        .sum::<f64>()
-                        / total_bins as f64;
+                    let weighted_mean: f64 =
+                        ests.iter().map(|e| e.mean * e.n_bins as f64).sum::<f64>()
+                            / total_bins as f64;
                     Estimate {
                         mean: weighted_mean,
                         stderr: ests[0].stderr,

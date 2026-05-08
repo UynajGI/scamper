@@ -16,7 +16,7 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
-ndarray = { workspace = true }
+ndarray = { workspace = true, features = ["serde"] }
 num-traits = "0.2"
 nalgebra = { workspace = true }
 clap = { workspace = true }

@@ -55,7 +55,10 @@ fn test_autocorr_time_uncorrelated_data() {
     // For uncorrelated data, autocorrelation time should be ~0
     // σ_binned ≈ σ_unbinned, so τ = 0.5 * (1 - 1) = 0
     let tau = compute_regular_autocorr_time(1.0, 0.1, 0.1);
-    assert!(tau < 0.01, "Expected τ ≈ 0 for uncorrelated data, got {tau}");
+    assert!(
+        tau < 0.01,
+        "Expected τ ≈ 0 for uncorrelated data, got {tau}"
+    );
 }
 
 #[test]
@@ -101,14 +104,16 @@ fn test_add_samples_state_1d_array() {
 
     // 3-component observable, 2 samples
     // HDF5 format: shape = [n_components, n_samples] = [3, 2]
-    let samples: ndarray::ArrayD<f64> =
-        ndarray::Array2::from_shape_vec((3, 2), vec![
-            1.0, 4.0,  // component 0: sample 0, sample 1
-            2.0, 5.0,  // component 1
-            3.0, 6.0,  // component 2
-        ])
-        .unwrap()
-        .into_dyn();
+    let samples: ndarray::ArrayD<f64> = ndarray::Array2::from_shape_vec(
+        (3, 2),
+        vec![
+            1.0, 4.0, // component 0: sample 0, sample 1
+            2.0, 5.0, // component 1
+            3.0, 6.0, // component 2
+        ],
+    )
+    .unwrap()
+    .into_dyn();
 
     let mut state = AddSamplesState::<f64>::new(1, &[3], 1, false);
     state.add_rebin_bin(&samples, 0);

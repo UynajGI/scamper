@@ -217,8 +217,14 @@ pub struct MultiplexEvaluator {
     /// Number of PT chains.
     entry_count: usize,
     /// Registered evaluables: name -> (ingredients, functions).
-    evals: HashMap<String, (Vec<String>, Vec<Box<dyn Fn(&[ArrayD<f64>]) -> ArrayD<f64> + Send + Sync>>)>,
+    evals: HashMap<String, EvaluableEntry>,
 }
+
+/// An evaluable entry: (ingredient names, evaluation functions per PT chain).
+type EvaluableEntry = (
+    Vec<String>,
+    Vec<Box<dyn Fn(&[ArrayD<f64>]) -> ArrayD<f64> + Send + Sync>>,
+);
 
 impl MultiplexEvaluator {
     /// Create a new MultiplexEvaluator for the given number of chains.
@@ -237,10 +243,12 @@ impl MultiplexEvaluator {
     where
         F: Fn(&[ArrayD<f64>]) -> ArrayD<f64> + Send + Sync + 'static,
     {
-        let entry = self
-            .evals
-            .entry(name.to_string())
-            .or_insert_with(|| (ingredients.iter().map(|s| s.to_string()).collect(), Vec::new()));
+        let entry = self.evals.entry(name.to_string()).or_insert_with(|| {
+            (
+                ingredients.iter().map(|s| s.to_string()).collect(),
+                Vec::new(),
+            )
+        });
 
         // Check ingredient consistency
         let existing_ingredients: Vec<&str> = entry.0.iter().map(|s| s.as_str()).collect();
@@ -299,10 +307,7 @@ impl MultiplexEvaluator {
                 use ndarray::{Array, IxDyn};
 
                 // Compute result for each chain
-                let results: Vec<ArrayD<f64>> = funcs
-                    .iter()
-                    .map(|f| f(args))
-                    .collect();
+                let results: Vec<ArrayD<f64>> = funcs.iter().map(|f| f(args)).collect();
 
                 // Stack results along new first dimension
                 if results.is_empty() {

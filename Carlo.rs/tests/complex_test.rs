@@ -2,8 +2,8 @@ use carlo_rs::{
     Accumulator, ComplexAccumulator, ComplexEstimate, ComplexResult, Context, Estimate,
     Measurements, Results,
 };
-use rand_xoshiro::Xoshiro256PlusPlus;
 use rand_core::SeedableRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 #[test]
 fn test_complex_accumulator_scalar() {
@@ -19,9 +19,17 @@ fn test_complex_accumulator_scalar() {
 
     let est = acc.finalize();
     // Mean of re: (1+3+5+7)/4 = 4.0
-    assert!((est.re.mean - 4.0).abs() < 1e-10, "Expected re mean 4.0, got {}", est.re.mean);
+    assert!(
+        (est.re.mean - 4.0).abs() < 1e-10,
+        "Expected re mean 4.0, got {}",
+        est.re.mean
+    );
     // Mean of im: (2+4+6+8)/4 = 5.0
-    assert!((est.im.mean - 5.0).abs() < 1e-10, "Expected im mean 5.0, got {}", est.im.mean);
+    assert!(
+        (est.im.mean - 5.0).abs() < 1e-10,
+        "Expected im mean 5.0, got {}",
+        est.im.mean
+    );
 }
 
 #[test]
@@ -48,8 +56,18 @@ fn test_complex_accumulator_binning() {
 #[test]
 fn test_complex_estimate_format() {
     let est = ComplexEstimate::new(
-        Estimate { mean: 1.5, stderr: 0.1, autocorr_time: 1.0, n_bins: 10 },
-        Estimate { mean: 2.5, stderr: 0.2, autocorr_time: 1.5, n_bins: 10 },
+        Estimate {
+            mean: 1.5,
+            stderr: 0.1,
+            autocorr_time: 1.0,
+            n_bins: 10,
+        },
+        Estimate {
+            mean: 2.5,
+            stderr: 0.2,
+            autocorr_time: 1.5,
+            n_bins: 10,
+        },
     );
     let formatted = est.format();
     assert!(formatted.contains("1.500000"));
@@ -107,8 +125,18 @@ fn test_results_complex_json() {
 #[test]
 fn test_complex_result_roundtrip() {
     let original = ComplexResult {
-        re: Estimate { mean: 1.5, stderr: 0.1, autocorr_time: 1.0, n_bins: 10 },
-        im: Estimate { mean: 2.5, stderr: 0.2, autocorr_time: 1.5, n_bins: 10 },
+        re: Estimate {
+            mean: 1.5,
+            stderr: 0.1,
+            autocorr_time: 1.0,
+            n_bins: 10,
+        },
+        im: Estimate {
+            mean: 2.5,
+            stderr: 0.2,
+            autocorr_time: 1.5,
+            n_bins: 10,
+        },
     };
 
     let json = serde_json::to_string(&original).unwrap();
@@ -123,8 +151,18 @@ fn test_complex_result_roundtrip() {
 #[test]
 fn test_complex_estimate_magnitude() {
     let est = ComplexEstimate::new(
-        Estimate { mean: 3.0, stderr: 0.1, autocorr_time: 1.0, n_bins: 10 },
-        Estimate { mean: 4.0, stderr: 0.2, autocorr_time: 1.5, n_bins: 10 },
+        Estimate {
+            mean: 3.0,
+            stderr: 0.1,
+            autocorr_time: 1.0,
+            n_bins: 10,
+        },
+        Estimate {
+            mean: 4.0,
+            stderr: 0.2,
+            autocorr_time: 1.5,
+            n_bins: 10,
+        },
     );
     // magnitude should be sqrt(3^2 + 4^2) = 5.0
     assert!((est.magnitude() - 5.0).abs() < 1e-10);
@@ -140,5 +178,8 @@ fn test_accumulator_autocorr_time_from_bins() {
         value += (value * 0.9).min(5.0); // autocorrelated random walk
     }
     let autocorr = acc.autocorr_time_from_bins();
-    assert!(autocorr >= 0.0, "Autocorrelation should be non-negative, got {autocorr}");
+    assert!(
+        autocorr >= 0.0,
+        "Autocorrelation should be non-negative, got {autocorr}"
+    );
 }

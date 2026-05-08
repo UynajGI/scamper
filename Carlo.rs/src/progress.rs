@@ -333,11 +333,8 @@ pub fn print_status_table(tasks: &[super::job::TaskProgress]) {
     // Total stats
     let total_sweeps: u64 = tasks.iter().map(|t| t.sweeps).sum();
     let total_runs: u64 = tasks.iter().map(|t| t.num_runs).sum();
-    let avg_rate: f64 = tasks
-        .iter()
-        .map(|t| t.sweeps_per_sec)
-        .sum::<f64>()
-        / tasks.len().max(1) as f64;
+    let avg_rate: f64 =
+        tasks.iter().map(|t| t.sweeps_per_sec).sum::<f64>() / tasks.len().max(1) as f64;
     let _ = writeln!(
         handle,
         " Total: {} sweeps, {} runs, avg rate {:.1} sweeps/s\n",

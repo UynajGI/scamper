@@ -331,7 +331,8 @@ where
 
         // Record checkpoint write time
         let checkpoint_time = checkpoint_start.elapsed().as_secs_f64();
-        self.context.measure(timing::CHECKPOINT_WRITE_TIME, checkpoint_time);
+        self.context
+            .measure(timing::CHECKPOINT_WRITE_TIME, checkpoint_time);
 
         Ok(())
     }

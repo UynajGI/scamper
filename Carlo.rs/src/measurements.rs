@@ -30,8 +30,8 @@
 //! After simulation completes, [`Measurements::finalize()`] returns estimates
 //! for each observable with mean and error.
 
-use crate::Estimate;
 use crate::estimate::ComplexEstimate;
+use crate::Estimate;
 use ndarray::{Array1, ArrayD};
 use std::collections::HashMap;
 
@@ -955,13 +955,12 @@ impl Measurements {
         }
 
         // Write complex observables with full state
-        let complex_group =
-            group
-                .create_group("complex_observables")
-                .map_err(|e| crate::CarloError::InvalidConfig {
-                    field: "checkpoint".into(),
-                    reason: format!("Cannot create complex_observables group: {}", e),
-                })?;
+        let complex_group = group.create_group("complex_observables").map_err(|e| {
+            crate::CarloError::InvalidConfig {
+                field: "checkpoint".into(),
+                reason: format!("Cannot create complex_observables group: {}", e),
+            }
+        })?;
 
         for (name, acc) in &self.complex_observables {
             acc.write_hdf5(&mut complex_group, name)?;
@@ -1025,11 +1024,7 @@ impl Measurements {
 impl ComplexAccumulator {
     /// Write complex accumulator to HDF5 group.
     /// Stores re/im parts separately matching Carlo.jl format.
-    pub fn write_hdf5(
-        &self,
-        group: &mut Group,
-        name: &str,
-    ) -> Result<(), crate::CarloError> {
+    pub fn write_hdf5(&self, group: &mut Group, name: &str) -> Result<(), crate::CarloError> {
         let obs_group = group
             .create_group(name)
             .map_err(|e| crate::CarloError::InvalidConfig {
