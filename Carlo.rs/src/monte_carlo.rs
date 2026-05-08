@@ -18,6 +18,9 @@
 use rand_core::Rng;
 use rand_core::SeedableRng;
 
+#[cfg(feature = "mpi")]
+use mpi::topology::SimpleCommunicator;
+
 use crate::CarloError;
 use crate::Context;
 use crate::Params;
@@ -34,6 +37,28 @@ pub trait MonteCarlo: Sized {
 
     /// Optional: measure observables (default: empty).
     fn measure(&mut self, _ctx: &mut Context<Self::Rng>) {}
+
+    /// Optional: sweep with MPI communicator for multi-rank coordination.
+    /// Default: delegate to [`sweep`](MonteCarlo::sweep).
+    #[cfg(feature = "mpi")]
+    fn sweep_with_comm(
+        &mut self,
+        ctx: &mut Context<Self::Rng>,
+        _comm: &mpi::topology::SimpleCommunicator,
+    ) {
+        self.sweep(ctx);
+    }
+
+    /// Optional: measure with MPI communicator for multi-rank coordination.
+    /// Default: delegate to [`measure`](MonteCarlo::measure).
+    #[cfg(feature = "mpi")]
+    fn measure_with_comm(
+        &mut self,
+        ctx: &mut Context<Self::Rng>,
+        _comm: &mpi::topology::SimpleCommunicator,
+    ) {
+        self.measure(ctx);
+    }
 
     /// Optional: save state to HDF5 (default: empty).
     #[cfg(feature = "hdf5")]

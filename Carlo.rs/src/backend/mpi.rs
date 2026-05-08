@@ -337,6 +337,34 @@ fn recv_results(
     Ok((header.task_id as usize, results))
 }
 
+/// Build rank-specific checkpoint path for multi-rank coordination.
+fn checkpoint_path_for_rank(
+    job_dir: &std::path::Path,
+    task_id: usize,
+    run_id: u64,
+    rank: i32,
+) -> PathBuf {
+    if rank > 0 {
+        job_dir.join(format!(
+            "task_{:04}/run{:04}/run{:04}.rank{:04}.dump.h5",
+            task_id, run_id, run_id, rank
+        ))
+    } else {
+        job_dir.join(format!(
+            "task_{:04}/run{:04}/run{:04}.dump.h5",
+            task_id, run_id, run_id
+        ))
+    }
+}
+
+/// Broadcast checkpoint existence from leader to followers.
+#[cfg(feature = "mpi")]
+fn bcast_checkpoint_exists(run_comm: &SimpleCommunicator, exists: bool) -> bool {
+    let mut val: i32 = if exists { 1 } else { 0 };
+    run_comm.broadcast_into(&mut val);
+    val != 0
+}
+
 // ============================================================================
 // Task Stream
 // ============================================================================
@@ -848,18 +876,39 @@ where
 
         // Check for existing checkpoint
         #[cfg(feature = "hdf5")]
-        let checkpoint_path = config.job_dir.join(format!(
-            "task_{:04}/run{:04}/run{:04}.dump.h5",
-            task_id,
-            w.run_id(),
-            w.run_id()
-        ));
+        let checkpoint_path = if has_followers {
+            checkpoint_path_for_rank(&config.job_dir, task_id, w.run_id(), 0)
+        } else {
+            config.job_dir.join(format!(
+                "task_{:04}/run{:04}/run{:04}.dump.h5",
+                task_id,
+                w.run_id(),
+                w.run_id()
+            ))
+        };
 
         #[cfg(feature = "hdf5")]
-        let run = if let Some(existing_run) =
-            Run::<MC, R>::read_checkpoint(&checkpoint_path, params, &run_config, seed)?
-        {
-            existing_run
+        let checkpoint_exists = if has_followers {
+            bcast_checkpoint_exists(run_comm.as_ref().unwrap(), checkpoint_path.exists())
+        } else {
+            checkpoint_path.exists()
+        };
+
+        #[cfg(feature = "hdf5")]
+        let run = if checkpoint_exists {
+            if let Some(existing) =
+                Run::<MC, R>::read_checkpoint(&checkpoint_path, params, &run_config, seed)?
+            {
+                existing
+            } else {
+                Run::new(
+                    params,
+                    TaskId::new(task_id),
+                    RunId::new(w.run_id()),
+                    &run_config,
+                    seed,
+                )?
+            }
         } else {
             Run::new(
                 params,
@@ -909,7 +958,11 @@ where
 
         // Run simulation with progress reporting and checkpointing
         loop {
-            run.step();
+            if has_followers {
+                run.step_with_comm(run_comm.as_ref().unwrap());
+            } else {
+                run.step();
+            }
 
             // Check time limits
             let elapsed = time_start.elapsed();
@@ -1040,6 +1093,27 @@ where
                 .wrapping_add(bcast.run_id)
                 .wrapping_add(rank_in_run as u64);
 
+            // Check for existing checkpoint
+            #[cfg(feature = "hdf5")]
+            let checkpoint_path =
+                checkpoint_path_for_rank(&config.job_dir, task_id, bcast.run_id, rank_in_run);
+
+            #[cfg(feature = "hdf5")]
+            let mut run = if let Some(existing) =
+                Run::<MC, R>::read_checkpoint(&checkpoint_path, &params, &run_config, seed)?
+            {
+                existing
+            } else {
+                Run::new(
+                    &params,
+                    TaskId::new(task_id),
+                    RunId::new(bcast.run_id),
+                    &run_config,
+                    seed,
+                )?
+            };
+
+            #[cfg(not(feature = "hdf5"))]
             let mut run: Run<MC, R> = Run::new(
                 &params,
                 TaskId::new(task_id),
@@ -1049,12 +1123,14 @@ where
             )?;
 
             let mut sweeps_hint = bcast.sweeps_hint;
+            #[allow(unused_mut)]
+            let mut last_checkpoint = Instant::now();
 
             loop {
                 // Run sweeps in batches
                 let batch = sweeps_hint.min(100).max(1);
                 for _ in 0..batch {
-                    run.step();
+                    run.step_with_comm(run_comm);
                 }
 
                 let elapsed = time_start.elapsed();
@@ -1062,6 +1138,12 @@ where
                 let should_finish = config.run_time.is_some_and(|rt| elapsed >= rt);
 
                 if should_checkpoint || should_finish || run.is_complete() {
+                    #[cfg(feature = "hdf5")]
+                    if should_checkpoint && !run.is_complete() {
+                        run.write_checkpoint(&checkpoint_path)?;
+                        last_checkpoint = Instant::now();
+                    }
+
                     FollowerProgressMsg {
                         task_id: task_id as u64,
                         sweeps_done: run.sweeps_done(),
@@ -1074,6 +1156,11 @@ where
                     if next.is_continue() {
                         sweeps_hint = next.sweeps_hint;
                     } else {
+                        #[cfg(feature = "hdf5")]
+                        if should_finish && !run.is_complete() {
+                            run.write_checkpoint(&checkpoint_path)?;
+                        }
+
                         if run.is_complete() {
                             let result = run.finalize(config.run_config.base_seed);
                             results.push(result);

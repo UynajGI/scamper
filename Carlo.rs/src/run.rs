@@ -19,6 +19,8 @@
 use rand_core::{Rng, SeedableRng};
 use std::time::Instant;
 
+#[cfg(feature = "mpi")]
+use mpi::topology::SimpleCommunicator;
 #[cfg(feature = "hdf5")]
 use std::path::Path;
 
@@ -146,6 +148,31 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
             let measure_time = measure_start.elapsed().as_secs_f64();
 
             // Record timing observables
+            self.context.measure(timing::SWEEP_TIME, sweep_time);
+            self.context.measure(timing::MEASURE_TIME, measure_time);
+
+            self.sweeps_done += 1;
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Execute one Monte Carlo step with MPI communicator for multi-rank coordination.
+    /// Default behavior (via MonteCarlo::sweep_with_comm) delegates to regular sweep.
+    #[cfg(feature = "mpi")]
+    pub fn step_with_comm(&mut self, comm: &SimpleCommunicator) -> u64 {
+        let sweep_start = Instant::now();
+        self.mc.sweep_with_comm(&mut self.context, comm);
+        let sweep_time = sweep_start.elapsed().as_secs_f64();
+
+        self.context.advance_sweep();
+
+        if self.context.is_thermalized() {
+            let measure_start = Instant::now();
+            self.mc.measure_with_comm(&mut self.context, comm);
+            let measure_time = measure_start.elapsed().as_secs_f64();
+
             self.context.measure(timing::SWEEP_TIME, sweep_time);
             self.context.measure(timing::MEASURE_TIME, measure_time);
 
