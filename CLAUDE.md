@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Scuttle — Monte Carlo framework with three Rust crates: Carlo.rs (core), QMC.rs (quantum), CMC.rs (classical). Carlo.jl and StochasticSeriesExpansion.jl are reference libraries, not part of this implementation.
+Scuttle — Monte Carlo framework with three Rust crates: Carlo.rs (core), QMC.rs (quantum), CMC.rs (classical).
 
 
 Pre-commit hook (`.githooks/pre-commit`) runs `fmt --check` → `clippy -- -D warnings` → `test` on staged `.rs` files. Enable: `git config core.hooksPath .githooks`.
