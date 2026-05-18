@@ -112,3 +112,38 @@ Brought MPI backend from ~70% skeleton to ~95% parity with Carlo.jl scheduler_mp
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: CMC.rs Phase 1: full rewrite with layered architecture
+
+**Date**: 2026-05-18
+**Task**: CMC.rs Phase 1: full rewrite with layered architecture
+**Package**: carlo-rs
+**Branch**: `main`
+
+### Summary
+
+Designed and implemented CMC.rs rewrite. 6-layer architecture: Lattice (adjacency list), System (pub fields), Model (stateless physics), Algorithm (sweep directly mutates energy), ProposalStrategy (independent, OPSS adaptive), ClassicalMC wrapper (impl MonteCarlo + FromParams). 4 models (Ising, Potts, XY, Heisenberg), 3 algorithms (Metropolis, Wolff, SW), 2 proposals (Standard, OPSS). Wrote Carlo.rs lib.rs API docs, filled code-specs, synced CLAUDE.md/README.md/memory. 166 tests, 0 warnings, 0 unsafe.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0932ddc` | (see git log) |
+| `de925ed` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
