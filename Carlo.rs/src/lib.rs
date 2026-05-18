@@ -1,82 +1,157 @@
-//! # Carlo.rs - Monte Carlo Simulation Framework
+//! # Carlo.rs — Monte Carlo Simulation Framework
 //!
-//! Carlo.rs is a Rust implementation of the [Carlo.jl](https://github.com/lukas-weber/Carlo.jl)
-//! framework for developing high-performance, distributed Monte Carlo simulations.
+//! Carlo.rs handles the **model-independent** concerns of Monte Carlo simulations:
+//! scheduling, measurement accumulation, error analysis, checkpointing, and
+//! parallel execution. You implement the physics — Carlo.rs runs it.
 //!
-//! ## Overview
+//! ## Trait hierarchy
 //!
-//! The framework handles model-independent tasks:
-//! - Autocorrelation and error analysis
-//! - Monte-Carlo-aware MPI scheduling
-//! - Checkpointing and result merging
+//! ```text
+//! MonteCarlo          — you MUST implement: sweep() + type Rng
+//!  ├─ measure()       — you SHOULD implement: record observables via ctx
+//!  ├─ name()          — optional: label for logging
+//!  └─ MonteCarloExt   — blanket impl: init(), register_evaluables()
 //!
-//! while leaving all flexibility of implementing Monte Carlo updates and estimators to you.
+//! FromParams: MonteCarlo   — you MUST implement: construct model from Params
+//! ```
 //!
-//! ## Quick Start
+//! ## Execution flow
 //!
-//! Implement the [`MonteCarlo`] trait for your model:
+//! ```text
+//! Params (HashMap<String, String>)
+//!   │
+//!   ▼ FromParams::from_params(params, rng)
+//! YourModel : MonteCarlo
+//!   │
+//!   ▼ Scheduler::new(backend, RunConfig)::run_one::<YourModel>(params)
+//!   │
+//!   ├─ thermalization (N sweeps):  sweep() + advance_sweep()
+//!   │
+//!   ├─ measurement (M sweeps):     sweep() + measure() + advance_sweep()
+//!   │
+//!   └─ finalize_measurements() → Results
+//!        │
+//!        └─ Estimates { mean, stderr, autocorr_time, n_bins }
+//! ```
+//!
+//! ## Quick start
+//!
+//! A complete 1D Ising chain simulation from definition to results:
 //!
 //! ```rust,ignore
-//! use carlo_rs::{MonteCarlo, Context, CarloError, FromParams, Params};
+//! use carlo_rs::{
+//!     MonteCarlo, FromParams, Context, Params, CarloError,
+//!     Scheduler, RunConfig, RayonBackend, Backend,
+//! };
 //! use rand_xoshiro::Xoshiro256PlusPlus;
 //! use rand_core::Rng;
 //!
-//! // Your Monte Carlo model
-//! struct IsingModel {
-//!     lattice: Vec<i8>,
-//!     beta: f64,  // inverse temperature
+//! // ── Step 1: define your model ──
+//! struct Ising1D {
+//!     spins: Vec<i8>,
+//!     beta: f64,
 //! }
 //!
-//! impl MonteCarlo for IsingModel {
+//! // ── Step 2: implement MonteCarlo ──
+//! impl MonteCarlo for Ising1D {
 //!     type Rng = Xoshiro256PlusPlus;
 //!
 //!     fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
-//!         // Perform one Monte Carlo sweep (update configuration)
-//!         for i in 0..self.lattice.len() {
-//!             // Metropolis update
-//!             let neighbor_sum = self.lattice[(i + 1) % self.lattice.len()]
-//!                 + self.lattice[(i - 1 + self.lattice.len()) % self.lattice.len()];
-//!             let delta_e = -2.0 * self.lattice[i] as f64 * neighbor_sum as f64 * self.beta;
-//!             if delta_e < 0.0 || ctx.rng.gen::<f64>() < (-delta_e).exp() {
-//!                 self.lattice[i] *= -1;
+//!         let n = self.spins.len();
+//!         for i in 0..n {
+//!             let left  = self.spins[(i + n - 1) % n] as f64;
+//!             let right = self.spins[(i + 1) % n] as f64;
+//!             let dE = 2.0 * self.beta * self.spins[i] as f64 * (left + right);
+//!             if dE <= 0.0 || ctx.rng.gen::<f64>() < (-dE).exp() {
+//!                 self.spins[i] *= -1;
 //!             }
 //!         }
 //!     }
 //!
 //!     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-//!         // Measure observables after each sweep
-//!         let magnetization = self.lattice.iter().sum::<i8>() as f64 / self.lattice.len() as f64;
-//!         ctx.measure("Magnetization", magnetization);
+//!         let m = self.spins.iter().map(|&s| s as f64).sum::<f64>() / self.spins.len() as f64;
+//!         ctx.measure("Magnetization", m);
 //!     }
 //! }
 //!
-//! impl FromParams for IsingModel {
+//! // ── Step 3: implement FromParams ──
+//! impl FromParams for Ising1D {
 //!     fn from_params(params: &Params, rng: &mut Self::Rng) -> Result<Self, CarloError> {
-//!         let size = params.get::<usize>("L").unwrap_or(100);
+//!         let n = params.get::<usize>("L").unwrap_or(100);
+//!         // Random initial configuration
+//!         let spins: Vec<i8> = (0..n)
+//!             .map(|_| if rng.gen::<bool>() { 1 } else { -1 })
+//!             .collect();
 //!         let beta = params.get::<f64>("beta").unwrap_or(1.0);
-//!         Ok(Self {
-//!             lattice: vec![1; size],
-//!             beta,
-//!         })
+//!         Ok(Self { spins, beta })
 //!     }
+//! }
+//!
+//! // ── Step 4: run ──
+//! let mut params = Params::new();
+//! params.set("L", 128);
+//! params.set("beta", 0.5);
+//!
+//! let config = RunConfig {
+//!     thermalization_sweeps: 1000,
+//!     measurement_sweeps: 10_000,
+//!     binsize: 100,
+//!     base_seed: 42,
+//!     ..Default::default()
+//! };
+//!
+//! let backend = RayonBackend::new(1);
+//! let scheduler = Scheduler::new(backend, config);
+//! let results: Results = scheduler.run_one::<Ising1D>(&params);
+//!
+//! // ── Step 5: read results ──
+//! if let Some(est) = results.get("Magnetization") {
+//!     println!("Magnetization = {}", est.format());
 //! }
 //! ```
 //!
+//! ## Key types
+//!
+//! | Type | Role |
+//! |------|------|
+//! | [`MonteCarlo`] | You implement this. One sweep = one MC update pass. |
+//! | [`FromParams`] | You implement this. Construct model from `Params` dict. |
+//! | [`Context`] | Passed to `sweep()` / `measure()`. Holds RNG + measurement buffer. |
+//! | [`Params`] | `HashMap<String, String>` parameter bag. `set()` / `get::<T>()`. |
+//! | [`Scheduler`] | Runs thermalization → measurement loops. |
+//! | [`RunConfig`] | Sweep counts, binsize, seed, progress/checkpoint intervals. |
+//! | [`Backend`] | Parallel execution. [`RayonBackend`] for threads, `MpiBackend` for MPI. |
+//! | [`Results`] | `HashMap<String, Estimate>`. Serialize to JSON, merge across tasks. |
+//! | [`Estimate`] | `{ mean, stderr, autocorr_time, n_bins }` |
+//!
 //! ## Features
 //!
-//! - `hdf5`: HDF5 checkpoint and measurement file support
-//! - `mpi`: MPI distributed backend for large-scale parallel simulations
-//! - `strict-repro`: Strict reproducibility mode using jump sequences for RNG
+//! | Feature | Effect |
+//! |---------|--------|
+//! | `hdf5` | HDF5 checkpoint + measurement files |
+//! | `mpi` | MPI distributed backend (`mpirun -np N ./carlo run`) |
+//! | `strict-repro` | Jump-sequence RNG for exact reproducibility across task counts |
 //!
-//! ## Architecture
+//! ## Module map
 //!
-//! - [`MonteCarlo`]: Core trait for implementing simulation algorithms
-//! - [`Backend`]: Parallel execution abstraction (Rayon or MPI)
-//! - [`Scheduler`]: Orchestrates thermalization and measurement phases
-//! - [`Context`]: Runtime state including RNG and measurement collection
-//! - [`Results`]: Final simulation results with metadata
-//!
-//! For result analysis, see [`merge`] and [`evaluable`] modules.
+//! | Module | Purpose |
+//! |--------|---------|
+//! | [`monte_carlo`] | `MonteCarlo`, `FromParams`, `MonteCarloExt` traits |
+//! | [`context`] | `Context<R>` — RNG + measurements + sweep counter |
+//! | [`scheduler`] | `Scheduler<B>`, `RunConfig` — run orchestration |
+//! | [`backend`] | `Backend` trait, `RayonBackend`, `MpiBackend` |
+//! | [`measurements`] | `Measurements`, `Accumulator` — binned sample collection |
+//! | [`merge`] | Rebinning, autocorr time, `merge_results` |
+//! | [`evaluable`] | Jackknife resampling, `Evaluator` |
+//! | [`results`] | `Results`, `Metadata`, `Estimate`, `ComplexEstimate` |
+//! | [`params`] | `Params` — typed key-value parameter store |
+//! | [`lattice`] | `LatticeParams` — basic 2D lattice helpers |
+//! | [`run`] | `Run`, `RunId`, `TaskId` — single-run lifecycle |
+//! | [`output`] | JSON/HDF5 save/load, `dataframe()` |
+//! | [`parallel_tempering`] | PT MC with chain scheduling |
+//! | [`job`] | `JobInfo`, `TaskInfo`, `TaskMaker` — multi-run job management |
+//! | [`cli`] | `carlo run/status/merge/delete` CLI |
+//! | [`progress`] | Progress bars and status tables |
 
 pub mod backend;
 pub mod cli;
