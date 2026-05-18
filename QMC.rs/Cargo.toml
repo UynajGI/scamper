@@ -3,7 +3,7 @@ name = "qmc-rs"
 version = "0.1.0"
 edition = "2021"
 authors = ["Scuttle Team"]
-description = "Quantum Monte Carlo algorithm toolbox (SSE, Directed Loop)"
+description = "Quantum Monte Carlo algorithm toolbox"
 
 [dependencies]
 carlo-rs = { path = "../Carlo.rs" }

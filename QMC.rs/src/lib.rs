@@ -1,23 +1,10 @@
-//! QMC.rs - Quantum Monte Carlo algorithm toolbox
+//! # QMC.rs — Quantum Monte Carlo algorithm toolbox
 //!
-//! This crate provides SSE (Stochastic Series Expansion) algorithms
-//! for lattice quantum Monte Carlo simulations.
+//! Built on [Carlo.rs](../carlo_rs/index.html) for scheduling, measurement accumulation,
+//! and result analysis. QMC.rs provides the QMC-specific data structures and algorithms.
+//!
+//! ## Modules
+//!
+//! - [`worldline`] — Single-site worldline objects (path integral / worm algorithm foundation)
 
-pub mod ed;
-pub mod hilbert;
-pub mod lattice;
-pub mod models;
-pub mod sse;
-
-// Re-export Carlo.rs types for convenience
-pub use carlo_rs::{
-    CarloError, Context, Estimate, FromParams, MonteCarlo, Params, RayonBackend, Results,
-    RunConfig, Scheduler,
-};
-
-// Re-export key types
-pub use hilbert::{HilbertSpace, LocalState, OpType, SpinHalfHS};
-pub use lattice::{BondType, Lattice, Neighbor};
-pub use models::heisenberg::HeisenbergModel;
-pub use models::xxz::XxzModel;
-pub use sse::{LatticeQMC, OperatorSequence, SSECore, SSEEngine, SSEMonteCarlo, Vertex};
+pub mod worldline;
