@@ -1,23 +1,27 @@
-# Carlo.rs
+# Scuttle
 
-Monte Carlo simulation framework in Rust with **100% core feature parity** with [Carlo.jl](https://github.com/lukas-weber/Carlo.jl).
+Monte Carlo simulation framework in Rust, ported from [Carlo.jl](https://github.com/lukas-weber/Carlo.jl).
 
-See [Carlo.rs/README.md](Carlo.rs/README.md) for details.
+## Crates
 
-## Features
+| Crate | Purpose |
+|-------|---------|
+| [Carlo.rs](Carlo.rs/README.md) | Core framework — scheduler, measurements, MPI backend, checkpointing |
+| QMC.rs | Quantum Monte Carlo toolbox — worldline objects |
+| CMC.rs | Classical Monte Carlo — layered (Lattice → System → Model → Algorithm) with Ising/Potts/XY/Heisenberg |
 
-- Autocorrelation analysis (variance ratio, decorrelated mode, covariance estimation)
-- MPI distributed execution
-- HDF5 checkpointing
-- Complex observables
-- Parallel tempering
-- Performance monitoring
-
-## Build
+## Quick Start
 
 ```bash
 cd Carlo.rs
 cargo build --release --features "hdf5 mpi"
+```
+
+## Development
+
+```bash
+just check    # fmt + clippy + test (all crates)
+just test     # test all crates
 ```
 
 ## License

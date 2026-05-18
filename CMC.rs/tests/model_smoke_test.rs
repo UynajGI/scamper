@@ -39,17 +39,29 @@ fn test_potts_end_to_end() {
     let (e, m) = run_model::<PottsModel>(&[("q", "4")], 16);
     // At beta=1, ferromagnetic Potts should have negative energy
     assert!(e < 0.0, "Energy should be negative, got {}", e);
-    assert!((0.0..=1.0).contains(&m), "Magnetization in [0,1], got {}", m);
+    assert!(
+        (0.0..=1.0).contains(&m),
+        "Magnetization in [0,1], got {}",
+        m
+    );
 }
 
 #[test]
 fn test_xy_end_to_end() {
     let (_e, m) = run_model::<XYModel>(&[], 16);
-    assert!((0.0..=1.0).contains(&m), "Magnetization in [0,1], got {}", m);
+    assert!(
+        (0.0..=1.0).contains(&m),
+        "Magnetization in [0,1], got {}",
+        m
+    );
 }
 
 #[test]
 fn test_heisenberg_end_to_end() {
     let (_e, m) = run_model::<HeisenbergModel>(&[], 16);
-    assert!((0.0..=1.0).contains(&m), "Magnetization in [0,1], got {}", m);
+    assert!(
+        (0.0..=1.0).contains(&m),
+        "Magnetization in [0,1], got {}",
+        m
+    );
 }

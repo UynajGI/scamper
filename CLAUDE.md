@@ -5,7 +5,17 @@ Scuttle — Monte Carlo framework with three Rust crates: Carlo.rs (core), QMC.r
 
 Pre-commit hook (`.githooks/pre-commit`) runs `fmt --check` → `clippy -- -D warnings` → `test` on staged `.rs` files. Enable: `git config core.hooksPath .githooks`.
 
-## Architecture
+## Workspace
+
+| Crate | Role | Description |
+|-------|------|-------------|
+| Carlo.rs | Core framework | `MonteCarlo` trait, `Scheduler`, `Context`, `Measurements`, `Merge`, `Backend` |
+| QMC.rs | Quantum MC | Worldline objects (continuous/discrete) — pure toolbox, no `MonteCarlo` impl |
+| CMC.rs | Classical MC | Layered: `Lattice` → `System` → `Model` → `Algorithm` → `ClassicalMC` wrapper |
+
+## Carlo.rs Architecture
+
+MonteCarlo trait → Scheduler.run_one() → Results flow:
 
 | Module              | File                    | Purpose                                                            |
 | ------------------- | ----------------------- | ------------------------------------------------------------------ |
@@ -22,6 +32,25 @@ Pre-commit hook (`.githooks/pre-commit`) runs `fmt --check` → `clippy -- -D wa
 | `ParallelTempering` | `parallel_tempering.rs` | PT MC with chain scheduling                                        |
 | `CLI`               | `cli.rs`                | `carlo run/status/merge/delete`                                    |
 | `Job`               | `job/`                  | `JobInfo`, `TaskInfo`, `TaskMaker`, progress tracking              |
+
+## CMC.rs Architecture
+
+Layered design — each layer is one file:
+
+| Layer | File | Purpose |
+|-------|------|---------|
+| Lattice | `lattice.rs` | Adjacency-list `Lattice`, `BondType`, builders (chain, square, hypercubic) |
+| System | `system.rs` | `System { lattice, spins, energy }` — pub fields, mutable state |
+| Model | `model.rs` | `Model` trait — stateless physics (Ising, Potts, XY, Heisenberg) |
+| Algorithm | `algorithm.rs` | `Algorithm<M>` trait — Metropolis<S>, Wolff, Swendsen-Wang |
+| Proposal | `proposal.rs` | `ProposalStrategy<M>` — Standard, OPSS (adaptive over-relaxation) |
+| Wrapper | `classical_mc.rs` | `ClassicalMC<M, A>` — impl `MonteCarlo` + `FromParams` |
+
+Key patterns:
+- `ClassicalMC<IsingModel, MetropolisCore>` → `Scheduler.run_one()` → `Results`
+- Model trait methods: `local_energy()`, `propose()`, `magnetization()`, `fk_bond_probability()`
+- Algorithm trait: `sweep(&mut self, system, model, rng)` — directly mutates system.energy
+- Users can ignore `ClassicalMC` and compose manually for custom behavior
 
 ## Features
 
