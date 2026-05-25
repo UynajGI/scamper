@@ -2,8 +2,8 @@
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use cmc_rs::{
-    ClassicalMC, ClusterModel, FromHamiltonianParams, Hamiltonian, HeisenbergModel, Measurable,
-    MetropolisCore, PottsModel, Proposable, XYModel,
+    ClassicalMC, ClusterModel, FromHamiltonianParams, Hamiltonian, HeisenbergModel, IsingModel,
+    Measurable, MetropolisCore, PottsModel, Proposable, XYModel,
 };
 
 fn run_model<M>(extra_params: &[(&str, &str)], n_sites_approx: usize) -> (f64, f64)
@@ -67,4 +67,66 @@ fn test_heisenberg_end_to_end() {
         "Magnetization in [0,1], got {}",
         m
     );
+}
+
+// ── Non-square lattice validation ──────────────────────────
+
+#[test]
+fn test_triangular_ising_ferro_cools() {
+    let mut params = Params::new();
+    params.set("Lx", 4usize);
+    params.set("Ly", 4usize);
+    params.set("lattice_type", "triangular");
+    params.set("J", 1.0);
+    params.set("beta", 2.0); // well below Tc (βc ≈ 0.27), ordered
+
+    let config = RunConfig {
+        thermalization_sweeps: 500,
+        measurement_sweeps: 500,
+        binsize: 100,
+        base_seed: 42,
+        ..Default::default()
+    };
+
+    let backend = RayonBackend::new(1);
+    let scheduler = Scheduler::new(backend, config);
+    let results =
+        scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
+
+    let e = results.get("Energy").expect("Energy missing");
+    let m = results.get("Magnetization").expect("Magnetization missing");
+
+    // At low T, ferromagnetic triangular Ising should order
+    assert!(e.mean < -30.0, "Expected strongly negative energy, got {}", e.mean);
+    assert!(m.mean > 0.7, "Expected high magnetization, got {}", m.mean);
+}
+
+#[test]
+fn test_kagome_ising_af_low_t() {
+    let mut params = Params::new();
+    params.set("Lx", 3usize);
+    params.set("Ly", 3usize);
+    params.set("lattice_type", "kagome");
+    params.set("J", -1.0); // antiferromagnetic
+    params.set("beta", 5.0);
+
+    let config = RunConfig {
+        thermalization_sweeps: 500,
+        measurement_sweeps: 500,
+        binsize: 100,
+        base_seed: 42,
+        ..Default::default()
+    };
+
+    let backend = RayonBackend::new(1);
+    let scheduler = Scheduler::new(backend, config);
+    let results =
+        scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
+
+    let e = results.get("Energy").expect("Energy missing");
+    let m = results.get("Magnetization").expect("Magnetization missing");
+
+    // AF kagome: energy should be negative, magnetization near 0 (no FM order)
+    assert!(e.mean < 0.0, "AF energy should be negative, got {}", e.mean);
+    assert!(m.mean < 0.5, "AF magnetization should be low, got {}", m.mean);
 }

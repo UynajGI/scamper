@@ -2,7 +2,9 @@
 
 use crate::algorithm::Algorithm;
 use crate::hamiltonian::{ClusterModel, Hamiltonian, Measurable, Proposable};
-use crate::lattice::build_hypercubic;
+use crate::lattice::{
+    build_honeycomb, build_hypercubic, build_kagome, build_triangular,
+};
 use crate::observables::DefaultObservableSet;
 use crate::system::System;
 use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible, Params};
@@ -196,27 +198,58 @@ where
 
 // ── FromParams impl ─────────────────────────────────────────
 
-/// Parse lattice dimensions from params.
+/// Build a lattice from params.
 ///
-/// - `Lx, Ly` → 2D square
-/// - `Lx, Ly, Lz` → 3D cubic
-/// - `L` → 1D chain (fallback)
-fn parse_lattice(params: &Params) -> (Vec<usize>, Vec<crate::lattice::BondType>) {
-    use crate::lattice::BondType;
+/// Uses `lattice_type` param to select the builder:
+/// - `"chain"` (default): 1D chain
+/// - `"square"`: 2D square (hypercubic)
+/// - `"cubic"`: 3D cubic (hypercubic)
+/// - `"triangular"`: 2D triangular (no PBC)
+/// - `"honeycomb"`: 2D honeycomb (no PBC)
+/// - `"kagome"`: 2D kagome (no PBC)
+///
+/// Dimensions via `L` (1D) or `Lx`, `Ly` (2D) or `Lx`, `Ly`, `Lz` (3D).
+fn build_lattice_from_params(
+    params: &Params,
+    pbc: bool,
+) -> Result<crate::lattice::CsrLattice, CarloError> {
+    let lt = params
+        .get::<String>("lattice_type")
+        .unwrap_or_else(|| "chain".to_string());
 
-    if let Some(lx) = params.get::<usize>("Lx") {
-        let ly = params.get::<usize>("Ly").unwrap_or(lx);
-        if let Some(lz) = params.get::<usize>("Lz") {
-            return (
-                vec![lx, ly, lz],
-                vec![BondType::SquareX, BondType::SquareY, BondType::SquareZ],
-            );
+    match lt.as_str() {
+        "triangular" => {
+            let lx = params.get::<usize>("Lx").unwrap_or(4);
+            let ly = params.get::<usize>("Ly").unwrap_or(lx);
+            Ok(build_triangular(lx, ly))
         }
-        return (vec![lx, ly], vec![BondType::SquareX, BondType::SquareY]);
+        "honeycomb" => {
+            let lx: usize = params.get::<usize>("Lx").unwrap_or(4);
+            let ly: usize = params.get::<usize>("Ly").unwrap_or(lx);
+            Ok(build_honeycomb(lx, ly))
+        }
+        "kagome" => {
+            let lx = params.get::<usize>("Lx").unwrap_or(2);
+            let ly = params.get::<usize>("Ly").unwrap_or(lx);
+            Ok(build_kagome(lx, ly))
+        }
+        _ => {
+            // hypercubic family: chain, square, cubic
+            use crate::lattice::BondType;
+            let (dims, bond_types) = if let Some(lx) = params.get::<usize>("Lx") {
+                let ly = params.get::<usize>("Ly").unwrap_or(lx);
+                if let Some(lz) = params.get::<usize>("Lz") {
+                    (vec![lx, ly, lz], vec![BondType::SquareX, BondType::SquareY, BondType::SquareZ])
+                } else {
+                    (vec![lx, ly], vec![BondType::SquareX, BondType::SquareY])
+                }
+            } else {
+                let l = params.get::<usize>("L").unwrap_or(10);
+                (vec![l], vec![BondType::ChainX])
+            };
+            Ok(build_hypercubic(&dims, &bond_types, pbc))
+        }
     }
-
-    let l = params.get::<usize>("L").unwrap_or(10);
-    (vec![l], vec![BondType::ChainX])
 }
 
 impl<H, A> FromParams for ClassicalMC<H, A>
@@ -229,8 +262,7 @@ where
             .get::<String>("pbc")
             .map(|s| s == "true" || s == "1")
             .unwrap_or(true);
-        let (dims, bond_types) = parse_lattice(params);
-        let lattice = build_hypercubic(&dims, &bond_types, pbc);
+        let lattice = build_lattice_from_params(params, pbc)?;
 
         let beta = params.get::<f64>("beta").unwrap_or(1.0);
         let model = H::from_hamiltonian_params(params)?;
@@ -443,5 +475,65 @@ mod tests {
             .model
             .compute_total_energy(&mc.system.spins, &mc.system.lattice, 2.5);
         assert!((mc.system.energy - e).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_lattice_type_triangular() {
+        let mut params = Params::new();
+        params.set("Lx", 3usize);
+        params.set("Ly", 3usize);
+        params.set("lattice_type", "triangular");
+        params.set("beta", 1.0);
+        params.set("J", 1.0);
+
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
+        let mc = <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
+            &params, &mut rng,
+        )
+        .unwrap();
+
+        assert_eq!(mc.system.n_sites(), 9);
+        assert_eq!(mc.system.lattice.n_bonds, 54);
+        assert_eq!(mc.system.lattice.degree(0), 6);
+    }
+
+    #[test]
+    fn test_lattice_type_honeycomb() {
+        let mut params = Params::new();
+        params.set("Lx", 4usize);
+        params.set("Ly", 4usize);
+        params.set("lattice_type", "honeycomb");
+        params.set("beta", 1.0);
+        params.set("J", 1.0);
+
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
+        let mc = <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
+            &params, &mut rng,
+        )
+        .unwrap();
+
+        assert_eq!(mc.system.n_sites(), 16);
+        assert_eq!(mc.system.lattice.n_bonds, 48);
+        assert_eq!(mc.system.lattice.degree(0), 3);
+    }
+
+    #[test]
+    fn test_lattice_type_kagome() {
+        let mut params = Params::new();
+        params.set("Lx", 2usize);
+        params.set("Ly", 2usize);
+        params.set("lattice_type", "kagome");
+        params.set("beta", 1.0);
+        params.set("J", 1.0);
+
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
+        let mc = <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
+            &params, &mut rng,
+        )
+        .unwrap();
+
+        assert_eq!(mc.system.n_sites(), 12);
+        assert_eq!(mc.system.lattice.n_bonds, 48);
+        assert_eq!(mc.system.lattice.degree(0), 4);
     }
 }
