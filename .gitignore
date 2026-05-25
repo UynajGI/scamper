@@ -1,6 +1,10 @@
 # Jujutsu
 .jj/
 
+# Agent tooling
+.qoder/
+.trellis/tasks/
+
 # Build artifacts
 target/
 **/*.rs.bk
