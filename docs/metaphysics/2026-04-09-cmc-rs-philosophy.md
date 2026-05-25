@@ -17,12 +17,13 @@ CMC.rs is a **Classical Monte Carlo algorithm toolbox** — a component library 
 ```
 ┌─────────────────────────────────────────────────────┐
 │  User's Model Implementation                        │
-│  (implements ModelMC trait, defines Hamiltonian)    │
+│  (implements model traits, defines Hamiltonian)    │
 ├─────────────────────────────────────────────────────┤
 │  CMC.rs — Algorithm Toolbox                         │
-│  ├─ MetropolisCore<MC>  (single-spin flip)          │
-│  ├─ WolffCore<MC>       (cluster growth)            │
-│  └─ SWCore<MC>          (Swendsen-Wang)             │
+│  ├─ MetropolisCore<M>  (single-spin flip)          │
+│  ├─ WolffCore<M>       (cluster growth)            │
+│  ├─ SWCore<M>          (Swendsen-Wang)             │
+│  └─ HeatBathCore<M>    (Glauber dynamics)          │
 ├─────────────────────────────────────────────────────┤
 │  Carlo.rs — Core Framework                          │
 │  ├─ MonteCarlo trait (base)                        │
@@ -38,7 +39,7 @@ CMC.rs and QMC.rs are **equal siblings** — same architectural patterns, same g
 
 ### What Users Implement
 
-Users implement **Hamiltonian decomposition**: defining energy changes, coupling constants, and spin configurations via `ModelMC` trait. The engine automatically handles update logic, acceptance probabilities, and measurement accumulation.
+Users implement **model traits** (one or more of `Hamiltonian`, `ClusterModel`, `Proposable`, `Measurable`, `HeatBathable`): defining energy changes, coupling constants, and spin configurations. The engine automatically handles update logic, acceptance probabilities, and measurement accumulation.
 
 **User responsibility**: Define the model (energy function, lattice, parameters).
 **Framework responsibility**: Handle update algorithms, RNG management, measurement accumulation, checkpointing.
@@ -57,23 +58,23 @@ Same as QMC.rs — users implement the model interface, engines handle algorithm
 
 ### Trait Hierarchy
 
+CMC.rs uses orthogonal traits instead of a monolithic `Model` trait:
+
 ```rust
 // Carlo.rs (base)
 trait MonteCarlo { fn sweep(&mut self, ctx: &mut Context); }
 
-// CMC.rs (domain layer)
-trait LatticeMC { fn lattice(&self) -> &Lattice; }
-
-// CMC.rs (method layer)
-trait ModelMC: LatticeMC {
+// CMC.rs (domain layer — orthogonal traits)
+trait Hamiltonian: Send + Sync {
     fn spin_dim(&self) -> usize;
     fn coupling(&self) -> f64;
-    fn beta(&self) -> f64;
-    fn local_energy_change(&self, site: usize, old: f64, new: f64) -> f64;
-    fn total_energy(&self) -> f64;
-    fn spins(&self) -> &[f64];
-    fn spins_mut(&mut self) -> &mut [f64];
+    fn local_energy(&self, spins: &[f64], lattice: &CsrLattice, site: usize, beta: f64, proposed: &[f64]) -> f64;
 }
+
+trait ClusterModel: Hamiltonian { /* FK bond percolation, flip, reflect, embedding */ }
+trait Proposable: Hamiltonian { fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]>; }
+trait Measurable: Hamiltonian { fn magnetization(&self, spins: &[f64]) -> f64; }
+trait HeatBathable: Hamiltonian { /* Glauber dynamics: n_states, boltzmann_weights, sample_spin */ }
 ```
 
 ---
@@ -113,7 +114,7 @@ Simplified from QMC.rs's 4 layers — more pragmatic, fewer abstraction levels.
 
 ```
 Level 1: Use built-in IsingModel + MetropolisCore → run simulation immediately
-Level 2: Implement custom ModelMC → use built-in engines with your physics
+Level 2: Implement custom model traits → use built-in engines with your physics
 Level 3: Replace engine entirely → custom algorithm for special cases
 ```
 
@@ -124,25 +125,27 @@ Users can start at Level 1 and progressively customize. No user should need Leve
 CMC.rs and QMC.rs share the same architectural patterns:
 - Wrapper pattern: `*Core<MC>` implements `MonteCarlo`
 - Trait hierarchy: base → domain → method
-- Lattice topology: adjacency list representation (independently defined in each package)
+- Lattice topology: CSR (Compressed Sparse Row) representation (flat arrays, cache-friendly)
 - Model placement: inside the package, not as a separate crate
 
 ### Model Placement: Inside CMC.rs
 
 Concrete models live inside CMC.rs:
 - `cmc::models::IsingModel`
-- `cmc::models::PottsModel` (future)
-- `cmc::models::XYModel` (future)
+- `cmc::models::PottsModel`
+- `cmc::models::XYModel`
+- `cmc::models::HeisenbergModel`
 
 **Rationale**: Same as QMC.rs — models demonstrate trait usage, provide test coverage, reduce user friction.
 
 ### Implementation Order
 
-Phase 1: Lattice infrastructure (LatticeMC, Lattice, BondType, builders)
-Phase 2: ModelMC trait + IsingModel
-Phase 3: MetropolisCore + WolffCore
-Phase 4: SWCore + validation against Onsager/Carlo.jl
-Phase 5: XY/Heisenberg models
+Phase 1: Lattice infrastructure (`CsrLattice`, `BondType`, builders)
+Phase 2: `Hamiltonian` trait + IsingModel
+Phase 3: `MetropolisCore` + `WolffCore`
+Phase 4: `SWCore` + validation against Onsager/Carlo.jl
+Phase 5: XY/Heisenberg models + `ClusterModel` trait (reflection-based cluster updates)
+Phase 6 (current): Performance optimizations — CSR lattice, SmallVec, Heat-bath, multi-spin coding, Parallel Tempering
 
 ---
 
@@ -196,9 +199,10 @@ When facing design choices, test with these questions:
 |----------------|--------|-----------|
 | **Position** | Algorithm toolbox (component library) | Between framework and models, maximum flexibility |
 | **Relationship with QMC** | Equal siblings, independent domains | Symmetric architecture, no code sharing |
-| **Granularity** | Mid-level (model interface → engine handles updates) | Balance ease-of-use with customization |
-| **Lattice types** | Independently defined (no cross-package dependency) | Enforces dependency direction: CMC→Carlo, QMC→Carlo |
+| **Granularity** | Mid-level (model traits → engine handles updates) | Balance ease-of-use with customization |
+| **Lattice types** | CSR (Compressed Sparse Row) — flat arrays | Cache-friendly neighbor iteration |
 | **Progressive complexity** | 3 layers (simplified from QMC's 4) | More pragmatic for classical MC |
+| **Trait design** | Orthogonal traits (not monolithic) | Each concern (energy, cluster, proposal, measurement, heat-bath) is a separate trait |
 | **Validation** | Onsager exact + Carlo.jl reference (both required) | Gold standard + practical cross-check |
 | **Success priority** | Correctness → Performance → Efficiency | Foundation before value |
 | **Model placement** | Inside CMC.rs domain modules | Reduce friction, provide examples |

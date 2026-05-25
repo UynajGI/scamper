@@ -35,21 +35,27 @@ MonteCarlo trait → Scheduler.run_one() → Results flow:
 
 ## CMC.rs Architecture
 
-Layered design — each layer is one file:
+Orthogonal traits instead of a monolithic trait — each concern is a separate trait:
 
 | Layer | File | Purpose |
 |-------|------|---------|
-| Lattice | `lattice.rs` | Adjacency-list `Lattice`, `BondType`, builders (chain, square, hypercubic) |
-| System | `system.rs` | `System { lattice, spins, energy }` — pub fields, mutable state |
-| Model | `model.rs` | `Model` trait — stateless physics (Ising, Potts, XY, Heisenberg) |
-| Algorithm | `algorithm.rs` | `Algorithm<M>` trait — Metropolis<S>, Wolff, Swendsen-Wang |
-| Proposal | `proposal.rs` | `ProposalStrategy<M>` — Standard, OPSS (adaptive over-relaxation) |
-| Wrapper | `classical_mc.rs` | `ClassicalMC<M, A>` — impl `MonteCarlo` + `FromParams` |
+| Lattice | `lattice.rs` | `CsrLattice` — flat CSR arrays (offsets + neighbors), `BondType`, builders (chain, square, hypercubic, triangular, honeycomb, kagome) |
+| System | `system.rs` | `System { lattice, spins, energy, beta }` — pub fields, β moved here from model structs |
+| Traits | `hamiltonian.rs` | `Hamiltonian`, `ClusterModel`, `Proposable`, `Measurable`, `HeatBathable` — orthogonal model traits |
+| Models | `models.rs` | `IsingModel`, `PottsModel`, `XYModel`, `HeisenbergModel` — implement traits above |
+| Algorithm | `algorithm.rs` | `Algorithm<H>` trait — `MetropolisCore`, `WolffCore`, `SWCore`, `HeatBathCore` |
+| Proposal | `proposal.rs` | `ProposalStrategy<H>` — Standard, OPSS (adaptive over-relaxation) |
+| Wrapper | `classical_mc.rs` | `ClassicalMC<H, A>` — `MonteCarlo`, `FromParams`, `ParallelTemperingCompatible` |
+| Multi-spin | `multi_spin.rs` | `MultiSpinIsing` — bit-parallel Ising with 64 replicas packed in u64 |
+| Observables | `observables.rs` | Pluggable `Observable<H>` trait + `DefaultObservableSet` (Energy, Magnetization) |
 
 Key patterns:
 - `ClassicalMC<IsingModel, MetropolisCore>` → `Scheduler.run_one()` → `Results`
-- Model trait methods: `local_energy()`, `propose()`, `magnetization()`, `fk_bond_probability()`
+- Models are stateless — temperature (β) lives in `System`, not in model structs
 - Algorithm trait: `sweep(&mut self, system, model, rng)` — directly mutates system.energy
+- CSR lattice: cache-friendly neighbor iteration via `lattice.neighbors(site)` returning `&[usize]`
+- `SmallVec<[f64; 3]>` for spin proposals (stack-allocated, no heap for spin_dim ≤ 3)
+- Heat-bath (Glauber): directly samples equilibrium distributions, no Metropolis rejection
 - Users can ignore `ClassicalMC` and compose manually for custom behavior
 
 ## Features
