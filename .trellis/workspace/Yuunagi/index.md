@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-05-18
+- **Total Sessions**: 5
+- **Last Active**: 2026-05-25
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~149 | Active |
+| `journal-1.md` | ~184 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-05-25 | CMC.rs high-priority: derived observables, JSON checkpoint, MultiSpinIsing MonteCarlo integration | `67b9ab3`, `f1edd78` | `main` |
 | 4 | 2026-05-18 | CMC.rs Phase 1: full rewrite with layered architecture | `0932ddc`, `de925ed` | `main` |
 | 3 | 2026-05-08 | Complete MPI backend: results transfer, multi-rank coordination, comm-aware sweep, checkpoint sync | `9b59517`, `5964049` | `master` |
 | 2 | 2026-05-08 | Carlo.rs JSON 格式对齐 Carlo.jl + CLAUDE.md 精简 | `56c6f1d`, `6c490bd`, `6f7ae36` | `master` |

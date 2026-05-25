@@ -147,3 +147,38 @@ Designed and implemented CMC.rs rewrite. 6-layer architecture: Lattice (adjacenc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: CMC.rs high-priority: derived observables, JSON checkpoint, MultiSpinIsing MonteCarlo integration
+
+**Date**: 2026-05-25
+**Task**: CMC.rs high-priority: derived observables, JSON checkpoint, MultiSpinIsing MonteCarlo integration
+**Package**: carlo-rs
+**Branch**: `main`
+
+### Summary
+
+TDD from easiest to hardest: (1) postprocess.rs — susceptibility, specific_heat, binder_cumulant from E²/M²/M⁴ moments in ClassicalMC::measure(). (2) JSON snapshot checkpoint for ClassicalMC. (3) MultiSpinIsing refactor — fixed bit-plane counting bug, added system/model owned fields, impl MonteCarlo+FromParams+ParallelTemperingCompatible for Scheduler integration. 68 CMC + 128 Carlo tests pass, clippy clean.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `67b9ab3` | (see git log) |
+| `f1edd78` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
