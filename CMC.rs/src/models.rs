@@ -6,10 +6,11 @@
 //! - Proposable: Spin proposal
 //! - Measurable: Magnetization
 
-use crate::hamiltonian::{ClusterModel, Hamiltonian, Measurable, Proposable};
-use crate::lattice::Lattice;
+use crate::hamiltonian::{ClusterModel, Hamiltonian, HeatBathable, Measurable, Proposable};
+use crate::lattice::CsrLattice;
 use rand::Rng;
 use rand::RngExt;
+use smallvec::{smallvec, SmallVec};
 
 // ── Ising Model ─────────────────────────────────────────────
 
@@ -39,15 +40,15 @@ impl Hamiltonian for IsingModel {
     fn local_energy(
         &self,
         spins: &[f64],
-        lattice: &Lattice,
+        lattice: &CsrLattice,
         site: usize,
         _beta: f64,
         proposed: &[f64],
     ) -> f64 {
         let s = proposed[0];
         let mut e = 0.0;
-        for nb in &lattice.sites[site] {
-            e += -self.j * s * spins[nb.target];
+        for &nb in lattice.neighbors(site) {
+            e += -self.j * s * spins[nb];
         }
         e
     }
@@ -76,11 +77,11 @@ impl ClusterModel for IsingModel {
 }
 
 impl Proposable for IsingModel {
-    fn propose(&self, rng: &mut impl Rng) -> Vec<f64> {
+    fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
         if rng.random::<bool>() {
-            vec![1.0]
+            smallvec![1.0]
         } else {
-            vec![-1.0]
+            smallvec![-1.0]
         }
     }
 }
@@ -89,6 +90,27 @@ impl Measurable for IsingModel {
     fn magnetization(&self, spins: &[f64]) -> f64 {
         let sum: f64 = spins.iter().sum();
         (sum / spins.len() as f64).abs()
+    }
+}
+
+impl HeatBathable for IsingModel {
+    fn n_states(&self) -> usize {
+        2
+    }
+
+    fn boltzmann_weights(&self, neighbors: &[f64], beta: f64) -> Vec<f64> {
+        let h: f64 = neighbors.iter().sum::<f64>() * self.j;
+        // w[0] = P(+1) ∝ exp(βh), w[1] = P(-1) ∝ exp(-βh)
+        vec![(beta * h).exp(), (-beta * h).exp()]
+    }
+
+    fn sample_spin(&self, weights: &[f64], rng: &mut impl Rng) -> f64 {
+        let total = weights[0] + weights[1];
+        if rng.random::<f64>() < weights[0] / total {
+            1.0
+        } else {
+            -1.0
+        }
     }
 }
 
@@ -133,15 +155,15 @@ impl Hamiltonian for PottsModel {
     fn local_energy(
         &self,
         spins: &[f64],
-        lattice: &Lattice,
+        lattice: &CsrLattice,
         site: usize,
         _beta: f64,
         proposed: &[f64],
     ) -> f64 {
         let s = proposed[0] as usize;
         let mut e = 0.0;
-        for nb in &lattice.sites[site] {
-            let nb_state = spins[nb.target] as usize;
+        for &nb in lattice.neighbors(site) {
+            let nb_state = spins[nb] as usize;
             if s == nb_state {
                 e += -self.j;
             }
@@ -179,8 +201,8 @@ impl ClusterModel for PottsModel {
 }
 
 impl Proposable for PottsModel {
-    fn propose(&self, rng: &mut impl Rng) -> Vec<f64> {
-        vec![rng.random_range(0..self.q) as f64]
+    fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
+        smallvec![rng.random_range(0..self.q) as f64]
     }
 }
 
@@ -193,6 +215,36 @@ impl Measurable for PottsModel {
         let counts = self.state_counts(spins);
         let max_n = counts.iter().max().copied().unwrap_or(0);
         (self.q as f64 * max_n as f64 - n as f64) / (n as f64 * (self.q - 1) as f64)
+    }
+}
+
+impl HeatBathable for PottsModel {
+    fn n_states(&self) -> usize {
+        self.q
+    }
+
+    fn boltzmann_weights(&self, neighbors: &[f64], beta: f64) -> Vec<f64> {
+        let mut counts = vec![0usize; self.q];
+        for &s in neighbors {
+            let k = s as usize;
+            if k < self.q {
+                counts[k] += 1;
+            }
+        }
+        // w[k] = exp(βJ * n_k) where n_k = number of neighbors in state k
+        counts.iter().map(|&n| (beta * self.j * n as f64).exp()).collect()
+    }
+
+    fn sample_spin(&self, weights: &[f64], rng: &mut impl Rng) -> f64 {
+        let total: f64 = weights.iter().sum();
+        let mut u = rng.random::<f64>() * total;
+        for (k, &w) in weights.iter().enumerate() {
+            u -= w;
+            if u <= 0.0 {
+                return k as f64;
+            }
+        }
+        (weights.len() - 1) as f64
     }
 }
 
@@ -224,15 +276,15 @@ impl Hamiltonian for XYModel {
     fn local_energy(
         &self,
         spins: &[f64],
-        lattice: &Lattice,
+        lattice: &CsrLattice,
         site: usize,
         _beta: f64,
         proposed: &[f64],
     ) -> f64 {
         let (sx, sy) = (proposed[0], proposed[1]);
         let mut e = 0.0;
-        for nb in &lattice.sites[site] {
-            let base = nb.target * 2;
+        for &nb in lattice.neighbors(site) {
+            let base = nb * 2;
             e += -self.j * (sx * spins[base] + sy * spins[base + 1]);
         }
         e
@@ -251,16 +303,16 @@ impl ClusterModel for XYModel {
         self.normalize_spin(spin);
     }
 
-    fn embedding_direction(&self, rng: &mut impl Rng) -> Vec<f64> {
+    fn embedding_direction(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
         let theta: f64 = rng.random_range(0.0..std::f64::consts::TAU);
-        vec![theta.cos(), theta.sin()]
+        smallvec![theta.cos(), theta.sin()]
     }
 }
 
 impl Proposable for XYModel {
-    fn propose(&self, rng: &mut impl Rng) -> Vec<f64> {
+    fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
         let theta: f64 = rng.random_range(0.0..std::f64::consts::TAU);
-        vec![theta.cos(), theta.sin()]
+        smallvec![theta.cos(), theta.sin()]
     }
 
     fn normalize_spin(&self, spin: &mut [f64]) {
@@ -312,15 +364,15 @@ impl Hamiltonian for HeisenbergModel {
     fn local_energy(
         &self,
         spins: &[f64],
-        lattice: &Lattice,
+        lattice: &CsrLattice,
         site: usize,
         _beta: f64,
         proposed: &[f64],
     ) -> f64 {
         let (sx, sy, sz) = (proposed[0], proposed[1], proposed[2]);
         let mut e = 0.0;
-        for nb in &lattice.sites[site] {
-            let base = nb.target * 3;
+        for &nb in lattice.neighbors(site) {
+            let base = nb * 3;
             e += -self.j * (sx * spins[base] + sy * spins[base + 1] + sz * spins[base + 2]);
         }
         e
@@ -340,13 +392,15 @@ impl ClusterModel for HeisenbergModel {
         self.normalize_spin(spin);
     }
 
-    fn embedding_direction(&self, rng: &mut impl Rng) -> Vec<f64> {
-        self.propose(rng)
+    fn embedding_direction(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
+        let theta: f64 = rng.random_range(0.0..std::f64::consts::TAU);
+        let phi: f64 = rng.random_range(0.0..std::f64::consts::PI);
+        smallvec![phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos()]
     }
 }
 
 impl Proposable for HeisenbergModel {
-    fn propose(&self, rng: &mut impl Rng) -> Vec<f64> {
+    fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
         // Marsaglia: sample (x,y) in unit disk, reject if outside
         let (x, y) = loop {
             let x: f64 = rng.random_range(-1.0..1.0);
@@ -356,7 +410,7 @@ impl Proposable for HeisenbergModel {
             }
         };
         let r = (x * x + y * y).sqrt();
-        vec![
+        smallvec![
             2.0 * x * (1.0 - r * r).sqrt(),
             2.0 * y * (1.0 - r * r).sqrt(),
             1.0 - 2.0 * (x * x + y * y),

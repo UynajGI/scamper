@@ -6,6 +6,7 @@
 use crate::hamiltonian::{Hamiltonian, Proposable};
 use crate::system::System;
 use rand::Rng;
+use smallvec::{smallvec, SmallVec};
 
 /// A proposal strategy for use with [`MetropolisCore`](crate::MetropolisCore).
 pub trait ProposalStrategy<H: Hamiltonian>: Send {
@@ -16,7 +17,7 @@ pub trait ProposalStrategy<H: Hamiltonian>: Send {
         _system: &System,
         _site: usize,
         rng: &mut impl Rng,
-    ) -> Vec<f64>;
+    ) -> SmallVec<[f64; 3]>;
 
     /// Called after each sweep for strategies that need per-sweep adaptation.
     fn adapt_after_sweep(&mut self, _model: &H) {}
@@ -35,7 +36,7 @@ impl StandardStrategy {
 }
 
 impl<H: Hamiltonian + Proposable> ProposalStrategy<H> for StandardStrategy {
-    fn propose(&mut self, model: &H, _system: &System, _site: usize, rng: &mut impl Rng) -> Vec<f64> {
+    fn propose(&mut self, model: &H, _system: &System, _site: usize, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
         model.propose(rng)
     }
 }
@@ -83,23 +84,23 @@ impl Default for OPSSStrategy {
 }
 
 impl<H: Hamiltonian + Proposable> ProposalStrategy<H> for OPSSStrategy {
-    fn propose(&mut self, model: &H, system: &System, site: usize, rng: &mut impl Rng) -> Vec<f64> {
+    fn propose(&mut self, model: &H, system: &System, site: usize, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
         let sd = model.spin_dim();
         let old = system.spin_at(site, sd);
 
         if sd == 1 {
             // Scalar: reflect about local field
-            let local_field: f64 = system.lattice.sites[site]
+            let local_field: f64 = system.lattice.neighbors(site)
                 .iter()
-                .map(|nb| system.spins[nb.target])
+                .map(|&nb| system.spins[nb])
                 .sum();
             let proposed = -self.sigma * old[0] + (1.0 + self.sigma) * local_field.signum();
-            vec![proposed.signum()] // always ±1 for Ising
+            smallvec![proposed.signum()] // always ±1 for Ising
         } else {
             // Vector: reflect spin about local field direction
             let mut h = vec![0.0; sd];
-            for nb in &system.lattice.sites[site] {
-                let base = nb.target * sd;
+            for &nb in system.lattice.neighbors(site) {
+                let base = nb * sd;
                 for (k, hk) in h.iter_mut().enumerate() {
                     *hk += system.spins[base + k];
                 }
@@ -113,11 +114,11 @@ impl<H: Hamiltonian + Proposable> ProposalStrategy<H> for OPSSStrategy {
                 return v;
             }
 
-            let h_hat: Vec<f64> = h.iter().map(|&x| x / h_norm).collect();
+            let h_hat: SmallVec<[f64; 3]> = h.iter().map(|&x| x / h_norm).collect();
 
             // s_new = 2 (s·ĥ) ĥ - σ s
             let s_dot_h: f64 = old.iter().zip(&h_hat).map(|(&s, &h)| s * h).sum();
-            let mut new = vec![0.0; sd];
+            let mut new: SmallVec<[f64; 3]> = SmallVec::from_elem(0.0, sd);
             for k in 0..sd {
                 new[k] = 2.0 * s_dot_h * h_hat[k] - self.sigma * old[k];
             }

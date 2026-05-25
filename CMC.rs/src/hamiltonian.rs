@@ -6,8 +6,9 @@
 //! - [`Proposable`]: Spin proposal for Metropolis
 //! - [`Measurable`]: Magnetization computation
 
-use crate::lattice::Lattice;
+use crate::lattice::CsrLattice;
 use rand::Rng;
+use smallvec::SmallVec;
 
 /// Core physics: energy computation and coupling constants.
 ///
@@ -30,14 +31,14 @@ pub trait Hamiltonian: Send + Sync {
     fn local_energy(
         &self,
         spins: &[f64],
-        lattice: &Lattice,
+        lattice: &CsrLattice,
         site: usize,
         beta: f64,
         proposed: &[f64],
     ) -> f64;
 
     /// Compute initial energy for the full system.
-    fn compute_total_energy(&self, spins: &[f64], lattice: &Lattice, beta: f64) -> f64 {
+    fn compute_total_energy(&self, spins: &[f64], lattice: &CsrLattice, beta: f64) -> f64 {
         let mut total = 0.0;
         let sd = self.spin_dim();
         for site in 0..lattice.n_sites {
@@ -63,9 +64,6 @@ pub trait ClusterModel: Hamiltonian {
     }
 
     /// Flip spin in-place (scalar models: Ising, Potts).
-    ///
-    /// For Ising: negates the spin.
-    /// For Potts: assigns a random different state.
     fn flip_in_place(&self, _spin: &mut [f64], _rng: &mut impl Rng) {
         panic!("flip_in_place not implemented for vector models");
     }
@@ -81,7 +79,7 @@ pub trait ClusterModel: Hamiltonian {
     }
 
     /// Random direction for embedding (vector models only).
-    fn embedding_direction(&self, _rng: &mut impl Rng) -> Vec<f64> {
+    fn embedding_direction(&self, _rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
         panic!("embedding_direction only for vector models");
     }
 
@@ -93,8 +91,8 @@ pub trait ClusterModel: Hamiltonian {
 
 /// Spin proposal for Metropolis algorithm.
 pub trait Proposable: Hamiltonian {
-    /// Propose a random new spin (all components). Returns a Vec of length `spin_dim()`.
-    fn propose(&self, rng: &mut impl Rng) -> Vec<f64>;
+    /// Propose a random new spin (all components). Returns a SmallVec of length `spin_dim()`.
+    fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]>;
 
     /// Normalize a spin vector to unit length (for XY/Heisenberg). Ising/Potts skip this.
     fn normalize_spin(&self, _spin: &mut [f64]) {}
@@ -104,4 +102,26 @@ pub trait Proposable: Hamiltonian {
 pub trait Measurable: Hamiltonian {
     /// Total magnetization |M|/N from the current spin configuration.
     fn magnetization(&self, spins: &[f64]) -> f64;
+}
+
+/// Heat-bath (Glauber dynamics) support.
+///
+/// Models that implement this can be used with [`HeatBathCore`](crate::HeatBathCore),
+/// which directly samples each spin from its equilibrium distribution given
+/// the local neighbor field — no Metropolis rejection step needed.
+pub trait HeatBathable: Hamiltonian {
+    /// Number of discrete spin states (2 for Ising, q for Potts).
+    fn n_states(&self) -> usize;
+
+    /// Boltzmann weight of each state given the local neighbor field.
+    ///
+    /// `neighbors` contains the spin values of adjacent sites.
+    /// Returns a `Vec<f64>` of length `n_states()`, where `w[k]` is the
+    /// un-normalized probability of placing the site in state `k`.
+    fn boltzmann_weights(&self, neighbors: &[f64], beta: f64) -> Vec<f64>;
+
+    /// Sample a spin value from the given probability weights.
+    ///
+    /// `weights` has length `n_states()`. Returns the spin value (e.g. ±1 for Ising).
+    fn sample_spin(&self, weights: &[f64], rng: &mut impl Rng) -> f64;
 }

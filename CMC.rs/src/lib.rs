@@ -44,18 +44,19 @@ pub mod classical_mc;
 pub mod hamiltonian;
 pub mod lattice;
 pub mod models;
+pub mod multi_spin;
 pub mod observables;
 pub mod proposal;
 pub mod system;
 
 // Re-export key types from hamiltonian (traits)
-pub use hamiltonian::{ClusterModel, Hamiltonian, Measurable, Proposable};
+pub use hamiltonian::{ClusterModel, Hamiltonian, HeatBathable, Measurable, Proposable};
 
 // Re-export models
 pub use models::{HeisenbergModel, IsingModel, PottsModel, XYModel};
 
 // Re-export algorithms
-pub use algorithm::{Algorithm, MetropolisCore, SWCore, WolffCore};
+pub use algorithm::{Algorithm, HeatBathCore, MetropolisCore, SWCore, WolffCore};
 
 // Re-export observables
 pub use observables::{DefaultObservableSet, EnergyPerSite, Magnetization, Observable, TotalEnergy};
@@ -66,8 +67,11 @@ pub use classical_mc::{ClassicalMC, FromHamiltonianParams};
 // Re-export lattice
 pub use lattice::{
     build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
-    BondType, Lattice, Neighbor,
+    BondType, CsrLattice,
 };
+
+// Re-export multi-spin
+pub use multi_spin::{MultiSpinIsing, N_REPLICAS};
 
 // Re-export proposal
 pub use proposal::{OPSSStrategy, ProposalStrategy, StandardStrategy};

@@ -5,7 +5,7 @@ use crate::hamiltonian::{ClusterModel, Hamiltonian, Measurable, Proposable};
 use crate::lattice::build_hypercubic;
 use crate::observables::DefaultObservableSet;
 use crate::system::System;
-use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, Params};
+use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible, Params};
 
 /// Pre-composed classical Monte Carlo simulation.
 ///
@@ -76,6 +76,40 @@ where
 
     fn name(&self) -> &'static str {
         self.algorithm.name()
+    }
+}
+
+// ── ParallelTemperingCompatible impl ─────────────────────────
+
+impl<H, A> ParallelTemperingCompatible for ClassicalMC<H, A>
+where
+    H: Hamiltonian + Measurable,
+    A: Algorithm<H>,
+{
+    fn log_weight_ratio(&self, param: &str, new_value: f64) -> f64 {
+        match param {
+            "beta" => {
+                // W(x, β) = exp(-βE), log(W'/W) = -(β'-β)E
+                (self.system.beta - new_value) * self.system.energy
+            }
+            _ => panic!("unsupported PT param: {param}"),
+        }
+    }
+
+    fn change_parameter(&mut self, param: &str, new_value: f64) {
+        match param {
+            "beta" => {
+                self.system.beta = new_value;
+                // Recompute energy (for most classical models E is β-independent,
+                // but we recompute for correctness with future models).
+                self.system.energy = self.model.compute_total_energy(
+                    &self.system.spins,
+                    &self.system.lattice,
+                    new_value,
+                );
+            }
+            _ => panic!("unsupported PT param: {param}"),
+        }
     }
 }
 
@@ -184,7 +218,8 @@ mod tests {
     use super::*;
     use crate::algorithm::MetropolisCore;
     use crate::models::IsingModel;
-    use carlo_rs::{RayonBackend, RunConfig, Scheduler};
+    use carlo_rs::{ParallelTemperingCompatible, RayonBackend, RunConfig, Scheduler};
+    use rand::SeedableRng;
 
     #[test]
     fn test_classical_mc_end_to_end() {
@@ -214,5 +249,56 @@ mod tests {
         assert!(energy.mean < 0.0);
         assert!(energy.stderr > 0.0);
         assert!((0.0..=1.0).contains(&mag.mean));
+    }
+
+    #[test]
+    fn test_pt_log_weight_ratio() {
+        let mut params = Params::new();
+        params.set("L", 4usize);
+        params.set("beta", 1.0);
+        params.set("J", 1.0);
+
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
+        let mc =
+            <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
+                &params, &mut rng,
+            )
+            .unwrap();
+
+        let e = mc.system.energy;
+        // log(W(β')/W(β)) = -(β'-β)E = (β - β')E
+        let lr = mc.log_weight_ratio("beta", 2.0);
+        let expected = (1.0 - 2.0) * e;
+        assert!(
+            (lr - expected).abs() < 1e-10,
+            "lr = {}, expected = {}",
+            lr,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_pt_change_parameter() {
+        let mut params = Params::new();
+        params.set("L", 4usize);
+        params.set("beta", 1.0);
+        params.set("J", 1.0);
+
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
+        let mut mc =
+            <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
+                &params, &mut rng,
+            )
+            .unwrap();
+
+        mc.change_parameter("beta", 2.5);
+        assert!((mc.system.beta - 2.5).abs() < 1e-10);
+        // Energy should be recomputed (same config, same energy for Ising)
+        let e = mc.model.compute_total_energy(
+            &mc.system.spins,
+            &mc.system.lattice,
+            2.5,
+        );
+        assert!((mc.system.energy - e).abs() < 1e-10);
     }
 }

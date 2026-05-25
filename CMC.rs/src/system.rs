@@ -1,6 +1,6 @@
 //! Mutable simulation state.
 
-use crate::lattice::Lattice;
+use crate::lattice::CsrLattice;
 
 /// Mutable state of a classical Monte Carlo simulation.
 ///
@@ -9,8 +9,8 @@ use crate::lattice::Lattice;
 /// which enables parallel tempering via simple `swap(system.beta)`.
 #[derive(Debug, Clone)]
 pub struct System {
-    /// Lattice topology (immutable after construction).
-    pub lattice: Lattice,
+    /// Lattice topology in CSR format (immutable after construction).
+    pub lattice: CsrLattice,
 
     /// Spin configuration, flattened: `spins[site * spin_dim + component]`.
     /// Length = `n_sites × spin_dim`.
@@ -25,7 +25,7 @@ pub struct System {
 
 impl System {
     /// Create a system with all spins set to `init_value`.
-    pub fn new(lattice: Lattice, spin_dim: usize, init_value: f64, beta: f64) -> Self {
+    pub fn new(lattice: CsrLattice, spin_dim: usize, init_value: f64, beta: f64) -> Self {
         let n = lattice.n_sites * spin_dim;
         Self {
             spins: vec![init_value; n],
