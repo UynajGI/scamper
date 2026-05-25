@@ -5,6 +5,8 @@ use crate::lattice::Lattice;
 /// Mutable state of a classical Monte Carlo simulation.
 ///
 /// All fields are `pub` — algorithms read and write them directly.
+/// Temperature (β) lives here as runtime state, not in the model,
+/// which enables parallel tempering via simple `swap(system.beta)`.
 #[derive(Debug, Clone)]
 pub struct System {
     /// Lattice topology (immutable after construction).
@@ -16,16 +18,20 @@ pub struct System {
 
     /// Running total energy of the current configuration.
     pub energy: f64,
+
+    /// Inverse temperature β = 1/(k_B T).
+    pub beta: f64,
 }
 
 impl System {
     /// Create a system with all spins set to `init_value`.
-    pub fn new(lattice: Lattice, spin_dim: usize, init_value: f64) -> Self {
+    pub fn new(lattice: Lattice, spin_dim: usize, init_value: f64, beta: f64) -> Self {
         let n = lattice.n_sites * spin_dim;
         Self {
             spins: vec![init_value; n],
             energy: 0.0,
             lattice,
+            beta,
         }
     }
 

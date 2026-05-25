@@ -1,6 +1,6 @@
 //! Monte Carlo algorithms — sweep strategies.
 
-use crate::model::Model;
+use crate::hamiltonian::{ClusterModel, Hamiltonian, Proposable};
 use crate::proposal::ProposalStrategy;
 use crate::system::System;
 use rand::Rng;
@@ -9,12 +9,18 @@ use rand::RngExt;
 /// Algorithm trait. One `sweep` = one full pass over the system.
 ///
 /// The algorithm is responsible for updating both `system.spins` and `system.energy`.
-pub trait Algorithm<M: Model>: Send {
-    fn sweep(&mut self, system: &mut System, model: &M, rng: &mut impl Rng);
+pub trait Algorithm<H: Hamiltonian>: Send {
+    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng);
 
     fn name(&self) -> &'static str {
         "Unknown"
     }
+}
+
+/// Dot product of two equal-length slices.
+#[inline]
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
 // ── Metropolis ──────────────────────────────────────────────
@@ -48,15 +54,15 @@ impl<S: Default> MetropolisCore<S> {
     }
 }
 
-impl<M, S> Algorithm<M> for MetropolisCore<S>
+impl<H, S> Algorithm<H> for MetropolisCore<S>
 where
-    M: Model,
-    S: ProposalStrategy<M> + Clone,
+    H: Hamiltonian + Proposable,
+    S: ProposalStrategy<H> + Clone,
 {
-    fn sweep(&mut self, system: &mut System, model: &M, rng: &mut impl Rng) {
+    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
         let n = system.n_sites();
         let sd = model.spin_dim();
-        let beta = model.beta();
+        let beta = system.beta;
 
         // Random visit order
         let mut order: Vec<usize> = (0..n).collect();
@@ -70,11 +76,12 @@ where
                 &system.spins,
                 &system.lattice,
                 site,
+                beta,
                 system.spin_at(site, sd),
             );
 
             let proposed = self.strategy.propose(model, system, site, rng);
-            let new_energy = model.local_energy(&system.spins, &system.lattice, site, &proposed);
+            let new_energy = model.local_energy(&system.spins, &system.lattice, site, beta, &proposed);
 
             let delta_e = new_energy - old_energy;
             let accepted = delta_e <= 0.0 || rng.random::<f64>() < (-beta * delta_e).exp();
@@ -97,8 +104,12 @@ where
 
 /// Wolff single-cluster algorithm.
 ///
-/// Grows a cluster from a random seed site, connecting aligned neighbors
-/// with FK bond probability, then flips the entire cluster.
+/// For scalar spins (Ising, Potts): grows a cluster from a random seed,
+/// connects aligned neighbors with FK bond probability, flips the cluster.
+///
+/// For vector spins (XY, Heisenberg): uses Wolff embedding — projects spins
+/// onto a random direction, builds FK clusters in the projected Ising variables,
+/// then reflects each spin across the plane perpendicular to the embedding direction.
 #[derive(Debug, Clone, Default)]
 pub struct WolffCore;
 
@@ -108,53 +119,97 @@ impl WolffCore {
     }
 }
 
-impl<M: Model> Algorithm<M> for WolffCore {
-    fn sweep(&mut self, system: &mut System, model: &M, rng: &mut impl Rng) {
+impl<H: Hamiltonian + ClusterModel> Algorithm<H> for WolffCore {
+    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
         let n = system.n_sites();
         let sd = model.spin_dim();
-        let p_add = model.fk_bond_probability();
+        let beta = system.beta;
+        let p_add = model.fk_bond_probability(beta);
 
-        // Pick random seed
-        let seed = rng.random_range(0..n);
-        let seed_spin = system.spin_at(seed, sd).to_vec();
-        let opposite = model.opposite_spin(seed_spin[0], rng);
+        if sd == 1 {
+            // ── scalar fast path (Ising, Potts) ──
+            let seed = rng.random_range(0..n);
+            let seed_spin = system.spins[seed];
+            let opposite = model.opposite_spin(seed_spin, rng);
 
-        // BFS cluster growth
-        let mut cluster = vec![false; n];
-        let mut stack = vec![seed];
-        cluster[seed] = true;
+            let mut cluster = vec![false; n];
+            let mut stack = vec![seed];
+            cluster[seed] = true;
 
-        while let Some(site) = stack.pop() {
-            for nb in &system.lattice.sites[site] {
-                if cluster[nb.target] {
-                    continue;
-                }
-                // Check spin alignment
-                let nb_spin = system.spins[nb.target];
-                if (nb_spin - seed_spin[0]).abs() > 1e-10 {
-                    continue;
-                }
-                // FK bond
-                if rng.random::<f64>() < p_add {
-                    cluster[nb.target] = true;
-                    stack.push(nb.target);
+            while let Some(site) = stack.pop() {
+                for nb in &system.lattice.sites[site] {
+                    if cluster[nb.target] {
+                        continue;
+                    }
+                    let nb_spin = system.spins[nb.target];
+                    if (nb_spin - seed_spin).abs() > 1e-10 {
+                        continue;
+                    }
+                    if rng.random::<f64>() < p_add {
+                        cluster[nb.target] = true;
+                        stack.push(nb.target);
+                    }
                 }
             }
-        }
 
-        // Flip cluster and update energy
-        for (site, &in_cluster) in cluster.iter().enumerate() {
-            if in_cluster {
-                let old_local = model.local_energy(
-                    &system.spins,
-                    &system.lattice,
-                    site,
-                    system.spin_at(site, sd),
-                );
-                let new_spin = vec![opposite];
-                let new_local = model.local_energy(&system.spins, &system.lattice, site, &new_spin);
-                system.energy += new_local - old_local;
-                system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
+            for (site, &in_cluster) in cluster.iter().enumerate() {
+                if in_cluster {
+                    let old_local = model.local_energy(
+                        &system.spins,
+                        &system.lattice,
+                        site,
+                        beta,
+                        system.spin_at(site, sd),
+                    );
+                    let new_spin = vec![opposite];
+                    let new_local =
+                        model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin);
+                    system.energy += new_local - old_local;
+                    system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
+                }
+            }
+        } else {
+            // ── embedding path (XY, Heisenberg) ──
+            let direction = model.embedding_direction(rng);
+
+            let seed = rng.random_range(0..n);
+            let seed_spin = system.spin_at(seed, sd);
+            let seed_proj: f64 = dot(seed_spin, &direction);
+
+            // BFS cluster based on projected spins
+            let mut cluster = vec![false; n];
+            let mut stack = vec![seed];
+            cluster[seed] = true;
+
+            while let Some(site) = stack.pop() {
+                for nb in &system.lattice.sites[site] {
+                    if cluster[nb.target] {
+                        continue;
+                    }
+                    let nb_spin = system.spin_at(nb.target, sd);
+                    let nb_proj: f64 = dot(nb_spin, &direction);
+                    if seed_proj * nb_proj <= 0.0 {
+                        continue;
+                    }
+                    if rng.random::<f64>() < p_add {
+                        cluster[nb.target] = true;
+                        stack.push(nb.target);
+                    }
+                }
+            }
+
+            // Reflect spins across plane ⟂ direction
+            for (site, &in_cluster) in cluster.iter().enumerate() {
+                if in_cluster {
+                    let spin = system.spin_at(site, sd);
+                    let old_local = model.local_energy(&system.spins, &system.lattice, site, beta, spin);
+                    let mut new_spin = spin.to_vec();
+                    model.reflect(&mut new_spin, &direction);
+                    let new_local =
+                        model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin);
+                    system.energy += new_local - old_local;
+                    system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
+                }
             }
         }
     }
@@ -168,8 +223,12 @@ impl<M: Model> Algorithm<M> for WolffCore {
 
 /// Swendsen-Wang cluster algorithm.
 ///
-/// Visits all bonds, connects aligned neighbors with FK bond probability,
-/// identifies clusters via union-find, then flips each cluster with 50% probability.
+/// For scalar spins (Ising, Potts): visits all bonds, connects aligned neighbors
+/// with FK bond probability, identifies clusters via union-find, flips each
+/// cluster with 50% probability.
+///
+/// For vector spins (XY, Heisenberg): uses SW embedding — projects spins onto
+/// a random direction, builds FK clusters, flips clusters via spin reflection.
 #[derive(Debug, Clone, Default)]
 pub struct SWCore;
 
@@ -179,11 +238,12 @@ impl SWCore {
     }
 }
 
-impl<M: Model> Algorithm<M> for SWCore {
-    fn sweep(&mut self, system: &mut System, model: &M, rng: &mut impl Rng) {
+impl<H: Hamiltonian + ClusterModel> Algorithm<H> for SWCore {
+    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
         let n = system.n_sites();
         let sd = model.spin_dim();
-        let p_add = model.fk_bond_probability();
+        let beta = system.beta;
+        let p_add = model.fk_bond_probability(beta);
 
         // Union-find
         let mut parent: Vec<usize> = (0..n).collect();
@@ -220,44 +280,86 @@ impl<M: Model> Algorithm<M> for SWCore {
             }
         }
 
-        // Visit all bonds
-        for i in 0..n {
-            for nb in &system.lattice.sites[i] {
-                if i >= nb.target {
-                    continue; // process each bond once
-                }
-                if (system.spins[i] - system.spins[nb.target]).abs() > 1e-10 {
-                    continue;
-                }
-                if rng.random::<f64>() < p_add {
-                    union(&mut parent, &mut rank, i, nb.target);
+        if sd == 1 {
+            // ── scalar fast path (Ising, Potts) ──
+            for i in 0..n {
+                for nb in &system.lattice.sites[i] {
+                    if i >= nb.target {
+                        continue;
+                    }
+                    if (system.spins[i] - system.spins[nb.target]).abs() > 1e-10 {
+                        continue;
+                    }
+                    if rng.random::<f64>() < p_add {
+                        union(&mut parent, &mut rank, i, nb.target);
+                    }
                 }
             }
-        }
 
-        // Decide flip for each cluster root
-        let mut flip_root = vec![false; n];
-        for i in 0..n {
-            if parent[i] == i {
-                flip_root[i] = rng.random::<bool>();
+            let mut flip_root = vec![false; n];
+            for i in 0..n {
+                if parent[i] == i {
+                    flip_root[i] = rng.random::<bool>();
+                }
             }
-        }
 
-        // Apply flips
-        let opposite = model.random_cluster_spin(rng);
-        for site in 0..n {
-            let root = find(&mut parent, site);
-            if flip_root[root] {
-                let old_local = model.local_energy(
-                    &system.spins,
-                    &system.lattice,
-                    site,
-                    system.spin_at(site, sd),
-                );
-                let new_spin = vec![opposite];
-                let new_local = model.local_energy(&system.spins, &system.lattice, site, &new_spin);
-                system.energy += new_local - old_local;
-                system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
+            let new_cluster_spin = model.random_cluster_spin(rng);
+            for site in 0..n {
+                let root = find(&mut parent, site);
+                if flip_root[root] {
+                    let old_local = model.local_energy(
+                        &system.spins,
+                        &system.lattice,
+                        site,
+                        beta,
+                        system.spin_at(site, sd),
+                    );
+                    let new_spin = vec![new_cluster_spin];
+                    let new_local =
+                        model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin);
+                    system.energy += new_local - old_local;
+                    system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
+                }
+            }
+        } else {
+            // ── embedding path (XY, Heisenberg) ──
+            let direction = model.embedding_direction(rng);
+
+            for i in 0..n {
+                for nb in &system.lattice.sites[i] {
+                    if i >= nb.target {
+                        continue;
+                    }
+                    let proj_i: f64 = dot(system.spin_at(i, sd), &direction);
+                    let proj_nb: f64 = dot(system.spin_at(nb.target, sd), &direction);
+                    if proj_i * proj_nb <= 0.0 {
+                        continue;
+                    }
+                    if rng.random::<f64>() < p_add {
+                        union(&mut parent, &mut rank, i, nb.target);
+                    }
+                }
+            }
+
+            let mut flip_root = vec![false; n];
+            for i in 0..n {
+                if parent[i] == i {
+                    flip_root[i] = rng.random::<bool>();
+                }
+            }
+
+            for site in 0..n {
+                let root = find(&mut parent, site);
+                if flip_root[root] {
+                    let spin = system.spin_at(site, sd);
+                    let old_local = model.local_energy(&system.spins, &system.lattice, site, beta, spin);
+                    let mut new_spin = spin.to_vec();
+                    model.reflect(&mut new_spin, &direction);
+                    let new_local =
+                        model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin);
+                    system.energy += new_local - old_local;
+                    system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
+                }
             }
         }
     }
@@ -273,20 +375,32 @@ impl<M: Model> Algorithm<M> for SWCore {
 mod tests {
     use super::*;
     use crate::lattice::build_chain;
-    use crate::model::IsingModel;
+    use crate::models::{HeisenbergModel, IsingModel, XYModel};
     use rand::SeedableRng;
 
     fn make_rng() -> rand_xoshiro::Xoshiro256PlusPlus {
         rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42)
     }
 
+    /// Check that all XY/Heisenberg spins are approximately parallel.
+    fn all_aligned(spins: &[f64], sd: usize) -> bool {
+        let ref_spin = &spins[..sd];
+        for chunk in spins.chunks(sd) {
+            let d: f64 = dot(ref_spin, chunk);
+            if d < 0.99 {
+                return false;
+            }
+        }
+        true
+    }
+
     #[test]
     fn test_metropolis_single_site() {
         let lattice = build_chain(1, false);
-        let mut system = System::new(lattice, 1, 1.0);
+        let mut system = System::new(lattice, 1, 1.0, 1.0);
         system.energy = 0.0;
 
-        let model = IsingModel::new(1.0, 1.0);
+        let model = IsingModel::new(1.0);
         let mut algo = MetropolisCore::new();
         let mut rng = make_rng();
 
@@ -299,9 +413,9 @@ mod tests {
     #[test]
     fn test_metropolis_cools_to_ground() {
         let lattice = build_chain(4, true);
-        let mut system = System::new(lattice.clone(), 1, 1.0);
-        let model = IsingModel::new(1.0, 10.0); // beta = 10, very cold
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice);
+        let model = IsingModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 1, 1.0, 10.0); // beta = 10, very cold
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
 
         let mut algo = MetropolisCore::new();
         let mut rng = make_rng();
@@ -319,9 +433,9 @@ mod tests {
     fn test_wolff_preserves_energy_sign() {
         // At low T, Wolff should maintain ferromagnetic order
         let lattice = build_chain(8, true);
-        let mut system = System::new(lattice.clone(), 1, 1.0);
-        let model = IsingModel::new(1.0, 5.0); // beta=5, cold
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice);
+        let model = IsingModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 1, 1.0, 5.0); // beta=5, cold
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
 
         let mut algo = WolffCore::new();
         let mut rng = make_rng();
@@ -339,9 +453,9 @@ mod tests {
     #[test]
     fn test_sw_preserves_energy_sign() {
         let lattice = build_chain(8, true);
-        let mut system = System::new(lattice.clone(), 1, 1.0);
-        let model = IsingModel::new(1.0, 5.0);
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice);
+        let model = IsingModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 1, 1.0, 5.0);
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
 
         let mut algo = SWCore::new();
         let mut rng = make_rng();
@@ -354,5 +468,96 @@ mod tests {
         let all_same = system.spins.iter().all(|&s| s == system.spins[0]);
         assert!(all_same);
         assert!(system.energy < -7.0);
+    }
+
+    // ── Embedding tests (XY / Heisenberg) ──────────────────
+
+    #[test]
+    fn test_wolff_xy_single_site() {
+        let lattice = build_chain(1, false);
+        let mut system = System::new(lattice, 2, 1.0, 1.0);
+        system.energy = 0.0;
+
+        let model = XYModel::new(1.0);
+        let mut algo = WolffCore::new();
+        let mut rng = make_rng();
+
+        for _ in 0..50 {
+            algo.sweep(&mut system, &model, &mut rng);
+        }
+        assert!((system.energy - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_wolff_xy_cools_to_ground() {
+        let lattice = build_chain(4, true);
+        let model = XYModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 2, 1.0, 10.0);
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+
+        let mut algo = WolffCore::new();
+        let mut rng = make_rng();
+
+        for _ in 0..800 {
+            algo.sweep(&mut system, &model, &mut rng);
+        }
+
+        // At high beta, XY spins should align: 4 bonds × -J = -4
+        assert!(system.energy < -3.5);
+        assert!(all_aligned(&system.spins, 2));
+    }
+
+    #[test]
+    fn test_wolff_heisenberg_cools_to_ground() {
+        let lattice = build_chain(4, true);
+        let model = HeisenbergModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 3, 1.0, 10.0);
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+
+        let mut algo = WolffCore::new();
+        let mut rng = make_rng();
+
+        for _ in 0..800 {
+            algo.sweep(&mut system, &model, &mut rng);
+        }
+
+        assert!(system.energy < -3.5);
+        assert!(all_aligned(&system.spins, 3));
+    }
+
+    #[test]
+    fn test_sw_xy_cools_to_ground() {
+        let lattice = build_chain(8, true);
+        let model = XYModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 2, 1.0, 5.0);
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+
+        let mut algo = SWCore::new();
+        let mut rng = make_rng();
+
+        for _ in 0..500 {
+            algo.sweep(&mut system, &model, &mut rng);
+        }
+
+        assert!(system.energy < -7.0);
+        assert!(all_aligned(&system.spins, 2));
+    }
+
+    #[test]
+    fn test_sw_heisenberg_cools_to_ground() {
+        let lattice = build_chain(8, true);
+        let model = HeisenbergModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 3, 1.0, 5.0);
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+
+        let mut algo = SWCore::new();
+        let mut rng = make_rng();
+
+        for _ in 0..500 {
+            algo.sweep(&mut system, &model, &mut rng);
+        }
+
+        assert!(system.energy < -7.0);
+        assert!(all_aligned(&system.spins, 3));
     }
 }

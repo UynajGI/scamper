@@ -3,25 +3,23 @@
 //! A [`ProposalStrategy`] defines how new spins are proposed and can adapt
 //! its parameters based on sweep history (e.g., OPSS sigma tuning).
 
-use crate::model::Model;
+use crate::hamiltonian::{Hamiltonian, Proposable};
 use crate::system::System;
 use rand::Rng;
 
 /// A proposal strategy for use with [`MetropolisCore`](crate::MetropolisCore).
-pub trait ProposalStrategy<M: Model>: Send {
-    /// Propose a new spin at the given site. Default: delegates to `model.propose()`.
+pub trait ProposalStrategy<H: Hamiltonian>: Send {
+    /// Propose a new spin at the given site.
     fn propose(
         &mut self,
-        model: &M,
+        model: &H,
         _system: &System,
         _site: usize,
         rng: &mut impl Rng,
-    ) -> Vec<f64> {
-        model.propose(rng)
-    }
+    ) -> Vec<f64>;
 
     /// Called after each sweep for strategies that need per-sweep adaptation.
-    fn adapt_after_sweep(&mut self, _model: &M) {}
+    fn adapt_after_sweep(&mut self, _model: &H) {}
 }
 
 // ── Standard ────────────────────────────────────────────────
@@ -36,7 +34,11 @@ impl StandardStrategy {
     }
 }
 
-impl<M: Model> ProposalStrategy<M> for StandardStrategy {}
+impl<H: Hamiltonian + Proposable> ProposalStrategy<H> for StandardStrategy {
+    fn propose(&mut self, model: &H, _system: &System, _site: usize, rng: &mut impl Rng) -> Vec<f64> {
+        model.propose(rng)
+    }
+}
 
 // ── OPSS (Over-relaxation) ──────────────────────────────────
 
@@ -80,15 +82,13 @@ impl Default for OPSSStrategy {
     }
 }
 
-impl<M: Model> ProposalStrategy<M> for OPSSStrategy {
-    fn propose(&mut self, model: &M, system: &System, site: usize, rng: &mut impl Rng) -> Vec<f64> {
+impl<H: Hamiltonian + Proposable> ProposalStrategy<H> for OPSSStrategy {
+    fn propose(&mut self, model: &H, system: &System, site: usize, rng: &mut impl Rng) -> Vec<f64> {
         let sd = model.spin_dim();
         let old = system.spin_at(site, sd);
 
         if sd == 1 {
             // Scalar: reflect about local field
-            // new = -sigma * old + (1+sigma) * sign(local_field)
-            // For sigma=1: new = -old (deterministic flip)
             let local_field: f64 = system.lattice.sites[site]
                 .iter()
                 .map(|nb| system.spins[nb.target])
@@ -97,7 +97,6 @@ impl<M: Model> ProposalStrategy<M> for OPSSStrategy {
             vec![proposed.signum()] // always ±1 for Ising
         } else {
             // Vector: reflect spin about local field direction
-            // h = Σ_j J_{ij} S_j (sum of neighbor spins)
             let mut h = vec![0.0; sd];
             for nb in &system.lattice.sites[site] {
                 let base = nb.target * sd;
@@ -128,7 +127,7 @@ impl<M: Model> ProposalStrategy<M> for OPSSStrategy {
         }
     }
 
-    fn adapt_after_sweep(&mut self, _model: &M) {
+    fn adapt_after_sweep(&mut self, _model: &H) {
         if self.attempted == 0 {
             return;
         }

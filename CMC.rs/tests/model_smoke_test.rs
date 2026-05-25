@@ -1,12 +1,18 @@
 //! Smoke tests: each model + Metropolis runs through Scheduler.
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
-use cmc_rs::{ClassicalMC, HeisenbergModel, MetropolisCore, PottsModel, XYModel};
+use cmc_rs::{
+    ClassicalMC, ClusterModel, FromHamiltonianParams, Hamiltonian, HeisenbergModel, Measurable,
+    MetropolisCore, Proposable, PottsModel, XYModel,
+};
 
-fn run_model<M: cmc_rs::Model + cmc_rs::FromModelParams>(
+fn run_model<M>(
     extra_params: &[(&str, &str)],
     n_sites_approx: usize,
-) -> (f64, f64) {
+) -> (f64, f64)
+where
+    M: Hamiltonian + Measurable + Proposable + ClusterModel + FromHamiltonianParams,
+{
     let l = (n_sites_approx as f64).sqrt().round() as usize;
     let mut params = Params::new();
     params.set("Lx", l);

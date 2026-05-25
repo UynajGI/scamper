@@ -1,14 +1,15 @@
-//! Pre-built wrapper that composes Model + Algorithm into a Carlo.rs [`MonteCarlo`] impl.
+//! Pre-built wrapper that composes Hamiltonian + Algorithm into a Carlo.rs [`MonteCarlo`] impl.
 
 use crate::algorithm::Algorithm;
+use crate::hamiltonian::{ClusterModel, Hamiltonian, Measurable, Proposable};
 use crate::lattice::build_hypercubic;
-use crate::model::Model;
+use crate::observables::DefaultObservableSet;
 use crate::system::System;
 use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, Params};
 
 /// Pre-composed classical Monte Carlo simulation.
 ///
-/// `M` = physics model (e.g. `IsingModel`), `A` = algorithm (e.g. `MetropolisCore`).
+/// `H` = Hamiltonian (e.g. `IsingModel`), `A` = algorithm (e.g. `MetropolisCore`).
 ///
 /// # Usage
 ///
@@ -18,25 +19,48 @@ use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, Params};
 /// let scheduler = Scheduler::new(backend, config);
 /// let results = scheduler.run_one::<IsingMetro>(&params);
 /// ```
-pub struct ClassicalMC<M: Model, A: Algorithm<M>> {
+pub struct ClassicalMC<H, A>
+where
+    H: Hamiltonian + Measurable,
+    A: Algorithm<H>,
+{
     pub system: System,
-    pub model: M,
+    pub model: H,
     pub algorithm: A,
+    pub observables: DefaultObservableSet<H>,
 }
 
-impl<M: Model, A: Algorithm<M>> ClassicalMC<M, A> {
-    pub fn new(system: System, model: M, algorithm: A) -> Self {
+impl<H, A> ClassicalMC<H, A>
+where
+    H: Hamiltonian + Measurable,
+    A: Algorithm<H>,
+{
+    pub fn new(system: System, model: H, algorithm: A) -> Self {
         Self {
             system,
             model,
             algorithm,
+            observables: DefaultObservableSet::new(),
+        }
+    }
+
+    pub fn with_observables(system: System, model: H, algorithm: A, observables: DefaultObservableSet<H>) -> Self {
+        Self {
+            system,
+            model,
+            algorithm,
+            observables,
         }
     }
 }
 
 // ── MonteCarlo impl ────────────────────────────────────────
 
-impl<M: Model, A: Algorithm<M>> MonteCarlo for ClassicalMC<M, A> {
+impl<H, A> MonteCarlo for ClassicalMC<H, A>
+where
+    H: Hamiltonian + Measurable,
+    A: Algorithm<H>,
+{
     type Rng = rand_xoshiro::Xoshiro256PlusPlus;
 
     fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
@@ -45,9 +69,9 @@ impl<M: Model, A: Algorithm<M>> MonteCarlo for ClassicalMC<M, A> {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        ctx.measure("Energy", self.system.energy);
-        let mag = self.model.magnetization(&self.system.spins);
-        ctx.measure("Magnetization", mag);
+        for obs in self.observables.iter() {
+            ctx.measure(obs.name(), obs.measure(&self.system, &self.model));
+        }
     }
 
     fn name(&self) -> &'static str {
@@ -80,10 +104,10 @@ fn parse_lattice(params: &Params) -> (Vec<usize>, Vec<crate::lattice::BondType>)
     (vec![l], vec![BondType::ChainX])
 }
 
-impl<M, A> FromParams for ClassicalMC<M, A>
+impl<H, A> FromParams for ClassicalMC<H, A>
 where
-    M: Model + FromModelParams,
-    A: Algorithm<M> + Default,
+    H: Hamiltonian + Measurable + Proposable + ClusterModel + FromHamiltonianParams,
+    A: Algorithm<H> + Default,
 {
     fn from_params(params: &Params, rng: &mut Self::Rng) -> Result<Self, CarloError> {
         let pbc: bool = params
@@ -93,64 +117,63 @@ where
         let (dims, bond_types) = parse_lattice(params);
         let lattice = build_hypercubic(&dims, &bond_types, pbc);
 
-        let model = M::from_model_params(params)?;
+        let beta = params.get::<f64>("beta").unwrap_or(1.0);
+        let model = H::from_hamiltonian_params(params)?;
         let spin_dim = model.spin_dim();
         let algorithm = A::default();
 
         // Random initial spins
-        let mut system = System::new(lattice, spin_dim, 0.0);
+        let mut system = System::new(lattice, spin_dim, 0.0, beta);
         for site in 0..system.n_sites() {
-            let spin = model.random_spin(rng);
+            let spin = model.propose(rng);
             system.spin_at_mut(site, spin_dim).copy_from_slice(&spin);
         }
         // Compute initial energy
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice);
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, beta);
 
         Ok(Self {
             system,
             model,
             algorithm,
+            observables: DefaultObservableSet::new(),
         })
     }
 }
 
-/// Minimal per-model param parsing trait. Separates model params from lattice params.
-pub trait FromModelParams: Model + Sized {
-    fn from_model_params(params: &Params) -> Result<Self, CarloError>;
+/// Minimal per-model param parsing trait. Separates model params (J, q, ...) from
+/// lattice params (L, dims) and temperature (β).
+pub trait FromHamiltonianParams: Hamiltonian + Sized {
+    fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError>;
 }
 
-// ── IsingModel FromModelParams ──────────────────────────────
+// ── IsingModel FromHamiltonianParams ────────────────────────
 
-impl FromModelParams for crate::model::IsingModel {
-    fn from_model_params(params: &Params) -> Result<Self, CarloError> {
+impl FromHamiltonianParams for crate::models::IsingModel {
+    fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
         let j = params.get::<f64>("J").unwrap_or(1.0);
-        let beta = params.get::<f64>("beta").unwrap_or(1.0);
-        Ok(Self::new(j, beta))
+        Ok(Self::new(j))
     }
 }
 
-impl FromModelParams for crate::model::PottsModel {
-    fn from_model_params(params: &Params) -> Result<Self, CarloError> {
+impl FromHamiltonianParams for crate::models::PottsModel {
+    fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
         let j = params.get::<f64>("J").unwrap_or(1.0);
-        let beta = params.get::<f64>("beta").unwrap_or(1.0);
         let q = params.get::<usize>("q").unwrap_or(3);
-        Ok(Self::new(j, beta, q))
+        Ok(Self::new(j, q))
     }
 }
 
-impl FromModelParams for crate::model::XYModel {
-    fn from_model_params(params: &Params) -> Result<Self, CarloError> {
+impl FromHamiltonianParams for crate::models::XYModel {
+    fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
         let j = params.get::<f64>("J").unwrap_or(1.0);
-        let beta = params.get::<f64>("beta").unwrap_or(1.0);
-        Ok(Self::new(j, beta))
+        Ok(Self::new(j))
     }
 }
 
-impl FromModelParams for crate::model::HeisenbergModel {
-    fn from_model_params(params: &Params) -> Result<Self, CarloError> {
+impl FromHamiltonianParams for crate::models::HeisenbergModel {
+    fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
         let j = params.get::<f64>("J").unwrap_or(1.0);
-        let beta = params.get::<f64>("beta").unwrap_or(1.0);
-        Ok(Self::new(j, beta))
+        Ok(Self::new(j))
     }
 }
 
@@ -160,7 +183,7 @@ impl FromModelParams for crate::model::HeisenbergModel {
 mod tests {
     use super::*;
     use crate::algorithm::MetropolisCore;
-    use crate::model::IsingModel;
+    use crate::models::IsingModel;
     use carlo_rs::{RayonBackend, RunConfig, Scheduler};
 
     #[test]

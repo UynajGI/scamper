@@ -5,10 +5,14 @@
 //! # Architecture
 //!
 //! ```text
-//! ClassicalMC<M, A>  ← impl MonteCarlo + FromParams (pre-built)
-//!   ├── System       ← mutable state: spins, energy
-//!   ├── Model (M)    ← stateless physics (Ising, Potts, XY, Heisenberg)
-//!   └── Algorithm (A)← update strategy (Metropolis, Wolff, Swendsen-Wang)
+//! ClassicalMC<H, A>  ← impl MonteCarlo + FromParams (pre-built)
+//!   ├── System       ← mutable state: spins, energy, beta
+//!   ├── H: Hamiltonian ← stateless physics (Ising, Potts, XY, Heisenberg)
+//!   │   + ClusterModel  ← cluster algorithm support
+//!   │   + Proposable    ← spin proposal
+//!   │   + Measurable    ← magnetization
+//!   ├── A: Algorithm ← update strategy (Metropolis, Wolff, Swendsen-Wang)
+//!   └── observables  ← pluggable measurement system
 //! ```
 //!
 //! # Usage
@@ -37,15 +41,36 @@
 
 pub mod algorithm;
 pub mod classical_mc;
+pub mod hamiltonian;
 pub mod lattice;
-pub mod model;
+pub mod models;
+pub mod observables;
 pub mod proposal;
 pub mod system;
 
-// Re-export key types
+// Re-export key types from hamiltonian (traits)
+pub use hamiltonian::{ClusterModel, Hamiltonian, Measurable, Proposable};
+
+// Re-export models
+pub use models::{HeisenbergModel, IsingModel, PottsModel, XYModel};
+
+// Re-export algorithms
 pub use algorithm::{Algorithm, MetropolisCore, SWCore, WolffCore};
-pub use classical_mc::{ClassicalMC, FromModelParams};
-pub use lattice::{build_chain, build_hypercubic, build_square, BondType, Lattice, Neighbor};
-pub use model::{HeisenbergModel, IsingModel, Model, PottsModel, XYModel};
+
+// Re-export observables
+pub use observables::{DefaultObservableSet, EnergyPerSite, Magnetization, Observable, TotalEnergy};
+
+// Re-export classical_mc
+pub use classical_mc::{ClassicalMC, FromHamiltonianParams};
+
+// Re-export lattice
+pub use lattice::{
+    build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
+    BondType, Lattice, Neighbor,
+};
+
+// Re-export proposal
 pub use proposal::{OPSSStrategy, ProposalStrategy, StandardStrategy};
+
+// Re-export system
 pub use system::System;
