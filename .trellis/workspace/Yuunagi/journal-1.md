@@ -182,3 +182,38 @@ TDD from easiest to hardest: (1) postprocess.rs — susceptibility, specific_hea
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: CMC.rs medium-priority: lattice_type param, non-square lattice validation
+
+**Date**: 2026-05-25
+**Task**: CMC.rs medium-priority: lattice_type param, non-square lattice validation
+**Package**: carlo-rs
+**Branch**: `main`
+
+### Summary
+
+TDD from easiest to hardest: (1) lattice_type param in build_lattice_from_params() routes to triangular/honeycomb/kagome builders. (2) Non-square lattice smoke tests: triangular ferro Ising + kagome AF Ising end-to-end validation. 73 CMC + 128 Carlo tests, clippy clean. Skipped OPSS benchmark (criterion setup non-critical).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d7a7830` | (see git log) |
+| `c512e49` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
