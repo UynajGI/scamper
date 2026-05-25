@@ -92,6 +92,24 @@ Every algorithm updates `system.energy` the same way: compute `local_energy` bef
 
 `ClassicalMC` is a pure delegation wrapper. If you find yourself writing sweep logic in `classical_mc.rs`, it belongs in `algorithm.rs`.
 
+### Lattice routing via `lattice_type` param
+
+Use `build_lattice_from_params(params, pbc)` to route lattice construction. Add new lattice types by extending the match in this function.
+
+```rust
+// CORRECT: single function routes to all builders
+fn build_lattice_from_params(params: &Params, pbc: bool) -> Result<CsrLattice, CarloError> {
+    match params.get::<String>("lattice_type").unwrap_or_default().as_str() {
+        "triangular" => Ok(build_triangular(lx, ly)),
+        "honeycomb" => Ok(build_honeycomb(lx, ly)),
+        "kagome" => Ok(build_kagome(lx, ly)),
+        _ => { /* hypercubic family */ }
+    }
+}
+
+// WRONG: duplicating lattice-building logic in each FromParams impl
+```
+
 ### Don't compute total_energy from scratch per sweep
 
 Use `model.compute_total_energy()` ONLY for initialization. During sweeps, use incremental updates (`system.energy += delta`). Computing `total_energy()` from scratch every sweep is O(N) unnecessary work.
