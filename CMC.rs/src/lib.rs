@@ -57,7 +57,9 @@ pub use hamiltonian::{ClusterModel, Hamiltonian, HeatBathable, Measurable, Propo
 pub use models::{HeisenbergModel, IsingModel, PottsModel, XYModel};
 
 // Re-export algorithms
-pub use algorithm::{Algorithm, HeatBathCore, MetropolisCore, SWCore, WolffCore};
+pub use algorithm::{
+    Algorithm, HeatBathCore, MetropolisCore, MicrocanonicalCore, SWCore, WolffCore,
+};
 
 // Re-export observables
 pub use observables::{

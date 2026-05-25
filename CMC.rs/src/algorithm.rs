@@ -373,6 +373,84 @@ impl<H: Hamiltonian + ClusterModel> Algorithm<H> for SWCore {
     }
 }
 
+// ── Microcanonical Over-Relaxation ───────────────────────────
+
+/// Reflect a spin across the unit vector of the local field.
+///
+/// `s_new = 2 (s·ĥ) ĥ - s`. Energy is exactly preserved (ΔE = 0).
+/// Works for any spin dimension (XY: sd=2, Heisenberg: sd=3).
+#[inline]
+fn reflect_spin(spin: &[f64], local_field: &[f64], sd: usize) -> SmallVec<[f64; 3]> {
+    let h_norm: f64 = local_field.iter().map(|&x| x * x).sum::<f64>().sqrt();
+    if h_norm < 1e-12 {
+        return SmallVec::from_slice(spin);
+    }
+    let h_hat: SmallVec<[f64; 3]> = local_field.iter().map(|&x| x / h_norm).collect();
+    let s_dot_h: f64 = spin.iter().zip(&h_hat).map(|(&s, &h)| s * h).sum();
+    let mut new = SmallVec::from_elem(0.0, sd);
+    for k in 0..sd {
+        new[k] = 2.0 * s_dot_h * h_hat[k] - spin[k];
+    }
+    new
+}
+
+/// Microcanonical over-relaxation algorithm.
+///
+/// Visits every site once in random order and reflectes each spin across the
+/// local field direction. Energy is exactly preserved — no acceptance step
+/// needed. For XY and Heisenberg models. Mix with Metropolis/HeatBath sweeps
+/// (typically 1 ergodic + 4-10 OR sweeps) to reduce critical slowing down.
+#[derive(Debug, Clone, Default)]
+pub struct MicrocanonicalCore;
+
+impl MicrocanonicalCore {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl<H: Hamiltonian + Proposable> Algorithm<H> for MicrocanonicalCore {
+    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
+        let n = system.n_sites();
+        let sd = model.spin_dim();
+
+        // Random visit order
+        let mut order: Vec<usize> = (0..n).collect();
+        for i in (1..n).rev() {
+            let j = rng.random_range(0..=i);
+            order.swap(i, j);
+        }
+
+        for &site in &order {
+            // Compute local field from neighbors
+            let mut h = vec![0.0; sd];
+            for &nb in system.lattice.neighbors(site) {
+                let base = nb * sd;
+                for (k, hk) in h.iter_mut().enumerate() {
+                    *hk += system.spins[base + k];
+                }
+            }
+
+            let old = system.spin_at(site, sd).to_vec();
+            let reflected = reflect_spin(&old, &h, sd);
+            let reflected_norm: f64 =
+                reflected.iter().map(|&x| x * x).sum::<f64>().sqrt();
+
+            // Normalize and write back
+            let inv_norm = 1.0 / reflected_norm.max(1e-15);
+            let spin = system.spin_at_mut(site, sd);
+            for (k, s) in spin.iter_mut().enumerate() {
+                *s = reflected.get(k).copied().unwrap_or(0.0) * inv_norm;
+            }
+        }
+        // Energy is exactly preserved — no update needed
+    }
+
+    fn name(&self) -> &'static str {
+        "Microcanonical"
+    }
+}
+
 // ── Heat-Bath (Glauber Dynamics) ─────────────────────────────
 
 /// Heat-bath (Glauber dynamics) algorithm.
@@ -646,6 +724,110 @@ mod tests {
         }
         // At beta=5, should converge to ground state (all aligned)
         assert!(system.energy < -7.0, "energy = {}", system.energy);
+    }
+
+    // ── Microcanonical over-relaxation tests ───────────────────
+
+    #[test]
+    fn test_microcanonical_xy_energy_preserved() {
+        let lattice = build_chain(4, true);
+        let model = XYModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 2, 0.0, 1.0);
+
+        // Manual spin config: alternating (0°, 180°), not ground state
+        // site 0: (1,0), site 1: (-1,0), site 2: (1,0), site 3: (-1,0)
+        let spins_init: Vec<f64> = vec![1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0];
+        system.spins.copy_from_slice(&spins_init);
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+
+        let energy_before = system.energy;
+        let mut algo = MicrocanonicalCore::new();
+        let mut rng = make_rng();
+
+        for _ in 0..10 {
+            algo.sweep(&mut system, &model, &mut rng);
+        }
+
+        let energy_after = system.energy;
+        assert!(
+            (energy_after - energy_before).abs() < 1e-10,
+            "energy should be preserved: before={}, after={}",
+            energy_before,
+            energy_after
+        );
+    }
+
+    #[test]
+    fn test_microcanonical_heisenberg_energy_preserved() {
+        let lattice = build_chain(4, true);
+        let model = HeisenbergModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 3, 0.0, 1.0);
+
+        // Manual 3D config
+        #[rustfmt::skip]
+        let spins_init: Vec<f64> = vec![
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0,
+            -1.0, 0.0, 0.0,
+        ];
+        system.spins.copy_from_slice(&spins_init);
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+
+        let energy_before = system.energy;
+        let mut algo = MicrocanonicalCore::new();
+        let mut rng = make_rng();
+
+        for _ in 0..10 {
+            algo.sweep(&mut system, &model, &mut rng);
+        }
+
+        let energy_after = system.energy;
+        assert!(
+            (energy_after - energy_before).abs() < 1e-10,
+            "energy should be preserved: before={}, after={}",
+            energy_before,
+            energy_after
+        );
+    }
+
+    #[test]
+    fn test_microcanonical_spins_change() {
+        // Verify that microcanonical sweep actually changes spins
+        // (i.e., it's not a no-op)
+        let lattice = build_chain(8, true);
+        let model = XYModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 2, 0.0, 1.0);
+
+        // Random initial spins
+        let mut rng = make_rng();
+        for i in 0..system.n_sites() {
+            let angle: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
+            system.spins[2 * i] = angle.cos();
+            system.spins[2 * i + 1] = angle.sin();
+        }
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+
+        let spins_before = system.spins.clone();
+        let energy_before = system.energy;
+        let mut algo = MicrocanonicalCore::new();
+
+        for _ in 0..5 {
+            algo.sweep(&mut system, &model, &mut rng);
+        }
+
+        // Spins should have changed from the initial random config
+        let changed = spins_before
+            .iter()
+            .zip(&system.spins)
+            .any(|(a, b)| (a - b).abs() > 1e-10);
+        assert!(changed, "spins should change during microcanonical sweep");
+
+        // Energy must still be preserved
+        assert!(
+            (system.energy - energy_before).abs() < 1e-10,
+            "energy preserved even with spin changes"
+        );
     }
 
     #[test]
