@@ -9,6 +9,7 @@ description = "Classical Monte Carlo algorithm toolbox (Metropolis, Wolff, Swend
 carlo-rs = { path = "../Carlo.rs" }
 rand = "0.10.0"
 rand_xoshiro = "0.8"
+serde_json = { workspace = true }
 smallvec = "1"
 
 [dev-dependencies]

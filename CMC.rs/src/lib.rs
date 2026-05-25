@@ -46,6 +46,7 @@ pub mod lattice;
 pub mod models;
 pub mod multi_spin;
 pub mod observables;
+pub mod postprocess;
 pub mod proposal;
 pub mod system;
 
@@ -59,7 +60,9 @@ pub use models::{HeisenbergModel, IsingModel, PottsModel, XYModel};
 pub use algorithm::{Algorithm, HeatBathCore, MetropolisCore, SWCore, WolffCore};
 
 // Re-export observables
-pub use observables::{DefaultObservableSet, EnergyPerSite, Magnetization, Observable, TotalEnergy};
+pub use observables::{
+    DefaultObservableSet, EnergyPerSite, Magnetization, Observable, TotalEnergy,
+};
 
 // Re-export classical_mc
 pub use classical_mc::{ClassicalMC, FromHamiltonianParams};
@@ -78,3 +81,6 @@ pub use proposal::{OPSSStrategy, ProposalStrategy, StandardStrategy};
 
 // Re-export system
 pub use system::System;
+
+// Re-export postprocess
+pub use postprocess::{binder_cumulant, specific_heat, susceptibility};

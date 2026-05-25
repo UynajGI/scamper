@@ -82,7 +82,8 @@ where
             );
 
             let proposed = self.strategy.propose(model, system, site, rng);
-            let new_energy = model.local_energy(&system.spins, &system.lattice, site, beta, &proposed);
+            let new_energy =
+                model.local_energy(&system.spins, &system.lattice, site, beta, &proposed);
 
             let delta_e = new_energy - old_energy;
             let accepted = delta_e <= 0.0 || rng.random::<f64>() < (-beta * delta_e).exp();
@@ -203,7 +204,8 @@ impl<H: Hamiltonian + ClusterModel> Algorithm<H> for WolffCore {
             for (site, &in_cluster) in cluster.iter().enumerate() {
                 if in_cluster {
                     let spin = system.spin_at(site, sd);
-                    let old_local = model.local_energy(&system.spins, &system.lattice, site, beta, spin);
+                    let old_local =
+                        model.local_energy(&system.spins, &system.lattice, site, beta, spin);
                     let mut new_spin = SmallVec::<[f64; 3]>::from_slice(spin);
                     model.reflect(&mut new_spin, &direction);
                     let new_local =
@@ -353,7 +355,8 @@ impl<H: Hamiltonian + ClusterModel> Algorithm<H> for SWCore {
                 let root = find(&mut parent, site);
                 if flip_root[root] {
                     let spin = system.spin_at(site, sd);
-                    let old_local = model.local_energy(&system.spins, &system.lattice, site, beta, spin);
+                    let old_local =
+                        model.local_energy(&system.spins, &system.lattice, site, beta, spin);
                     let mut new_spin = SmallVec::<[f64; 3]>::from_slice(spin);
                     model.reflect(&mut new_spin, &direction);
                     let new_local =
@@ -419,13 +422,8 @@ impl<H: Hamiltonian + HeatBathable> Algorithm<H> for HeatBathCore {
             let weights = model.boltzmann_weights(&nbs, beta);
             let new_val = model.sample_spin(&weights, rng);
             let new_spin_arr = [new_val];
-            let new_energy = model.local_energy(
-                &system.spins,
-                &system.lattice,
-                site,
-                beta,
-                &new_spin_arr,
-            );
+            let new_energy =
+                model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin_arr);
 
             system.energy += new_energy - old_energy;
             system.spins[site] = new_val;

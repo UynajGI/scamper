@@ -6,6 +6,71 @@ use crate::lattice::build_hypercubic;
 use crate::observables::DefaultObservableSet;
 use crate::system::System;
 use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible, Params};
+use serde_json::Value as Json;
+
+/// Pre-composed classical Monte Carlo simulation.
+///
+/// `H` = Hamiltonian (e.g. `IsingModel`), `A` = algorithm (e.g. `MetropolisCore`).
+///
+/// # Usage
+///
+/// ```ignore
+/// type IsingMetro = ClassicalMC<IsingModel, MetropolisCore>;
+/// let params = ...; // L=16, J=1, beta=0.5
+/// let scheduler = Scheduler::new(backend, config);
+/// let results = scheduler.run_one::<IsingMetro>(&params);
+/// ```
+// ── JSON snapshot save/load ──────────────────────────────────
+impl<H, A> ClassicalMC<H, A>
+where
+    H: Hamiltonian + Measurable,
+    A: Algorithm<H>,
+{
+    /// Save full simulation state as JSON value.
+    pub fn save_snapshot(&self) -> Json {
+        serde_json::json!({
+            "spins": &self.system.spins,
+            "energy": self.system.energy,
+            "beta": self.system.beta,
+            "spin_dim": self.model.spin_dim(),
+            "n_sites": self.system.n_sites(),
+            "offsets": &self.system.lattice.offsets,
+            "neighbors": &self.system.lattice.neighbors,
+        })
+    }
+
+    /// Load simulation state from JSON value.
+    pub fn load_snapshot(&mut self, snapshot: &Json) -> Result<(), CarloError> {
+        let spins: Vec<f64> = snapshot["spins"]
+            .as_array()
+            .ok_or_else(|| CarloError::InvalidConfig {
+                field: "snapshot.spins".into(),
+                reason: "missing or invalid".into(),
+            })?
+            .iter()
+            .map(|v| v.as_f64().unwrap_or(0.0))
+            .collect();
+        let energy = snapshot["energy"].as_f64().unwrap_or(0.0);
+        let beta = snapshot["beta"].as_f64().unwrap_or(1.0);
+
+        if spins.len() != self.system.spins.len() {
+            return Err(CarloError::InvalidConfig {
+                field: "snapshot.spins".into(),
+                reason: format!(
+                    "spin count mismatch: expected {}, got {}",
+                    self.system.spins.len(),
+                    spins.len()
+                ),
+            });
+        }
+
+        self.system.spins.copy_from_slice(&spins);
+        self.system.energy = energy;
+        self.system.beta = beta;
+
+        Ok(())
+    }
+}
 
 /// Pre-composed classical Monte Carlo simulation.
 ///
@@ -44,7 +109,12 @@ where
         }
     }
 
-    pub fn with_observables(system: System, model: H, algorithm: A, observables: DefaultObservableSet<H>) -> Self {
+    pub fn with_observables(
+        system: System,
+        model: H,
+        algorithm: A,
+        observables: DefaultObservableSet<H>,
+    ) -> Self {
         Self {
             system,
             model,
@@ -69,9 +139,20 @@ where
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
+        let mut e = 0.0;
+        let mut m = 0.0;
         for obs in self.observables.iter() {
-            ctx.measure(obs.name(), obs.measure(&self.system, &self.model));
+            let v = obs.measure(&self.system, &self.model);
+            match obs.name() {
+                "Energy" => e = v,
+                "Magnetization" => m = v,
+                _ => {}
+            }
+            ctx.measure(obs.name(), v);
         }
+        ctx.measure("E2", e * e);
+        ctx.measure("M2", m * m);
+        ctx.measure("M4", m * m * m * m);
     }
 
     fn name(&self) -> &'static str {
@@ -259,11 +340,10 @@ mod tests {
         params.set("J", 1.0);
 
         let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
-        let mc =
-            <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
-                &params, &mut rng,
-            )
-            .unwrap();
+        let mc = <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
+            &params, &mut rng,
+        )
+        .unwrap();
 
         let e = mc.system.energy;
         // log(W(β')/W(β)) = -(β'-β)E = (β - β')E
@@ -275,6 +355,71 @@ mod tests {
             lr,
             expected
         );
+    }
+
+    #[test]
+    fn test_moment_observables_present() {
+        let mut params = Params::new();
+        params.set("L", 8usize);
+        params.set("beta", 1.0);
+        params.set("J", 1.0);
+
+        let config = RunConfig {
+            thermalization_sweeps: 100,
+            measurement_sweeps: 200,
+            binsize: 50,
+            base_seed: 42,
+            ..Default::default()
+        };
+
+        let backend = RayonBackend::new(1);
+        let scheduler = Scheduler::new(backend, config);
+        let results = scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
+
+        let e2 = results.get("E2").expect("E2 observable missing");
+        let m2 = results.get("M2").expect("M2 observable missing");
+        let m4 = results.get("M4").expect("M4 observable missing");
+
+        assert!(e2.mean > 0.0, "E² should be positive");
+        assert!((0.0..=1.0).contains(&m2.mean), "M² should be in [0,1]");
+        assert!((0.0..=1.0).contains(&m4.mean), "M⁴ should be in [0,1]");
+    }
+
+    #[test]
+    fn test_snapshot_round_trip() {
+        let mut params = Params::new();
+        params.set("L", 8usize);
+        params.set("beta", 1.0);
+        params.set("J", 1.0);
+
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
+        let mut mc =
+            <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
+                &params, &mut rng,
+            )
+            .unwrap();
+
+        // Run a few sweeps
+        let mut ctx = carlo_rs::Context::new(rng, 0);
+        for _ in 0..10 {
+            mc.sweep(&mut ctx);
+        }
+
+        let energy_before = mc.system.energy;
+        let spins_before = mc.system.spins.clone();
+
+        // Save snapshot
+        let snapshot = mc.save_snapshot();
+
+        // Mutate state
+        mc.system.energy = 999.0;
+        mc.system.spins.fill(0.0);
+
+        // Load snapshot
+        mc.load_snapshot(&snapshot).unwrap();
+
+        assert!((mc.system.energy - energy_before).abs() < 1e-10);
+        assert_eq!(mc.system.spins, spins_before);
     }
 
     #[test]
@@ -294,11 +439,9 @@ mod tests {
         mc.change_parameter("beta", 2.5);
         assert!((mc.system.beta - 2.5).abs() < 1e-10);
         // Energy should be recomputed (same config, same energy for Ising)
-        let e = mc.model.compute_total_energy(
-            &mc.system.spins,
-            &mc.system.lattice,
-            2.5,
-        );
+        let e = mc
+            .model
+            .compute_total_energy(&mc.system.spins, &mc.system.lattice, 2.5);
         assert!((mc.system.energy - e).abs() < 1e-10);
     }
 }

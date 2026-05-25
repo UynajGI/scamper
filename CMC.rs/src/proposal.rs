@@ -36,7 +36,13 @@ impl StandardStrategy {
 }
 
 impl<H: Hamiltonian + Proposable> ProposalStrategy<H> for StandardStrategy {
-    fn propose(&mut self, model: &H, _system: &System, _site: usize, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
+    fn propose(
+        &mut self,
+        model: &H,
+        _system: &System,
+        _site: usize,
+        rng: &mut impl Rng,
+    ) -> SmallVec<[f64; 3]> {
         model.propose(rng)
     }
 }
@@ -84,13 +90,21 @@ impl Default for OPSSStrategy {
 }
 
 impl<H: Hamiltonian + Proposable> ProposalStrategy<H> for OPSSStrategy {
-    fn propose(&mut self, model: &H, system: &System, site: usize, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
+    fn propose(
+        &mut self,
+        model: &H,
+        system: &System,
+        site: usize,
+        rng: &mut impl Rng,
+    ) -> SmallVec<[f64; 3]> {
         let sd = model.spin_dim();
         let old = system.spin_at(site, sd);
 
         if sd == 1 {
             // Scalar: reflect about local field
-            let local_field: f64 = system.lattice.neighbors(site)
+            let local_field: f64 = system
+                .lattice
+                .neighbors(site)
                 .iter()
                 .map(|&nb| system.spins[nb])
                 .sum();

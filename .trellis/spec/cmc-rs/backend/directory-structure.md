@@ -4,13 +4,17 @@
 
 ```
 CMC.rs/src/
-├── lib.rs           — pub mod + re-exports (Algorithm, Model, System, ClassicalMC, etc.)
-├── lattice.rs       — Lattice, BondType, Neighbor, builders
-├── system.rs        — System { lattice, spins, energy }
-├── model.rs         — Model trait + IsingModel, PottsModel, XYModel, HeisenbergModel
-├── algorithm.rs     — Algorithm<M> trait + MetropolisCore<S>, WolffCore, SWCore
-├── proposal.rs      — ProposalStrategy<M> trait + StandardStrategy, OPSSStrategy
-└── classical_mc.rs  — ClassicalMC<M, A> impl MonteCarlo + FromParams
+├── lib.rs           — pub mod + re-exports
+├── lattice.rs       — CsrLattice, BondType, builders (chain, square, hypercubic, triangular, honeycomb, kagome)
+├── system.rs        — System { lattice, spins, energy, beta }
+├── hamiltonian.rs   — Hamiltonian, ClusterModel, Proposable, Measurable, HeatBathable traits
+├── models.rs        — IsingModel, PottsModel, XYModel, HeisenbergModel
+├── algorithm.rs     — Algorithm<H> trait + MetropolisCore<S>, WolffCore, SWCore, HeatBathCore
+├── proposal.rs      — ProposalStrategy<H> trait + StandardStrategy, OPSSStrategy
+├── classical_mc.rs  — ClassicalMC<H, A> + FromHamiltonianParams + JSON checkpoint
+├── observables.rs   — Observable<H> trait + TotalEnergy, Magnetization, DefaultObservableSet
+├── postprocess.rs   — Derived observables: susceptibility(), specific_heat(), binder_cumulant()
+└── multi_spin.rs    — MultiSpinIsing (64-replica bit-packed) + MonteCarlo + FromParams + PT
 ```
 
 ## Layer dependency graph
@@ -19,10 +23,13 @@ CMC.rs/src/
 classical_mc ──► algorithm ──► proposal
     │               │
     ▼               ▼
-  system ◄──────── model
+  system ◄──────── hamiltonian ◄── models
+    │                   ▲
+    ▼                   │
+  lattice          postprocess (read-only)
+    ▲
     │
-    ▼
-  lattice
+multi_spin (standalone, impl MonteCarlo directly)
 ```
 
 - `lattice` is pure data, no dependencies
@@ -65,10 +72,16 @@ classical_mc ──► algorithm ──► proposal
 - `OPSSStrategy` — over-relaxation with adaptive sigma; works for scalar (Ising) and vector (XY, Heisenberg) spins
 
 ### ClassicalMC (`classical_mc.rs`)
-- `ClassicalMC<M: Model, A: Algorithm<M>> { system, model, algorithm }`
-- `impl MonteCarlo` — sweep → `algorithm.sweep(system, model, &mut ctx.rng)`, measure → `ctx.measure("Energy", energy)` + `ctx.measure("Magnetization", mag)`
-- `impl FromParams` — parses L/Lx/Ly/Lz/pbc for lattice, delegates model parsing to `FromModelParams`
-- `FromModelParams` trait — one impl per model type
+- `ClassicalMC<H: Hamiltonian + Measurable, A: Algorithm<H>> { system, model, algorithm, observables }`
+- `impl MonteCarlo` — sweep → `algorithm.sweep(system, model, &mut ctx.rng)`, measure → iterates observables + records E²/M²/M⁴ moments
+- `impl FromParams` — parses L/Lx/Ly/Lz/pbc for lattice, delegates model parsing to `FromHamiltonianParams`
+- `FromHamiltonianParams` trait — one impl per model type
+- JSON checkpoint: `save_snapshot() -> Json`, `load_snapshot(&Json) -> Result<()>`
+
+### Derived Observables (`postprocess.rs`)
+- Pure functions taking `&carlo_rs::Results`: `susceptibility()`, `specific_heat()`, `binder_cumulant()`
+- Depend only on Carlo.rs — no CMC internal imports
+- Compute derived quantities from E²/M²/M⁴ moments (recorded in ClassicalMC::measure)
 
 ## Adding a new model
 

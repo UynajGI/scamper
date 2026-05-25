@@ -113,6 +113,95 @@ Use `model.compute_total_energy()` ONLY for initialization. During sweeps, use i
 - End-to-end `Scheduler.run_one::<ClassicalMC<M, A>>()` at moderate beta
 - Onsager 2D Ising validation (energy per site at Tc, high-T magnetization vanish, low-T magnetization appear)
 
+### Derived observables: measure raw moments, post-process
+
+Susceptibility, specific heat, and Binder cumulant require statistics of fluctuations (⟨M²⟩, ⟨E²⟩, ⟨M⁴⟩). Record the raw moments in `measure()` with `ctx.measure()`, then compute derived quantities from `Results` in `postprocess.rs`.
+
+```rust
+// CORRECT: record raw moments during measurement
+fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
+    ctx.measure("E2", e * e);
+    ctx.measure("M2", m * m);
+    ctx.measure("M4", m * m * m * m);
+}
+
+// postprocess.rs — pure functions, no CMC internals
+pub fn susceptibility(results: &Results, beta: f64, n: usize) -> Option<f64> {
+    let m = results.get("Magnetization")?;
+    let m2 = results.get("M2")?;
+    Some(beta * n as f64 * (m2.mean - m.mean * m.mean))
+}
+
+// WRONG: computing derived quantities inside measure() or sweep()
+// WRONG: Observable<H> trait trying to access time-series statistics
+```
+
+### JSON checkpoint when HDF5 unavailable
+
+When the `hdf5` feature doesn't compile, use JSON snapshot as a practical alternative. Serialize full state (spins, energy, beta, lattice topology) to serde_json::Value.
+
+```rust
+// CORRECT: JSON round-trip captures config + state
+impl ClassicalMC {
+    pub fn save_snapshot(&self) -> Json { ... }
+    pub fn load_snapshot(&mut self, snapshot: &Json) -> Result<(), CarloError> { ... }
+}
+
+// WRONG: implementing MonteCarloCheckpoint with HDF5 when the feature is broken
+```
+
+### MultiSpinIsing MonteCarlo integration
+
+Non-ClassicalMC types can implement MonteCarlo directly by owning system/model/lattice fields. The sweep delegates to the internal sweep method; measure follows the same moments pattern as ClassicalMC.
+
+```rust
+// CORRECT: own system, model; delegate in MonteCarlo::sweep
+impl MonteCarlo for MultiSpinIsing {
+    fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
+        self.sweep(&mut ctx.rng);
+    }
+}
+
+// WRONG: trying to fit bit-packed code into ClassicalMC's generic structure
+```
+
+### Don't store duplicate lattice
+
+`System` already owns the lattice. Don't store a second copy.
+
+```rust
+// CORRECT
+pub struct MultiSpinIsing {
+    pub system: System,  // use self.system.lattice
+    pub model: IsingModel,
+}
+
+// WRONG
+pub struct MultiSpinIsing {
+    pub system: System,
+    pub lattice: CsrLattice,  // duplicate! use self.system.lattice
+    pub model: IsingModel,
+}
+```
+
+### Don't use bit-plane encoding for multi-spin neighbor counting
+
+The original `pack_bit_planes` transposition conflates neighbor index with replica index. Use a direct per-replica anti-aligned counter instead.
+
+```rust
+// CORRECT: count anti-aligned neighbors per replica directly
+let mut anti_counts = [0u8; 64];
+for &nb in self.system.lattice.neighbors(site) {
+    let xor = site_word ^ self.packed_spins[nb];
+    for (r, count) in anti_counts.iter_mut().enumerate() {
+        *count += ((xor >> r) & 1) as u8;
+    }
+}
+
+// WRONG: pack_bit_planes — shifts bits into wrong positions,
+// conflates replica r with neighbor r, overflows for anti > z
+```
+
 ## Pre-commit gates
 
 ```bash

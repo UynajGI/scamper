@@ -232,7 +232,10 @@ impl HeatBathable for PottsModel {
             }
         }
         // w[k] = exp(βJ * n_k) where n_k = number of neighbors in state k
-        counts.iter().map(|&n| (beta * self.j * n as f64).exp()).collect()
+        counts
+            .iter()
+            .map(|&n| (beta * self.j * n as f64).exp())
+            .collect()
     }
 
     fn sample_spin(&self, weights: &[f64], rng: &mut impl Rng) -> f64 {
