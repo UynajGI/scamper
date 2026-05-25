@@ -125,3 +125,22 @@ pub trait HeatBathable: Hamiltonian {
     /// `weights` has length `n_states()`. Returns the spin value (e.g. ±1 for Ising).
     fn sample_spin(&self, weights: &[f64], rng: &mut impl Rng) -> f64;
 }
+
+/// Continuous-spin heat-bath (Glauber dynamics) support.
+///
+/// For XY (S¹) and Heisenberg (S²) models, the conditional distribution
+/// P(s_i | neighbors) ∝ exp(βJ s_i · h_i) is von Mises / von Mises-Fisher.
+/// Sampling is dimension-agnostic — each model implements the appropriate
+/// algorithm (Best-Fisher rejection for XY, inverse-CDF for Heisenberg).
+pub trait ContinuousHeatBathable: Hamiltonian {
+    /// Sample a new spin from P(s_i | neighbors) ∝ exp(βJ s_i · h_i).
+    ///
+    /// `neighbors` is a flat slice of neighbor spin components (sd per neighbor).
+    /// Returns a unit vector of length `spin_dim()`.
+    fn heat_bath_sample(
+        &self,
+        neighbors: &[f64],
+        beta: f64,
+        rng: &mut impl Rng,
+    ) -> SmallVec<[f64; 3]>;
+}

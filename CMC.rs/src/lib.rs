@@ -51,14 +51,17 @@ pub mod proposal;
 pub mod system;
 
 // Re-export key types from hamiltonian (traits)
-pub use hamiltonian::{ClusterModel, Hamiltonian, HeatBathable, Measurable, Proposable};
+pub use hamiltonian::{
+    ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable, Measurable, Proposable,
+};
 
 // Re-export models
 pub use models::{HeisenbergModel, IsingModel, PottsModel, XYModel};
 
 // Re-export algorithms
 pub use algorithm::{
-    Algorithm, HeatBathCore, MetropolisCore, MicrocanonicalCore, SWCore, WolffCore,
+    Algorithm, ContinuousHeatBathCore, HeatBathCore, MetropolisCore, MicrocanonicalCore, SWCore,
+    WolffCore,
 };
 
 // Re-export observables

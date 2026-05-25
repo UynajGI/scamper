@@ -6,7 +6,9 @@
 //! - Proposable: Spin proposal
 //! - Measurable: Magnetization
 
-use crate::hamiltonian::{ClusterModel, Hamiltonian, HeatBathable, Measurable, Proposable};
+use crate::hamiltonian::{
+    ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable, Measurable, Proposable,
+};
 use crate::lattice::CsrLattice;
 use rand::Rng;
 use rand::RngExt;
@@ -440,6 +442,69 @@ impl Measurable for HeisenbergModel {
         }
         let n = (spins.len() / 3) as f64;
         (sx * sx + sy * sy + sz * sz).sqrt() / n
+    }
+}
+
+impl ContinuousHeatBathable for HeisenbergModel {
+    fn heat_bath_sample(
+        &self,
+        neighbors: &[f64],
+        beta: f64,
+        rng: &mut impl Rng,
+    ) -> SmallVec<[f64; 3]> {
+        // Local field h = Σ s_j (sum over neighbors)
+        let hx: f64 = neighbors.chunks(3).map(|c| c[0]).sum();
+        let hy: f64 = neighbors.chunks(3).map(|c| c[1]).sum();
+        let hz: f64 = neighbors.chunks(3).map(|c| c[2]).sum();
+        let h_norm = (hx * hx + hy * hy + hz * hz).sqrt();
+
+        // κ = βJ|h|
+        let kappa = beta * self.j * h_norm;
+
+        if kappa < 1e-12 {
+            // Isotropic: sample uniformly on S²
+            let z: f64 = rng.random::<f64>() * 2.0 - 1.0;
+            let sin_theta = (1.0 - z * z).sqrt();
+            let phi: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
+            return smallvec![
+                sin_theta * phi.cos(),
+                sin_theta * phi.sin(),
+                z,
+            ];
+        }
+
+        // cosθ via inverse CDF: t = ln(u * 2sinh(κ) + e^{-κ}) / κ
+        let u: f64 = rng.random::<f64>();
+        let two_sinh_k = kappa.exp() - (-kappa).exp(); // 2sinh(κ) = e^κ - e^{-κ}
+        let exp_neg_k = (-kappa).exp();
+        let t = (u * two_sinh_k + exp_neg_k).ln() / kappa;
+
+        let sin_theta = (1.0 - t * t).sqrt().max(0.0);
+        let phi: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
+
+        // Spin in local frame where h aligns with z
+        let (sx_local, sy_local) = (sin_theta * phi.cos(), sin_theta * phi.sin());
+
+        // Rotate (0,0,1) → ĥ
+        let (ux, uy, uz) = (hx / h_norm, hy / h_norm, hz / h_norm);
+        let r = (ux * ux + uy * uy).sqrt(); // sqrt(1 - uz²)
+        let (sx, sy, sz) = if r < 1e-12 {
+            // μ ≈ ±z, trivial
+            if uz > 0.0 {
+                (sx_local, sy_local, t)
+            } else {
+                (sx_local, sy_local, -t)
+            }
+        } else {
+            let inv_r = 1.0 / r;
+            (
+                -uy * inv_r * sx_local - ux * uz * inv_r * sy_local + ux * t,
+                ux * inv_r * sx_local - uy * uz * inv_r * sy_local + uy * t,
+                r * sy_local + uz * t,
+            )
+        };
+
+        smallvec![sx, sy, sz]
     }
 }
 

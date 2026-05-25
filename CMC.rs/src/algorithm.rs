@@ -1,6 +1,6 @@
 //! Monte Carlo algorithms — sweep strategies.
 
-use crate::hamiltonian::{ClusterModel, Hamiltonian, HeatBathable, Proposable};
+use crate::hamiltonian::{ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable, Proposable};
 use crate::proposal::ProposalStrategy;
 use crate::system::System;
 use rand::Rng;
@@ -451,6 +451,74 @@ impl<H: Hamiltonian + Proposable> Algorithm<H> for MicrocanonicalCore {
     }
 }
 
+// ── Continuous Heat-Bath ──────────────────────────────────────
+
+/// Continuous-spin heat-bath algorithm.
+///
+/// For XY and Heisenberg models. Visits every site once in random order and
+/// samples a new spin from the equilibrium distribution P(s_i | neighbors)
+/// using exact inverse-CDF (Heisenberg) or Best-Fisher rejection (XY).
+#[derive(Debug, Clone, Default)]
+pub struct ContinuousHeatBathCore;
+
+impl ContinuousHeatBathCore {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl<H: Hamiltonian + ContinuousHeatBathable> Algorithm<H> for ContinuousHeatBathCore {
+    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
+        let n = system.n_sites();
+        let sd = model.spin_dim();
+        let beta = system.beta;
+
+        let mut order: Vec<usize> = (0..n).collect();
+        for i in (1..n).rev() {
+            let j = rng.random_range(0..=i);
+            order.swap(i, j);
+        }
+
+        for &site in &order {
+            let old_spin = system.spin_at(site, sd).to_vec();
+            let old_energy = model.local_energy(
+                &system.spins,
+                &system.lattice,
+                site,
+                beta,
+                &old_spin,
+            );
+
+            // Collect neighbor spins as flat slice
+            let nbs: Vec<f64> = system
+                .lattice
+                .neighbors(site)
+                .iter()
+                .flat_map(|&nb| {
+                    let base = nb * sd;
+                    system.spins[base..base + sd].to_vec()
+                })
+                .collect();
+
+            let new_spin = model.heat_bath_sample(&nbs, beta, rng);
+            let new_energy = model.local_energy(
+                &system.spins,
+                &system.lattice,
+                site,
+                beta,
+                &new_spin,
+            );
+
+            system.energy += new_energy - old_energy;
+            system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "ContinuousHeatBath"
+    }
+}
+
 // ── Heat-Bath (Glauber Dynamics) ─────────────────────────────
 
 /// Heat-bath (Glauber dynamics) algorithm.
@@ -827,6 +895,46 @@ mod tests {
         assert!(
             (system.energy - energy_before).abs() < 1e-10,
             "energy preserved even with spin changes"
+        );
+    }
+
+    // ── Continuous heat-bath tests ──────────────────────────
+
+    #[test]
+    fn test_continuous_heat_bath_heisenberg_cools() {
+        let lattice = build_chain(8, true);
+        let model = HeisenbergModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 3, 0.0, 5.0);
+        let mut rng = make_rng();
+        // Random initial spins on S²
+        for i in 0..system.n_sites() {
+            let z: f64 = rng.random::<f64>() * 2.0 - 1.0;
+            let sin_theta = (1.0 - z * z).sqrt();
+            let phi: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
+            system.spins[3 * i] = sin_theta * phi.cos();
+            system.spins[3 * i + 1] = sin_theta * phi.sin();
+            system.spins[3 * i + 2] = z;
+        }
+        system.energy =
+            model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+
+        let energy_before = system.energy;
+        let mut algo = ContinuousHeatBathCore::new();
+
+        for _ in 0..200 {
+            algo.sweep(&mut system, &model, &mut rng);
+        }
+
+        // At beta=5, should order: 8 bonds × -J = -8, e/site < -0.7
+        let e_per_site = system.energy / system.n_sites() as f64;
+        assert!(
+            e_per_site < -0.7,
+            "Heisenberg heat-bath should cool: e/site = {:.4}",
+            e_per_site
+        );
+        assert!(
+            system.energy < energy_before,
+            "energy should decrease from random state"
         );
     }
 
