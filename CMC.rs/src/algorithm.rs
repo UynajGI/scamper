@@ -901,6 +901,41 @@ mod tests {
     // ── Continuous heat-bath tests ──────────────────────────
 
     #[test]
+    fn test_continuous_heat_bath_xy_cools() {
+        let lattice = build_chain(8, true);
+        let model = XYModel::new(1.0);
+        let mut system = System::new(lattice.clone(), 2, 0.0, 5.0); // beta=5 cold
+        let mut rng = make_rng();
+        // Random initial spins on S¹
+        for i in 0..system.n_sites() {
+            let angle: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
+            system.spins[2 * i] = angle.cos();
+            system.spins[2 * i + 1] = angle.sin();
+        }
+        system.energy =
+            model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+
+        let energy_before = system.energy;
+        let mut algo = ContinuousHeatBathCore::new();
+
+        for _ in 0..200 {
+            algo.sweep(&mut system, &model, &mut rng);
+        }
+
+        // At beta=5, should order: e/site < -0.7
+        let e_per_site = system.energy / system.n_sites() as f64;
+        assert!(
+            e_per_site < -0.7,
+            "XY heat-bath should cool: e/site = {:.4}",
+            e_per_site
+        );
+        assert!(
+            system.energy < energy_before,
+            "energy should decrease from random state"
+        );
+    }
+
+    #[test]
     fn test_continuous_heat_bath_heisenberg_cools() {
         let lattice = build_chain(8, true);
         let model = HeisenbergModel::new(1.0);

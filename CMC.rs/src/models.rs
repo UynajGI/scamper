@@ -341,6 +341,88 @@ impl Measurable for XYModel {
     }
 }
 
+impl ContinuousHeatBathable for XYModel {
+    fn heat_bath_sample(
+        &self,
+        neighbors: &[f64],
+        beta: f64,
+        rng: &mut impl Rng,
+    ) -> SmallVec<[f64; 3]> {
+        let hx: f64 = neighbors.chunks(2).map(|c| c[0]).sum();
+        let hy: f64 = neighbors.chunks(2).map(|c| c[1]).sum();
+        let h_norm = (hx * hx + hy * hy).sqrt();
+        let kappa = beta * self.j * h_norm;
+
+        // Sample angle from von Mises VM(0, κ) via Best-Fisher (1979)
+        let theta = sample_von_mises(rng, kappa);
+
+        // Rotate to local field direction
+        let mu = hy.atan2(hx);
+        let angle = theta + mu;
+        smallvec![angle.cos(), angle.sin()]
+    }
+}
+
+/// Best & Fisher (1979) rejection sampling for von Mises VM(0, κ).
+///
+/// Generates θ ~ VM(0, κ) = exp(κ cos θ) / (2π I₀(κ)).
+/// Only elementary functions (sqrt, cos, ln) — no Bessel calls inside loop.
+fn sample_von_mises(rng: &mut impl Rng, kappa: f64) -> f64 {
+    use std::f64::consts::PI;
+
+    if kappa < 1e-8 {
+        return rng.random::<f64>() * 2.0 * PI;
+    }
+
+    // Best & Fisher (1979) parameters: τ = 1 + √(1 + 4κ²)
+    let tau = 1.0 + (1.0 + 4.0 * kappa * kappa).sqrt();
+    let rho = (tau - (2.0 * tau).sqrt()) / (2.0 * kappa);
+    let r = (1.0 + rho * rho) / (2.0 * rho);
+
+    let f = loop {
+        let u1: f64 = rng.random();
+        let z = (PI * u1).cos();
+        let f_val = (1.0 + r * z) / (r + z);
+        let c = kappa * (r - f_val);
+
+        let u2: f64 = rng.random();
+        if c * (2.0 - c) - u2 > 0.0 {
+            break f_val;
+        }
+        if (c / u2).ln() + 1.0 - c >= 0.0 {
+            break f_val;
+        }
+    };
+
+    let u3: f64 = rng.random();
+    if u3 < 0.5 { -f.acos() } else { f.acos() }
+}
+
+#[cfg(test)]
+mod von_mises_tests {
+    use super::*;
+    use rand::SeedableRng;
+
+    #[test]
+    fn test_sample_von_mises_small_kappa() {
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
+        for _ in 0..100 {
+            let theta = sample_von_mises(&mut rng, 0.5);
+            assert!(theta.is_finite(), "theta should be finite");
+        }
+    }
+
+    #[test]
+    fn test_sample_von_mises_large_kappa() {
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
+        for _ in 0..100 {
+            let theta = sample_von_mises(&mut rng, 10.0);
+            assert!(theta.is_finite(), "theta should be finite");
+            assert!(theta.abs() < 1.0, "at large kappa, theta near 0");
+        }
+    }
+}
+
 // ── Heisenberg Model ─────────────────────────────────────────
 
 /// Heisenberg model: H = -J Σ s_i · s_j, |s_i| = 1.
