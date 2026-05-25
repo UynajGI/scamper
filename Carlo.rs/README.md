@@ -45,7 +45,7 @@ impl MonteCarlo for IsingMC {
             let neighbor_sum = self.spins[(i + 1) % self.spins.len()]
                 + self.spins[(i - 1 + self.spins.len()) % self.spins.len()];
             let dE = 2.0 * self.spins[i] as f64 * neighbor_sum as f64;
-            if dE < 0.0 || ctx.rng.gen::<f64>() < (-dE * self.beta).exp() {
+            if dE < 0.0 || ctx.rng.random::<f64>() < (-dE * self.beta).exp() {
                 self.spins[i] *= -1;
             }
         }

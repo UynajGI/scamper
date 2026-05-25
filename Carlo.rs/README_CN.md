@@ -175,8 +175,8 @@ pub trait MonteCarlo: Sized {
 
 ```rust
 // 使用 RNG
-let r: f64 = ctx.rng.gen();
-let idx: usize = ctx.rng.gen_range(0..n);
+let r: f64 = ctx.rng.random();
+let idx: usize = ctx.rng.random_range(0..n);
 
 // 记录测量
 ctx.measure("Energy", energy);
@@ -200,8 +200,8 @@ println!("Sweep: {}", ctx.sweep_count());
 ```rust
 // 从代码创建
 let mut params = Params::new();
-params.insert("L", 100);
-params.insert("beta", 0.5);
+params.set("L", 100);
+params.set("beta", 0.5);
 
 // 获取参数
 let l: usize = params.get("L").unwrap_or(100);
@@ -258,7 +258,7 @@ impl MonteCarlo for Ising1D {
         // 执行 N 次 Metropolis 更新
         for _ in 0..n {
             // 随机选择一个自旋
-            let i = ctx.rng.gen_range(0..n);
+            let i = ctx.rng.random_range(0..n);
 
             // 计算能量变化
             let left = self.spins[(i + n - 1) % n];
@@ -266,7 +266,7 @@ impl MonteCarlo for Ising1D {
             let dE = 2.0 * self.j * self.spins[i] as f64 * (left + right) as f64;
 
             // Metropolis 准则
-            if dE <= 0.0 || ctx.rng.gen::<f64>() < (-self.beta * dE).exp() {
+            if dE <= 0.0 || ctx.rng.random::<f64>() < (-self.beta * dE).exp() {
                 self.spins[i] *= -1;
             }
         }
@@ -326,9 +326,9 @@ fn main() -> Result<(), CarloError> {
 
     // 参数
     let mut params = Params::new();
-    params.insert("L", 100);
-    params.insert("beta", 0.5);
-    params.insert("J", 1.0);
+    params.set("L", 100);
+    params.set("beta", 0.5);
+    params.set("J", 1.0);
 
     // 运行
     let scheduler = Scheduler::new(backend, config);
