@@ -41,13 +41,14 @@ Orthogonal traits instead of a monolithic trait — each concern is a separate t
 |-------|------|---------|
 | Lattice | `lattice.rs` | `CsrLattice` — flat CSR arrays (offsets + neighbors), `BondType`, builders (chain, square, hypercubic, triangular, honeycomb, kagome) |
 | System | `system.rs` | `System { lattice, spins, energy, beta }` — pub fields, β moved here from model structs |
-| Traits | `hamiltonian.rs` | `Hamiltonian`, `ClusterModel`, `Proposable`, `Measurable`, `HeatBathable` — orthogonal model traits |
+| Traits | `hamiltonian.rs` | `Hamiltonian`, `ClusterModel`, `Proposable`, `Measurable`, `HeatBathable`, `ContinuousHeatBathable` — orthogonal model traits |
 | Models | `models.rs` | `IsingModel`, `PottsModel`, `XYModel`, `HeisenbergModel` — implement traits above |
-| Algorithm | `algorithm.rs` | `Algorithm<H>` trait — `MetropolisCore`, `WolffCore`, `SWCore`, `HeatBathCore` |
+| Algorithm | `algorithm.rs` | `Algorithm<H>` trait — `MetropolisCore`, `WolffCore`, `SWCore`, `HeatBathCore`, `MicrocanonicalCore`, `ContinuousHeatBathCore` |
 | Proposal | `proposal.rs` | `ProposalStrategy<H>` — Standard, OPSS (adaptive over-relaxation) |
-| Wrapper | `classical_mc.rs` | `ClassicalMC<H, A>` — `MonteCarlo`, `FromParams`, `ParallelTemperingCompatible` |
-| Multi-spin | `multi_spin.rs` | `MultiSpinIsing` — bit-parallel Ising with 64 replicas packed in u64 |
-| Observables | `observables.rs` | Pluggable `Observable<H>` trait + `DefaultObservableSet` (Energy, Magnetization) |
+| Wrapper | `classical_mc.rs` | `ClassicalMC<H, A>` — `MonteCarlo`, `FromParams`, `ParallelTemperingCompatible`, JSON checkpoint |
+| Multi-spin | `multi_spin.rs` | `MultiSpinIsing` — bit-parallel Ising with 64 replicas, impl `MonteCarlo` + `FromParams` + PT |
+| Observables | `observables.rs` | Pluggable `Observable<H>` + `DefaultObservableSet` (Energy, Magnetization) |
+| Postprocess | `postprocess.rs` | Derived observables: `susceptibility()`, `specific_heat()`, `binder_cumulant()`, `compute_correlation_1d()` |
 
 Key patterns:
 - `ClassicalMC<IsingModel, MetropolisCore>` → `Scheduler.run_one()` → `Results`
@@ -55,7 +56,10 @@ Key patterns:
 - Algorithm trait: `sweep(&mut self, system, model, rng)` — directly mutates system.energy
 - CSR lattice: cache-friendly neighbor iteration via `lattice.neighbors(site)` returning `&[usize]`
 - `SmallVec<[f64; 3]>` for spin proposals (stack-allocated, no heap for spin_dim ≤ 3)
-- Heat-bath (Glauber): directly samples equilibrium distributions, no Metropolis rejection
+- Heat-bath (Glauber): discrete (Ising/Potts → `HeatBathable`) + continuous (XY/Heisenberg → `ContinuousHeatBathable`, vMF/Best-Fisher sampling)
+- Over-relaxation: `MicrocanonicalCore` reflects spins across local field (ΔE=0), no acceptance
+- Derived observables measured post-run from E²/M²/M⁴ moments stored in `Results`
+- `lattice_type` param: `"chain"`, `"square"`, `"triangular"`, `"honeycomb"`, `"kagome"`
 - Users can ignore `ClassicalMC` and compose manually for custom behavior
 
 ## Features
