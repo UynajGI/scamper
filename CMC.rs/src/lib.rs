@@ -88,4 +88,4 @@ pub use proposal::{OPSSStrategy, ProposalStrategy, StandardStrategy};
 pub use system::System;
 
 // Re-export postprocess
-pub use postprocess::{binder_cumulant, specific_heat, susceptibility};
+pub use postprocess::{binder_cumulant, compute_correlation_1d, specific_heat, susceptibility};
