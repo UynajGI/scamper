@@ -2,9 +2,7 @@
 
 use crate::algorithm::Algorithm;
 use crate::hamiltonian::{ClusterModel, Hamiltonian, Measurable, Proposable};
-use crate::lattice::{
-    build_honeycomb, build_hypercubic, build_kagome, build_triangular,
-};
+use crate::lattice::{build_honeycomb, build_hypercubic, build_kagome, build_triangular};
 use crate::observables::DefaultObservableSet;
 use crate::system::System;
 use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible, Params};
@@ -239,7 +237,10 @@ fn build_lattice_from_params(
             let (dims, bond_types) = if let Some(lx) = params.get::<usize>("Lx") {
                 let ly = params.get::<usize>("Ly").unwrap_or(lx);
                 if let Some(lz) = params.get::<usize>("Lz") {
-                    (vec![lx, ly, lz], vec![BondType::SquareX, BondType::SquareY, BondType::SquareZ])
+                    (
+                        vec![lx, ly, lz],
+                        vec![BondType::SquareX, BondType::SquareY, BondType::SquareZ],
+                    )
                 } else {
                     (vec![lx, ly], vec![BondType::SquareX, BondType::SquareY])
                 }

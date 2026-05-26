@@ -395,7 +395,11 @@ fn sample_von_mises(rng: &mut impl Rng, kappa: f64) -> f64 {
     };
 
     let u3: f64 = rng.random();
-    if u3 < 0.5 { -f.acos() } else { f.acos() }
+    if u3 < 0.5 {
+        -f.acos()
+    } else {
+        f.acos()
+    }
 }
 
 #[cfg(test)]
@@ -548,11 +552,7 @@ impl ContinuousHeatBathable for HeisenbergModel {
             let z: f64 = rng.random::<f64>() * 2.0 - 1.0;
             let sin_theta = (1.0 - z * z).sqrt();
             let phi: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
-            return smallvec![
-                sin_theta * phi.cos(),
-                sin_theta * phi.sin(),
-                z,
-            ];
+            return smallvec![sin_theta * phi.cos(), sin_theta * phi.sin(), z,];
         }
 
         // cosθ via inverse CDF: t = ln(u * 2sinh(κ) + e^{-κ}) / κ

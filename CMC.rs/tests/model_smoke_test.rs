@@ -90,14 +90,17 @@ fn test_triangular_ising_ferro_cools() {
 
     let backend = RayonBackend::new(1);
     let scheduler = Scheduler::new(backend, config);
-    let results =
-        scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
+    let results = scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
 
     let e = results.get("Energy").expect("Energy missing");
     let m = results.get("Magnetization").expect("Magnetization missing");
 
     // At low T, ferromagnetic triangular Ising should order
-    assert!(e.mean < -30.0, "Expected strongly negative energy, got {}", e.mean);
+    assert!(
+        e.mean < -30.0,
+        "Expected strongly negative energy, got {}",
+        e.mean
+    );
     assert!(m.mean > 0.7, "Expected high magnetization, got {}", m.mean);
 }
 
@@ -120,13 +123,16 @@ fn test_kagome_ising_af_low_t() {
 
     let backend = RayonBackend::new(1);
     let scheduler = Scheduler::new(backend, config);
-    let results =
-        scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
+    let results = scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
 
     let e = results.get("Energy").expect("Energy missing");
     let m = results.get("Magnetization").expect("Magnetization missing");
 
     // AF kagome: energy should be negative, magnetization near 0 (no FM order)
     assert!(e.mean < 0.0, "AF energy should be negative, got {}", e.mean);
-    assert!(m.mean < 0.5, "AF magnetization should be low, got {}", m.mean);
+    assert!(
+        m.mean < 0.5,
+        "AF magnetization should be low, got {}",
+        m.mean
+    );
 }

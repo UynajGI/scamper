@@ -86,7 +86,9 @@ mod tests {
     #[test]
     fn test_compute_correlation_1d_alternating() {
         // Alternating +1, -1, +1, -1, ...
-        let spins: Vec<f64> = (0..8).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+        let spins: Vec<f64> = (0..8)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
         let g = compute_correlation_1d(&spins, 1, 8);
         assert!((g[0] - 1.0).abs() < 1e-10, "G(0) should be 1");
         assert!((g[1] + 1.0).abs() < 1e-10, "G(1) should be -1");

@@ -1,6 +1,8 @@
 //! Monte Carlo algorithms — sweep strategies.
 
-use crate::hamiltonian::{ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable, Proposable};
+use crate::hamiltonian::{
+    ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable, Proposable,
+};
 use crate::proposal::ProposalStrategy;
 use crate::system::System;
 use rand::Rng;
@@ -433,8 +435,7 @@ impl<H: Hamiltonian + Proposable> Algorithm<H> for MicrocanonicalCore {
 
             let old = system.spin_at(site, sd).to_vec();
             let reflected = reflect_spin(&old, &h, sd);
-            let reflected_norm: f64 =
-                reflected.iter().map(|&x| x * x).sum::<f64>().sqrt();
+            let reflected_norm: f64 = reflected.iter().map(|&x| x * x).sum::<f64>().sqrt();
 
             // Normalize and write back
             let inv_norm = 1.0 / reflected_norm.max(1e-15);
@@ -481,13 +482,8 @@ impl<H: Hamiltonian + ContinuousHeatBathable> Algorithm<H> for ContinuousHeatBat
 
         for &site in &order {
             let old_spin = system.spin_at(site, sd).to_vec();
-            let old_energy = model.local_energy(
-                &system.spins,
-                &system.lattice,
-                site,
-                beta,
-                &old_spin,
-            );
+            let old_energy =
+                model.local_energy(&system.spins, &system.lattice, site, beta, &old_spin);
 
             // Collect neighbor spins as flat slice
             let nbs: Vec<f64> = system
@@ -501,13 +497,8 @@ impl<H: Hamiltonian + ContinuousHeatBathable> Algorithm<H> for ContinuousHeatBat
                 .collect();
 
             let new_spin = model.heat_bath_sample(&nbs, beta, rng);
-            let new_energy = model.local_energy(
-                &system.spins,
-                &system.lattice,
-                site,
-                beta,
-                &new_spin,
-            );
+            let new_energy =
+                model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin);
 
             system.energy += new_energy - old_energy;
             system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
@@ -912,8 +903,7 @@ mod tests {
             system.spins[2 * i] = angle.cos();
             system.spins[2 * i + 1] = angle.sin();
         }
-        system.energy =
-            model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
 
         let energy_before = system.energy;
         let mut algo = ContinuousHeatBathCore::new();
@@ -950,8 +940,7 @@ mod tests {
             system.spins[3 * i + 1] = sin_theta * phi.sin();
             system.spins[3 * i + 2] = z;
         }
-        system.energy =
-            model.compute_total_energy(&system.spins, &system.lattice, system.beta);
+        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
 
         let energy_before = system.energy;
         let mut algo = ContinuousHeatBathCore::new();
