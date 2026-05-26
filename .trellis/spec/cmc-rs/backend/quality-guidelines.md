@@ -110,6 +110,35 @@ fn build_lattice_from_params(params: &Params, pbc: bool) -> Result<CsrLattice, C
 // WRONG: duplicating lattice-building logic in each FromParams impl
 ```
 
+### Continuous heat-bath: separate trait from discrete
+
+Continuous-spin models (XY, Heisenberg) need a different sampling approach from discrete Ising/Potts. Use `ContinuousHeatBathable` (not `HeatBathable`). The sampling uses exact distribution formulas — vMF inverse-CDF for Heisenberg (no Bessel), Best-Fisher rejection for XY (no Bessel inside loop).
+
+```rust
+// CORRECT: separate trait, no Bessel dependency
+pub trait ContinuousHeatBathable: Hamiltonian {
+    fn heat_bath_sample(&self, neighbors: &[f64], beta: f64, rng: &mut impl Rng) -> SmallVec<[f64; 3]>;
+}
+impl ContinuousHeatBathable for HeisenbergModel { /* vMF inverse-CDF */ }
+
+// WRONG: forcing continuous spins into discrete HeatBathable (n_states makes no sense)
+```
+
+### Microcanonical over-relaxation: skip energy and acceptance
+
+Over-relaxation reflects spins across the local field: `s' = 2(s·ĥ)ĥ - s`. Energy is exactly preserved (ΔE = 0). Use `MicrocanonicalCore` — not `MetropolisCore<OPSSStrategy>` — to skip wasted `local_energy()` calls and Metropolis acceptance draws.
+
+```rust
+// CORRECT: pure reflection, no energy computation
+impl<H: Hamiltonian + Proposable> Algorithm<H> for MicrocanonicalCore {
+    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
+        // reflect each spin, don't call local_energy, don't call acceptance
+    }
+}
+
+// WRONG: routing through MetropolisCore<OPSSStrategy> wastes CPU on always-accepted decisions
+```
+
 ### Don't compute total_energy from scratch per sweep
 
 Use `model.compute_total_energy()` ONLY for initialization. During sweeps, use incremental updates (`system.energy += delta`). Computing `total_energy()` from scratch every sweep is O(N) unnecessary work.
