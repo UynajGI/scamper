@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
-- **Last Active**: 2026-05-25
+- **Total Sessions**: 7
+- **Last Active**: 2026-05-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~219 | Active |
+| `journal-1.md` | ~256 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-05-26 | CMC.rs low-priority: continuous heat-bath, over-relaxation, spatial observables | `fc97611`, `af307e7`, `d06a4a2`, `819f4ae` | `main` |
 | 6 | 2026-05-25 | CMC.rs medium-priority: lattice_type param, non-square lattice validation | `d7a7830`, `c512e49` | `main` |
 | 5 | 2026-05-25 | CMC.rs high-priority: derived observables, JSON checkpoint, MultiSpinIsing MonteCarlo integration | `67b9ab3`, `f1edd78` | `main` |
 | 4 | 2026-05-18 | CMC.rs Phase 1: full rewrite with layered architecture | `0932ddc`, `de925ed` | `main` |

@@ -217,3 +217,40 @@ TDD from easiest to hardest: (1) lattice_type param in build_lattice_from_params
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: CMC.rs low-priority: continuous heat-bath, over-relaxation, spatial observables
+
+**Date**: 2026-05-26
+**Task**: CMC.rs low-priority: continuous heat-bath, over-relaxation, spatial observables
+**Package**: carlo-rs
+**Branch**: `main`
+
+### Summary
+
+TDD from easiest to hardest: (1) MicrocanonicalCore — over-relaxation via reflect_spin(), energy exactly preserved. (2) ContinuousHeatBathable trait + ContinuousHeatBathCore — Heisenberg vMF inverse-CDF (no Bessel), XY Best-Fisher von Mises rejection. (3) compute_correlation_1d() for spatially-resolved G(r). 83 CMC + 128 Carlo tests, zero new dependencies, clippy clean.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fc97611` | (see git log) |
+| `af307e7` | (see git log) |
+| `d06a4a2` | (see git log) |
+| `819f4ae` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
