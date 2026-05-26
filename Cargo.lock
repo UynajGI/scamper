@@ -159,7 +159,7 @@ checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 
 [[package]]
 name = "carlo-rs"
-version = "0.1.0"
+version = "0.1.0-dev1"
 dependencies = [
  "chrono",
  "clap",
@@ -321,7 +321,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cmc-rs"
-version = "0.1.0"
+version = "0.1.0-dev1"
 dependencies = [
  "approx",
  "carlo-rs",
@@ -1161,7 +1161,7 @@ dependencies = [
 
 [[package]]
 name = "qmc-rs"
-version = "0.1.0"
+version = "0.1.0-dev1"
 dependencies = [
  "approx",
  "carlo-rs",
