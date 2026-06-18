@@ -5,6 +5,20 @@
 //!
 //! ## Modules
 //!
-//! - [`worldline`] — Single-site worldline objects (path integral / worm algorithm foundation)
+//! - [`hamiltonian`] — [`QuantumHamiltonian`] trait + concrete models (Heisenberg, …)
+//! - [`lattice`] — minimal lattice topology ([`ChainLattice`])
+//! - [`worldline`] — single-site worldline objects (path-integral / worm foundation)
+//! - [`discrete`] — discrete-time Suzuki-Trotter worm algorithm
 
+pub mod discrete;
+pub mod hamiltonian;
+pub mod heisenberg_chain;
+pub mod lattice;
 pub mod worldline;
+
+pub use discrete::{local_metropolis_sweep, worm_sweep, SpaceTimeConfig, Spin};
+pub use hamiltonian::{
+    heisenberg_chain_ground_energy_per_site, HeisenbergChain, QuantumHamiltonian,
+};
+pub use heisenberg_chain::HeisenbergChainMC;
+pub use lattice::ChainLattice;
