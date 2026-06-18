@@ -19,13 +19,23 @@ fn assert_consistent<W: Worldline>(wl: &W) {
     let kinks = collect_kinks(wl);
     // Sorted by τ
     for w in kinks.windows(2) {
-        assert!(w[0].0 < w[1].0, "kinks not sorted: {:?} >= {:?}", w[0], w[1]);
+        assert!(
+            w[0].0 < w[1].0,
+            "kinks not sorted: {:?} >= {:?}",
+            w[0],
+            w[1]
+        );
     }
     // Transitions match: from must equal state just before τ
     for &(tau, from, _to) in &kinks {
         if tau > 1e-12 {
-            assert_eq!(wl.state_at(tau - 1e-12), from,
-                "at τ={}, expected state before = {}", tau, from);
+            assert_eq!(
+                wl.state_at(tau - 1e-12),
+                from,
+                "at τ={}, expected state before = {}",
+                tau,
+                from
+            );
         }
     }
 }
@@ -57,9 +67,9 @@ mod continuous {
     fn spin_one_dim3() {
         let mut wl = ContinuousWorldline::new(12.0, 3, 1); // m=0
         assert_eq!(wl.dim(), 3);
-        wl.insert_kink(3.0, 2);  // m=0 → m=+1
-        wl.insert_kink(6.0, 0);  // m=+1 → m=-1
-        wl.insert_kink(9.0, 1);  // m=-1 → m=0
+        wl.insert_kink(3.0, 2); // m=0 → m=+1
+        wl.insert_kink(6.0, 0); // m=+1 → m=-1
+        wl.insert_kink(9.0, 1); // m=-1 → m=0
         assert_eq!(wl.num_kinks(), 3);
         assert_consistent(&wl);
         assert_eq!(wl.state_at(1.0), 1);
@@ -85,9 +95,9 @@ mod continuous {
     #[test]
     fn spin_five_half_dim6() {
         let mut wl = ContinuousWorldline::new(10.0, 6, 3); // m=0
-        wl.insert_kink(2.0, 5);  // → m=+5/2
-        wl.insert_kink(4.0, 0);  // → m=-5/2
-        wl.insert_kink(7.0, 3);  // → m=0
+        wl.insert_kink(2.0, 5); // → m=+5/2
+        wl.insert_kink(4.0, 0); // → m=-5/2
+        wl.insert_kink(7.0, 3); // → m=0
         assert_eq!(wl.num_kinks(), 3);
         assert_consistent(&wl);
         assert_eq!(wl.state_at(1.0), 3);

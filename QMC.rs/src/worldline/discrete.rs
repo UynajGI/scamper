@@ -19,7 +19,12 @@ impl DiscreteWorldline {
         assert!(beta > 0.0);
         assert!(m > 0);
         let delta_tau = beta / m as f64;
-        Self { beta, delta_tau, dim, states: vec![initial_state; m].into_boxed_slice() }
+        Self {
+            beta,
+            delta_tau,
+            dim,
+            states: vec![initial_state; m].into_boxed_slice(),
+        }
     }
 
     /// Number of time slices M.

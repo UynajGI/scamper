@@ -17,7 +17,12 @@ impl ContinuousWorldline {
         assert!(dim > 0);
         assert!(initial_state < dim);
         assert!(beta > 0.0);
-        Self { beta, dim, initial_state, kinks: Vec::new() }
+        Self {
+            beta,
+            dim,
+            initial_state,
+            kinks: Vec::new(),
+        }
     }
 
     /// Number of kinks strictly before `tau` (left-continuous convention:
