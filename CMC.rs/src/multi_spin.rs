@@ -8,7 +8,7 @@
 //! different replica. All 64 replicas share the same lattice and coupling
 //! but evolve independently with different random number sequences.
 
-use crate::hamiltonian::{Hamiltonian, Measurable};
+use crate::hamiltonian::Hamiltonian;
 use crate::lattice::{build_hypercubic, BondType};
 use crate::models::IsingModel;
 use crate::system::System;
@@ -185,13 +185,70 @@ impl MonteCarlo for MultiSpinIsing {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        let e = self.system.energy;
-        let m = self.model.magnetization(&self.system.spins);
-        ctx.measure("Energy", e);
-        ctx.measure("Magnetization", m);
-        ctx.measure("E2", e * e);
-        ctx.measure("M2", m * m);
-        ctx.measure("M4", m * m * m * m);
+        // Measure all 64 replicas. They share β / visit order / acceptance
+        // random numbers (see `sweep`), so they are *not* statistically
+        // independent — the per-replica estimates are correlated. Treating
+        // them as 64 samples would overstate the statistics. We expose them
+        // as array observables (Energy[k], Magnetization[k], … for replica k)
+        // so callers can pick a single replica or average, and additionally
+        // keep replica-0 as the scalar "Energy"/"Magnetization" for backward
+        // compatibility with scalar-only consumers.
+        let n = self.system.n_sites();
+        let j = self.model.coupling();
+
+        let mut e_arr = [0.0f64; N_REPLICAS];
+        let mut m_arr = [0.0f64; N_REPLICAS];
+        let mut e2_arr = [0.0f64; N_REPLICAS];
+        let mut m2_arr = [0.0f64; N_REPLICAS];
+        let mut m4_arr = [0.0f64; N_REPLICAS];
+
+        for r in 0..N_REPLICAS {
+            let mask = 1u64 << r;
+            // Energy: E = -J Σ_{⟨i,j⟩} σ_i σ_j over directed bonds, /2 for double count.
+            let mut e = 0.0;
+            let mut spin_sum = 0.0f64;
+            for i in 0..n {
+                let si = if self.packed_spins[i] & mask != 0 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                spin_sum += si;
+                let nbrs = self.system.lattice.neighbors(i);
+                for &jdx in nbrs {
+                    // Count each directed bond; divide by 2 below.
+                    let sj = if self.packed_spins[jdx] & mask != 0 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    e += -j * si * sj;
+                }
+            }
+            e *= 0.5;
+
+            let m = (spin_sum / n as f64).abs();
+            e_arr[r] = e;
+            m_arr[r] = m;
+            e2_arr[r] = e * e;
+            m2_arr[r] = m * m;
+            m4_arr[r] = m * m * m * m;
+        }
+
+        // Per-replica array observables (length 64).
+        ctx.measure_array("Energy_replica", &e_arr);
+        ctx.measure_array("Magnetization_replica", &m_arr);
+        ctx.measure_array("E2_replica", &e2_arr);
+        ctx.measure_array("M2_replica", &m2_arr);
+        ctx.measure_array("M4_replica", &m4_arr);
+
+        // Scalar fallback: replica 0 (matches prior behavior).
+        // Mark with suffix so it's not confused with the array.
+        ctx.measure("Energy", e_arr[0]);
+        ctx.measure("Magnetization", m_arr[0]);
+        ctx.measure("E2", e2_arr[0]);
+        ctx.measure("M2", m2_arr[0]);
+        ctx.measure("M4", m4_arr[0]);
     }
 
     fn name(&self) -> &'static str {
@@ -375,5 +432,43 @@ mod tests {
         let mut mc = mc;
         mc.change_parameter("beta", 2.5);
         assert!((mc.system.beta - 2.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_multi_spin_measure_all_replicas() {
+        // measure() must register per-replica array observables
+        // (Energy_replica, …) in addition to the replica-0 scalar fallback.
+        let lattice = build_chain(8, true);
+        let model = IsingModel::new(1.0);
+        let system = System::new(lattice, 1, 1.0, 1.0);
+        let mut msi = MultiSpinIsing::new(system, model);
+
+        // Run a few sweeps so replicas diverge from the uniform init.
+        let mut rng = make_rng();
+        for _ in 0..20 {
+            msi.sweep(&mut rng);
+        }
+
+        // Drive measure() through a real Context and check the array
+        // observable was registered with 64 entries.
+        let mut ctx = carlo_rs::Context::new(rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(7), 0);
+        for _ in 0..5 {
+            msi.sweep(&mut rng);
+            msi.measure(&mut ctx);
+        }
+        let estimates = ctx.finalize_measurements();
+
+        // Array path exists and the scalar fallback is consistent with it.
+        assert!(
+            estimates.contains_key("Energy_replica"),
+            "per-replica Energy array must be registered"
+        );
+        assert!(
+            estimates.contains_key("Magnetization_replica"),
+            "per-replica Magnetization array must be registered"
+        );
+        // Scalar fallbacks still present for scalar-only consumers.
+        assert!(estimates.contains_key("Energy"));
+        assert!(estimates.contains_key("Magnetization"));
     }
 }

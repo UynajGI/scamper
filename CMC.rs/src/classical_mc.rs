@@ -202,9 +202,14 @@ where
 /// - `"chain"` (default): 1D chain
 /// - `"square"`: 2D square (hypercubic)
 /// - `"cubic"`: 3D cubic (hypercubic)
-/// - `"triangular"`: 2D triangular (no PBC)
-/// - `"honeycomb"`: 2D honeycomb (no PBC)
-/// - `"kagome"`: 2D kagome (no PBC)
+/// - `"triangular"`: 2D triangular (PBC only)
+/// - `"honeycomb"`: 2D honeycomb (PBC only)
+/// - `"kagome"`: 2D kagome (PBC only)
+///
+/// The non-bravais lattices (triangular/honeycomb/kagome) currently only
+/// support periodic boundaries; passing `pbc=false` for those returns an
+/// error rather than silently producing a PBC lattice. The hypercubic family
+/// honors `pbc`.
 ///
 /// Dimensions via `L` (1D) or `Lx`, `Ly` (2D) or `Lx`, `Ly`, `Lz` (3D).
 fn build_lattice_from_params(
@@ -216,20 +221,29 @@ fn build_lattice_from_params(
         .unwrap_or_else(|| "chain".to_string());
 
     match lt.as_str() {
-        "triangular" => {
-            let lx = params.get::<usize>("Lx").unwrap_or(4);
+        "triangular" | "honeycomb" | "kagome" => {
+            // These builders are PBC-only today; reject an explicit open
+            // request instead of silently producing a periodic lattice.
+            if !pbc {
+                return Err(CarloError::InvalidConfig {
+                    field: "pbc".into(),
+                    reason: format!(
+                        "lattice_type `{lt}` only supports periodic boundaries; \
+                         set pbc=true (the default) or omit it"
+                    ),
+                });
+            }
+            let lx = params.get::<usize>("Lx").unwrap_or(match lt.as_str() {
+                "kagome" => 2,
+                _ => 4,
+            });
             let ly = params.get::<usize>("Ly").unwrap_or(lx);
-            Ok(build_triangular(lx, ly))
-        }
-        "honeycomb" => {
-            let lx: usize = params.get::<usize>("Lx").unwrap_or(4);
-            let ly: usize = params.get::<usize>("Ly").unwrap_or(lx);
-            Ok(build_honeycomb(lx, ly))
-        }
-        "kagome" => {
-            let lx = params.get::<usize>("Lx").unwrap_or(2);
-            let ly = params.get::<usize>("Ly").unwrap_or(lx);
-            Ok(build_kagome(lx, ly))
+            Ok(match lt.as_str() {
+                "triangular" => build_triangular(lx, ly),
+                "honeycomb" => build_honeycomb(lx, ly),
+                "kagome" => build_kagome(lx, ly),
+                _ => unreachable!(),
+            })
         }
         _ => {
             // hypercubic family: chain, square, cubic
