@@ -1,3 +1,17 @@
+# Enable project-local git hooks (.githooks/)
+hooks:
+    git config core.hooksPath .githooks
+    @echo "hooks → .githooks (verify: git config --get core.hooksPath)"
+
+# Show current hooks config
+hooks-status:
+    @echo "core.hooksPath = $(git config --get core.hooksPath || echo '(unset)')"
+
+# Disable project hooks (revert to default .git/hooks/)
+hooks-disable:
+    git config --unset core.hooksPath
+    @echo "hooks disabled"
+
 # Quick feedback (format + lint + test)
 check:
     cargo fmt --check

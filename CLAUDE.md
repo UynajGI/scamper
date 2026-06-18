@@ -3,7 +3,7 @@
 Scuttle — Monte Carlo framework with three Rust crates: Carlo.rs (core), QMC.rs (quantum), CMC.rs (classical).
 
 
-Pre-commit hook (`.githooks/pre-commit`) runs `fmt --check` → `clippy -- -D warnings` → `test` on staged `.rs` files. Enable: `git config core.hooksPath .githooks`.
+Pre-commit hook (`.githooks/pre-commit`) runs `fmt --check` → `clippy -- -D warnings` on staged `.rs` files (affected crates only). `commit-msg` enforces Conventional Commits. `pre-push` runs `cargo test`. Enable: `git config core.hooksPath .githooks` or `just hooks`. Skip: `SKIP=clippy git commit`, `SKIP=test git push`. Details: `.githooks/README.md`.
 
 ## Workspace
 
