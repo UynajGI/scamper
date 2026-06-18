@@ -1,41 +1,19 @@
 #!/usr/bin/env bash
-# Scuttle commit-msg hook.
+# Validate a commit message against Scuttle's Conventional Commits convention.
+# The message file path is $1 (lefthook passes {1}).
 #
-# Enforces Conventional Commits (https://www.conventionalcommits.org) with
-# project-specific scopes. The commit message file path is $1.
-#
-# Format:
-#   <type>(<scope>)!: <subject>
-#
-#       subject line ≤ 72 chars, imperative mood, no trailing period.
-#       type required; scope + `!` (breaking) optional.
-#       Body (if any) separated from subject by exactly one blank line;
-#       body lines wrapped at 100 chars.
+# Format:  <type>(<scope>)!: <subject>
+#   subject ≤ 72 chars, imperative, no trailing period
+#   body (optional) separated by one blank line, wrap ≤ 100 (warning only)
 #
 # Allowed types:  feat fix docs style refactor perf test build ci chore revert
 # Allowed scopes: Carlo QMC CMC carlo-rs qmc-rs cmc-rs spec task docs deps release
-#                 (scope is optional; unknown scopes only WARN.)
 #
-# Pass-through (never blocked):
-#   - Merge commits:        "^Merge "
-#   - Revert commits:       "^Revert "
-#   - Auto-generated:       version bumps by bots, dependabot, etc.
-#
-# Override: HOOK_SKIP=1 or SKIP=msg skips enforcement.
-
+# Pass-through (never blocked): Merge / Revert / squash! / fixup! / amend!
 set -euo pipefail
 
-# shellcheck source=_common.sh
-source "$(dirname "$0")/_common.sh"
-
-case "${HOOK_SKIP:-}" in
-    1|true|yes) exit 0 ;;
-esac
-# SKIP=all skips every hook; SKIP=msg skips this one.
-if hook_skip "all" || hook_skip "msg"; then exit 0; fi
-
-MSG_FILE="$1"
- SUBJECT="$(sed -n '1p' "$MSG_FILE")"
+MSG_FILE="${1:?usage: commit-msg-check.sh <msg-file>}"
+SUBJECT="$(sed -n '1p' "$MSG_FILE")"
 
 red()    { printf '\033[1;31m%s\033[0m\n' "$1" >&2; }
 yellow() { printf '\033[1;33m%s\033[0m\n' "$1" >&2; }
@@ -43,17 +21,12 @@ yellow() { printf '\033[1;33m%s\033[0m\n' "$1" >&2; }
 # --- pass-through commits --------------------------------------------------
 case "$SUBJECT" in
     "Merge "*|"Revert "*) exit 0 ;;
-esac
-# squash/amend/fixedup commits from rebase --autosquash
-case "$SUBJECT" in
     "squash! "*|"fixup! "*|"amend! "*) exit 0 ;;
 esac
 
 # --- regex -----------------------------------------------------------------
-# type(scope?)!: subject  — note: `!` marks a breaking change.
 TYPES='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
 SCOPES='Carlo|QMC|CMC|carlo-rs|qmc-rs|cmc-rs|spec|task|docs|deps|release'
-
 HEADER_RE="^(${TYPES})(\((${SCOPES})\))?(!)?: .+"
 
 fail() {
@@ -76,22 +49,19 @@ fail() {
                    (scope optional)
 
   Subject rules: imperative mood, ≤ 72 chars, no trailing period.
-  Skip:          HOOK_SKIP=1 git commit  (or SKIP=msg)
+  Skip:          LEFTHOOK=0 git commit
 EOF
     exit 1
 }
 
-# 1. Header shape
+# 1. Header shape.
 if ! [[ "$SUBJECT" =~ $HEADER_RE ]]; then
     fail
 fi
 
-TYPE="${BASH_REMATCH[1]}"
 SCOPE="${BASH_REMATCH[3]}"
-BREAKING="${BASH_REMATCH[4]}"
 
-# 2. Subject length (count chars after "type(scope?)!: ")
-#    The header itself counts toward the 72 limit.
+# 2. Subject length.
 if ((${#SUBJECT} > 72)); then
     red "✗ Subject line is ${#SUBJECT} chars (max 72)."
     cat >&2 <<'EOF'
@@ -102,26 +72,23 @@ EOF
     exit 1
 fi
 
-# 3. No trailing period on subject.
+# 3. No trailing period.
 if [[ "$SUBJECT" =~ \.$ ]]; then
     red "✗ Subject ends with a period — remove it."
     exit 1
 fi
 
-# 4. Unknown scope → warn only (don't block; keeps the hook forgiving for
-#    future scopes without a hook edit).
+# 4. Unknown scope → warn only (forward-compatible with future scopes).
 if [ -n "$SCOPE" ]; then
     case "$SCOPE" in
         Carlo|QMC|CMC|carlo-rs|qmc-rs|cmc-rs|spec|task|docs|deps|release) ;;
-        *)
-            yellow "⚠ Unknown scope '$SCOPE' (allowed but unusual). Continuing."
-            ;;
+        *) yellow "⚠ Unknown scope '$SCOPE' (allowed but unusual). Continuing." ;;
     esac
 fi
 
-# 5. Body wrap (warn at 100 chars, not block — trailers may exceed).
+# 5. Body wrap warning (trailers exempt).
 if [ "$(sed -n '2,$p' "$MSG_FILE" | wc -l)" -gt 0 ]; then
-    long_lines="$(awk 'NR>1 && length($0)>100 && $0 !~ /^(Signed-off-by|Co-Authored-By|Reviewed-by|Refs|Fixes|Closes|Resolves):/ {printf "  line %d (%d chars): %s\n", NR, length($0), substr($0,1,50)}' "$MSG_FILE")"
+    long_lines="$(awk 'NR>1 && length($0)>100 && $0 !~ /^(Signed-off-by|Co-Authored-By|Reviewed-by|Refs|Fixes|Closes|Resolves):/ {printf "  line %d (%d chars)\n", NR, length($0)}' "$MSG_FILE")"
     if [ -n "$long_lines" ]; then
         yellow "⚠ Some body lines exceed 100 chars (trailers ignored):"
         yellow "$long_lines"

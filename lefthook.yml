@@ -1,0 +1,46 @@
+# Lefthook configuration for Scuttle.
+# Docs: https://github.com/evilmartians/lefthook
+#
+# Install (one-time, after clone):
+#   lefthook install
+# Or via just:
+#   just hooks
+#
+# Skip a single hook:   lefthook run --no-clippy  /  LEFTHOOK=0 git commit
+# Skip everything:      LEFTHOOK=0 git commit
+
+# Compact output — lefthook prints a per-job summary line + failures; skip the
+# box-drawing TUI wrapper which clutters CI logs and non-interactive shells.
+output:
+  - meta
+  - summary
+  - empty_summary
+
+# Run the cheapest check first; stop the group on first failure so we don't
+# waste time running clippy on unformatted code.
+pre-commit:
+  parallel: false
+  piped: true
+  jobs:
+    - name: fmt
+      glob: "*.rs"
+      run: .lefthook/fmt-check.sh
+
+    - name: clippy
+      glob: "*.rs"
+      # Scope clippy to the affected crates. {staged_files} is expanded by
+      # lefthook; affected-crates.sh maps the paths to -p flags.
+      run: .lefthook/clippy.sh {{staged_files}}
+
+commit-msg:
+  jobs:
+    # Conventional Commits with project scopes. Merge/Revert/fixup pass through.
+    - name: conventional
+      run: .lefthook/commit-msg-check.sh {1}
+
+pre-push:
+  jobs:
+    - name: test
+      # Test only the affected crates of the pushed range. Falls back to
+      # --workspace when the range can't be determined (first push of a branch).
+      run: .lefthook/pre-push-test.sh

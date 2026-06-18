@@ -1,16 +1,16 @@
-# Enable project-local git hooks (.githooks/)
+# Install lefthook git hooks (pre-commit, commit-msg, pre-push)
 hooks:
-    git config core.hooksPath .githooks
-    @echo "hooks → .githooks (verify: git config --get core.hooksPath)"
+    lefthook install
+    @echo "lefthook hooks installed (verify: lefthook check-install)"
 
-# Show current hooks config
+# Show lefthook install status
 hooks-status:
-    @echo "core.hooksPath = $(git config --get core.hooksPath || echo '(unset)')"
+    @lefthook check-install 2>&1 || echo "(lefthook not installed — run: just hooks)"
 
-# Disable project hooks (revert to default .git/hooks/)
+# Uninstall lefthook git hooks
 hooks-disable:
-    git config --unset core.hooksPath
-    @echo "hooks disabled"
+    lefthook uninstall
+    @echo "lefthook hooks uninstalled"
 
 # Quick feedback (format + lint + test)
 check:
