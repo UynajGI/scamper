@@ -17,7 +17,8 @@ output:
   - empty_summary
 
 # Run the cheapest check first; stop the group on first failure so we don't
-# waste time running clippy on unformatted code.
+# waste time running clippy on unformatted code. typos runs last (no .rs glob
+# gate — it scans docs/config too).
 pre-commit:
   parallel: false
   piped: true
@@ -26,11 +27,22 @@ pre-commit:
       glob: "*.rs"
       run: .lefthook/fmt-check.sh
 
+    - name: check
+      glob: "*.rs"
+      # Fast type-check before the slower clippy pass. Scoped to affected
+      # crates via affected-crates.sh (same mapping as clippy).
+      run: .lefthook/check.sh {{staged_files}}
+
     - name: clippy
       glob: "*.rs"
       # Scope clippy to the affected crates. {staged_files} is expanded by
       # lefthook; affected-crates.sh maps the paths to -p flags.
       run: .lefthook/clippy.sh {{staged_files}}
+
+    - name: typos
+      # Spelling across the whole repo (config: .typos.toml). Silently skips
+      # if the `typos` binary isn't installed — CI is the authoritative run.
+      run: .lefthook/typos.sh
 
 commit-msg:
   jobs:
@@ -44,3 +56,8 @@ pre-push:
       # Test only the affected crates of the pushed range. Falls back to
       # --workspace when the range can't be determined (first push of a branch).
       run: .lefthook/pre-push-test.sh
+
+    - name: deny
+      # cargo deny check (advisories + licenses). Silently skips if
+      # cargo-deny isn't installed — CI runs it via cargo-deny-action.
+      run: .lefthook/deny-check.sh

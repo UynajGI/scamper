@@ -30,27 +30,9 @@ fi
 
 PUSHED_RS="$(git diff --name-only --diff-filter=ACMR "$RANGE" -- '*.rs' || true)"
 
-# Map to crates.
-crates=""
-while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    case "$f" in
-        Carlo.rs/*) crates="${crates}carlo-rs " ;;
-        QMC.rs/*)   crates="${crates}qmc-rs " ;;
-        CMC.rs/*)   crates="${crates}cmc-rs " ;;
-    esac
-done <<EOF
-$PUSHED_RS
-EOF
-
-# Dedupe.
-seen="" PKG_FLAGS=""
-for c in $crates; do
-    case " $seen " in
-        *" $c "*) ;;
-        *) seen="$seen $c"; PKG_FLAGS="${PKG_FLAGS}-p ${c} " ;;
-    esac
-done
+# Map file paths → affected crate flags via the shared helper (single source
+# of truth for the Carlo.rs/QMC.rs/CMC.rs → carlo-rs/qmc-rs/cmc-rs mapping).
+PKG_FLAGS="$(./.lefthook/affected-crates.sh $PUSHED_RS)"
 
 if [ -z "$PKG_FLAGS" ]; then
     PKG_FLAGS="--workspace"

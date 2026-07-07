@@ -9,10 +9,17 @@ regex). All are plain bash, executable, and testable standalone.
 | Script                 | Called from      | Purpose                                                 |
 | ---------------------- | ---------------- | ------------------------------------------------------- |
 | `fmt-check.sh`         | pre-commit / fmt | `cargo fmt --check` with a helpful failure hint.        |
-| `clippy.sh <files...>` | pre-commit / clippy | `cargo clippy -D warnings` scoped to affected crates.   |
-| `affected-crates.sh`   | (by clippy.sh)  | Map file paths → deduped `-p <crate>` flags.            |
+| `check.sh <files...>`  | pre-commit / check | `cargo check` scoped to affected crates (fast gate).  |
+| `clippy.sh <files...>` | pre-commit / clippy | `cargo clippy` scoped to affected crates. (deny level  |
+|                        |                  | lives in `[workspace.lints]` in `Cargo.toml`.)          |
+| `typos.sh`             | pre-commit / typos | `typos` spelling check (skips if not installed).      |
+| `affected-crates.sh`   | (by check.sh /   | Map file paths → deduped `-p <crate>` flags.            |
+|                        |  clippy.sh /     |                                                         |
+|                        |  pre-push-test.sh)|                                                        |
 | `commit-msg-check.sh <msg-file>` | commit-msg | Conventional Commits validation.              |
 | `pre-push-test.sh`     | pre-push / test  | `cargo test` scoped to affected crates of push range.   |
+| `deny-check.sh`        | pre-push / deny  | `cargo deny check advisories licenses` (skips if not    |
+|                        |                  | installed).                                             |
 
 ## Crate mapping
 
@@ -30,8 +37,11 @@ Files outside these dirs (or no Rust files staged) fall back to `--workspace`.
 ./.lefthook/affected-crates.sh CMC.rs/src/x.rs QMC.rs/y.rs   # → "-p cmc-rs -p qmc-rs "
 ./.lefthook/commit-msg-check.sh /path/to/COMMIT_EDITMSG       # exit 0/1
 ./.lefthook/clippy.sh CMC.rs/src/lib.rs                       # runs clippy on cmc-rs
+./.lefthook/check.sh CMC.rs/src/lib.rs                        # runs cargo check on cmc-rs
 ./.lefthook/fmt-check.sh                                      # runs cargo fmt --check
+./.lefthook/typos.sh                                          # runs typos (exit 0 if missing)
 ./.lefthook/pre-push-test.sh                                  # runs cargo test on push range
+./.lefthook/deny-check.sh                                     # runs cargo deny (exit 0 if missing)
 ```
 
 ## See also

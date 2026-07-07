@@ -12,10 +12,11 @@ hooks-disable:
     lefthook uninstall
     @echo "lefthook hooks uninstalled"
 
-# Quick feedback (format + lint + test)
+# Quick feedback (format + lint + test). Lint level is set in
+# [workspace.lints] (Cargo.toml) — clippy here picks it up automatically.
 check:
     cargo fmt --check
-    cargo clippy --all-targets -- -D warnings
+    cargo clippy --all-targets --workspace
     cargo test --workspace
 
 # Format code
@@ -66,9 +67,16 @@ doc-check:
 clean:
     cargo clean
 
-# Security audit
-audit:
-    cargo audit 2>/dev/null || echo "cargo-audit not installed"
+# Dependency audit (advisories + licenses). Requires cargo-deny:
+#   cargo install cargo-deny
+# CI runs the same via cargo-deny-action.
+deny:
+    cargo deny check advisories licenses
+
+# Spelling check (config: .typos.toml). Requires typos:
+#   cargo install typos-cli
+typos:
+    typos
 
 # Publish dry-run
 publish-dry:

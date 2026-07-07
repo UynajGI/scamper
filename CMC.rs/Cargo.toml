@@ -3,6 +3,7 @@ name = "cmc-rs"
 version = "0.1.0-dev1"
 edition = "2021"
 authors = ["Scuttle Team"]
+license = "Apache-2.0"
 description = "Classical Monte Carlo algorithm toolbox (Metropolis, Wolff, Swendsen-Wang)"
 
 [dependencies]

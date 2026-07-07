@@ -1,0 +1,47 @@
+# cargo-deny configuration for Scuttle.
+# Docs: https://embarkstudios.github.io/cargo-deny/
+#
+# Run locally:   cargo deny check advisories licenses
+# Run in CI:     .github/workflows/ci.yml (cargo-deny-action)
+# Run in hook:   .lefthook/deny-check.sh  (pre-push, if cargo-deny is installed)
+#
+# Note: cargo-deny 0.19 removed the per-category lint levels
+# (`vulnerability`/`unmaintained`/`yanked`/`notice`) from [advisories]. The
+# behavior is now fixed: vulnerabilities & yanked crates deny, unmaintained
+# crates warn. We rely on those defaults and only tune `ignore` + licenses.
+
+# ──────────────────────────────────────────────────────────────────────────
+# advisories — RUSTSEC vulnerability / yank database
+# ──────────────────────────────────────────────────────────────────────────
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+
+# Per-advisory ignore list. Add a RUSTSEC id here ONLY with a comment
+# explaining why, and a reminder date to re-evaluate.
+ignore = []
+
+# ──────────────────────────────────────────────────────────────────────────
+# licenses — keep the workspace Apache-2.0 compatible
+# ──────────────────────────────────────────────────────────────────────────
+[licenses]
+# Reject anything not in this allow-list. Notably excludes GPL/AGPL/LGPL/
+# SSPL/CC-BY-SA (strong copyleft — would viral the whole project) and
+# commercial / "no license" crates.
+#
+# MPL-2.0 is included: it's weak, file-level copyleft that is compatible with
+# Apache-2.0 (we can link it without our license changing). It reaches us via
+# option-ext -> dirs-sys -> dirs -> shellexpand.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Zlib",
+    "CC0-1.0",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.8

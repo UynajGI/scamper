@@ -1,0 +1,43 @@
+# typos config for Scuttle.
+# Docs: https://github.com/crate-ci/typos
+#
+# Run locally:  typos              (or: just typos)
+# Pre-commit:   .lefthook/typos.sh (silently skips if `typos` not installed)
+
+[files]
+# Skip docs that are reference material / generated / not our prose.
+extend-exclude = [
+    "docs/ref",          # third-party reference PDFs + their markdown extracts
+    "docs/superpowers",  # design specs (historical, frozen)
+    "docs/review",       # review HTML + bibliography
+    "target",
+    ".jj",
+    "Carlo.jl",          # Julia baseline (if present)
+    ".trellis",
+    "uv.lock",
+    "Cargo.lock",
+    "skills-lock.json",
+]
+
+[default.extend-words]
+# Physics / MC domain terms that typos would otherwise flag. Add as the repo
+# grows; keep this list focused on real false positives.
+"MC" = "MC"
+"Metropolis" = "Metropolis"
+"Wolff" = "Wolff"
+"Swendsen" = "Swendsen"
+"Wang" = "Wang"
+"onsager" = "onsager"
+"ising" = "ising"
+"potts" = "potts"
+"heisenberg" = "heisenberg"
+"kagome" = "kagome"
+"honeycomb" = "honeycomb"
+"metropolis" = "metropolis"
+"strequal" = "strequal"     # Rust API name
+"clippy" = "clippy"
+
+[default.extend-identifiers]
+# Code identifiers (struct/function names) typos would rewrite.
+"Carlo" = "Carlo"
+"Scuttle" = "Scuttle"
