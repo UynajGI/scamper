@@ -33,6 +33,13 @@ and `cargo deny` on push. Tests run in CI, not the pre-push hook — use
 is set in `[workspace.lints]` (`Cargo.toml`). Skip with `LEFTHOOK=0`. CI runs
 fmt + clippy + test + deny as parallel jobs with `--all-features`.
 
+## Acknowledgments
+
+This project is a Rust port of [Carlo.jl](https://github.com/lukas-weber/Carlo.jl)
+by Lukas Weber (Max Planck Institute). The core architecture (scheduler,
+measurements, MPI backend, checkpointing, parallel tempering) follows the
+original design. See the accompanying paper: [arXiv:2408.03386](https://arxiv.org/abs/2408.03386).
+
 ## License
 
 Apache-2.0
