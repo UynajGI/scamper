@@ -28,3 +28,9 @@ termcolor = "1"
 # `cargo clippy` / IDE diagnostics now match the hook without RUSTFLAGS tricks.
 [workspace.lints.clippy]
 all = "deny"
+
+# Rustc built-in lints. `unsafe_code = "deny"` blocks new unsafe by default;
+# AI assistants (and humans) must add an explicit `#[allow(unsafe_code)]` with a
+# SAFETY justification to use it — the allow then shows up in code review.
+[workspace.lints.rust]
+unsafe_code = "deny"

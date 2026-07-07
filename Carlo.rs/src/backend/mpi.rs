@@ -5,6 +5,13 @@
 //! - Channel abstraction over MPI
 //! - Result-based error handling everywhere
 
+// This module is the one place in the workspace that needs `unsafe`: MPI's
+// communicator handles are opaque and the `mpi` crate doesn't expose a safe
+// Clone, so we bitwise-copy via `ptr::read`. The workspace-level lint policy
+// (Cargo.toml `[workspace.lints.rust]`) denies unsafe_code everywhere else;
+// this `#![allow]` scopes the exception to this file only.
+#![allow(unsafe_code)]
+
 #[cfg(feature = "mpi")]
 use mpi::topology::SimpleCommunicator;
 #[cfg(feature = "mpi")]
