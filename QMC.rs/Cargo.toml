@@ -17,3 +17,6 @@ approx = "0.5"
 default = []
 hdf5 = ["carlo-rs/hdf5"]
 mpi = ["carlo-rs/mpi"]
+
+[lints]
+workspace = true

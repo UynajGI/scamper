@@ -1,0 +1,11 @@
+# rustfmt config for Scuttle.
+#
+# Only pins values that diverge from stable defaults or that we want to lock
+# against future rustfmt drift. Everything else inherits the default styling,
+# which is what `cargo fmt` already produces today (the workspace passes
+# `cargo fmt --check` with no config file).
+
+edition = "2021"
+
+# Matches the commit-msg body wrap hint (100) and keeps diff noise low.
+max_width = 100

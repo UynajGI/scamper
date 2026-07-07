@@ -1,0 +1,9 @@
+# clippy.toml — tunable thresholds for clippy lints.
+#
+# Empty for now (the lint policy lives in [workspace.lints.clippy] in the
+# top-level Cargo.toml). Add keys here when we want to tune lint-specific
+# thresholds, e.g.:
+#
+#   too-many-arguments-threshold = 8
+#   type-complexity-threshold = 250
+#   excessive-nesting-threshold = 12

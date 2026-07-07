@@ -42,3 +42,6 @@ default = []
 strict-repro = []  # Use jump sequence for RNG
 hdf5 = ["dep:hdf5"]
 mpi = ["dep:mpi", "mpi?/derive"]
+
+[lints]
+workspace = true

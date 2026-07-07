@@ -22,3 +22,9 @@ nalgebra = "0.33"
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.18"
 termcolor = "1"
+
+# Lint policy shared by all workspace members. Mirrors the `-D warnings` that
+# the lefthook pre-commit hook historically enforced on the command line, so
+# `cargo clippy` / IDE diagnostics now match the hook without RUSTFLAGS tricks.
+[workspace.lints.clippy]
+all = "deny"
