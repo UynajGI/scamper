@@ -3,7 +3,7 @@
 Scuttle — Monte Carlo framework with three Rust crates: Carlo.rs (core), QMC.rs (quantum), CMC.rs (classical).
 
 
-Hooks via **lefthook** (`lefthook.yml` + `.lefthook/` scripts). pre-commit runs `fmt --check` + `clippy -D warnings` on staged `.rs` (affected crates only); commit-msg enforces Conventional Commits; pre-push runs `cargo test`. Install: `lefthook install` or `just hooks`. Skip: `LEFTHOOK=0 git commit`.
+Hooks via **lefthook** (`lefthook.yml` + `.lefthook/` scripts). pre-commit runs `fmt --check` → `cargo check` → `clippy` → `typos` on staged `.rs` (affected crates only); commit-msg enforces Conventional Commits; pre-push runs `cargo deny` only (test moved to CI for fast pushes — run `just test` manually before pushing). Install: `lefthook install` or `just hooks`. Skip: `LEFTHOOK=0 git commit`. Lint policy (incl. `unsafe_code = "deny"`) is codified in `[workspace.lints]` (`Cargo.toml`) — no `RUSTFLAGS` needed; the sole exception is `Carlo.rs/src/backend/mpi.rs` (`#![allow(unsafe_code)]` for MPI FFI). CI (`.github/workflows/ci.yml`) runs fmt + clippy + test + deny (`--all-features`) as parallel jobs.
 
 ## Workspace
 

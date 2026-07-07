@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-flight runs for the same ref when a new commit is pushed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Combined with [workspace.lints] (Cargo.toml) this makes any warning a hard
+  # error in CI — matching the local lefthook pre-commit gate.
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────
+  # fmt — cheapest gate, runs on every push & PR.
+  # ──────────────────────────────────────────────────────────────────────
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  # ──────────────────────────────────────────────────────────────────────
+  # clippy — lint gate. Runs on every push & PR.
+  # ──────────────────────────────────────────────────────────────────────
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install system dependencies (hdf5, mpi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-all-features
+      # `--all-features` covers the hdf5/mpi code paths that the local hook
+      # (which runs without system libs) can't reach.
+      - run: cargo clippy --all-targets --all-features --workspace
+
+  # ──────────────────────────────────────────────────────────────────────
+  # test — the full test matrix. Runs on every push & PR.
+  # (Moved here from pre-push so local pushes stay fast — see lefthook.yml.)
+  # ──────────────────────────────────────────────────────────────────────
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system dependencies (hdf5, mpi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-all-features
+      - run: cargo test --all-features --workspace
+
+  # ──────────────────────────────────────────────────────────────────────
+  # deny — advisories (RUSTSEC) + licenses.
+  # Runs on every push & PR so a vulnerable dep is caught before merge.
+  # ──────────────────────────────────────────────────────────────────────
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          arguments: --all-features check advisories licenses
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Reserved slots for future release infrastructure:
+  #
+  #   release-please : when the project moves to crates.io, add a
+  #     release-please-config.json + a release-please-action job that manages
+  #     CHANGELOG / version bumps / tags per-crate. Nothing to wire now.
+  #   publish        : a job gated on the release-please tag, running
+  #     `cargo publish` per crate with CARGO_REGISTRY_TOKEN.
+  # ──────────────────────────────────────────────────────────────────────

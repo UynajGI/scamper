@@ -52,12 +52,10 @@ commit-msg:
 
 pre-push:
   jobs:
-    - name: test
-      # Test only the affected crates of the pushed range. Falls back to
-      # --workspace when the range can't be determined (first push of a branch).
-      run: .lefthook/pre-push-test.sh
-
     - name: deny
       # cargo deny check (advisories + licenses). Silently skips if
       # cargo-deny isn't installed — CI runs it via cargo-deny-action.
       run: .lefthook/deny-check.sh
+      # test moved to CI — local pre-push test gate was 35s+ (mostly compile)
+      # and the deny check covers the fast dependency-side risk. Run tests
+      # manually with `just test` before pushing, or rely on CI.

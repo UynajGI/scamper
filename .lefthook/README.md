@@ -17,7 +17,9 @@ regex). All are plain bash, executable, and testable standalone.
 |                        |  clippy.sh /     |                                                         |
 |                        |  pre-push-test.sh)|                                                        |
 | `commit-msg-check.sh <msg-file>` | commit-msg | Conventional Commits validation.              |
-| `pre-push-test.sh`     | pre-push / test  | `cargo test` scoped to affected crates of push range.   |
+| `pre-push-test.sh`     | (manual)        | `cargo test` scoped to affected crates of push range.   |
+|                        |                 | Not wired into lefthook — test moved to CI. Run by hand |
+|                        |                 | or via `just test`.                                     |
 | `deny-check.sh`        | pre-push / deny  | `cargo deny check advisories licenses` (skips if not    |
 |                        |                  | installed).                                             |
 

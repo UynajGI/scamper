@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Pre-push test runner for Scuttle (invoked by lefthook).
+# Manual pre-push test runner for Scuttle.
 #
-# Runs `cargo test` scoped to the crates touched in the pushed range.
-# Lefthook doesn't pass push metadata to pre-push run commands reliably, so
-# this script derives the range from git itself.
+# NOT wired into lefthook anymore (test moved to CI for faster pushes — see
+# lefthook.yml). Kept as a standalone helper for developers who want to run
+# affected-crate tests locally before pushing:
 #
-# Skip:  LEFTHOOK=0 git push
+#   ./.lefthook/pre-push-test.sh        # tests the push range
+#   just test                           # tests everything
+#
+# Derives the pushed range from git; falls back to --workspace when the range
+# can't be determined (first push of a branch).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"

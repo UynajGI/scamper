@@ -22,13 +22,16 @@ cargo build --release --features "hdf5 mpi"
 ```bash
 just hooks     # install git hooks (requires lefthook: brew install lefthook / go install ...)
 just check     # fmt + clippy + test (all crates)
-just test      # test all crates
+just deny      # cargo deny (advisories + licenses) — requires cargo-deny
+just typos     # spelling check — requires typos
 ```
 
 Git hooks (via [lefthook](https://github.com/evilmartians/lefthook)) enforce
-`cargo fmt` + `clippy -D warnings` on commit, Conventional Commits on
-`commit-msg`, and `cargo test` on push — scoped to the crates you actually
-touch. Skip with `LEFTHOOK=0`.
+`cargo fmt` + clippy + typos on commit, Conventional Commits on `commit-msg`,
+and `cargo deny` on push. Tests run in CI, not the pre-push hook — use
+`just test` locally before pushing. Lint level (including `unsafe_code = "deny"`)
+is set in `[workspace.lints]` (`Cargo.toml`). Skip with `LEFTHOOK=0`. CI runs
+fmt + clippy + test + deny as parallel jobs with `--all-features`.
 
 ## License
 
