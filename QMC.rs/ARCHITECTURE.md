@@ -1,198 +1,122 @@
 # QMC.rs architecture
 
-## Responsibility boundary
-
-`Carlo.rs` is the runtime framework. It owns parameter containers, deterministic
-RNG seeding, scheduler/backends, thermalization and measurement phases,
-binning, result reduction, and optional HDF5/MPI infrastructure.
-
-`QMC.rs` is the physics and representation layer. It owns Hamiltonian/model
-catalogs, worldline or operator-string configurations, update kernels,
-representation invariants, and raw estimators.
-
-The boundary is intentionally narrow:
+## Workspace boundary
 
 ```text
-Carlo.rs Scheduler
-    -> SpinBosonQmc::from_params
-    -> SpinBosonQmc::sweep / measure
-        -> WormholeEngine
-            -> WormholeConfiguration
-            -> SpinBosonModel
-            -> Bath
+Carlo.rs: scheduling, RNG streams, warmup/measurement, bins, backends, results
+CMC.rs:   classical Monte Carlo (unchanged)
+QMC.rs:   quantum representations, model catalogs, updates, estimators
 ```
 
-Future lattice QMC, variational Monte Carlo, projector QMC, and other methods
-should add sibling modules and implement the same Carlo-facing pattern. They
-must not be inserted into the impurity-specific `spin_boson` module.
+No Carlo.rs or CMC.rs source is modified by this delivery.
 
-## Generic QMC foundation
+## Shared QMC foundation
 
-`src/algorithm.rs` defines:
+`src/algorithm.rs` defines `QmcKernel<C,R>` and `UpdateSchedule`. A measured
+sweep always performs a fixed amount of work. Runtime adaptation is confined
+to warmup.
 
-- `QmcKernel<C, R>`: one representation-specific update engine;
-- `UpdateSchedule`: a fixed amount of work per measured sweep.
-
-The schedule may adapt during thermalization, but is frozen after
-thermalization. This prevents state-dependent sweep length from biasing
-sweep-sampled observables.
-
-## Spin-boson module
+## Lattice pipeline
 
 ```text
-spin_boson/
-├── bath.rs           normalized frequency/time proposals
-├── configuration.rs  retarded vertices and circular worldline index
-├── error.rs          construction/runtime errors
-├── mc.rs             Carlo.rs adapter and Params conventions
-├── model.rs          JC/XXZ/XYZ/rotated-spin-boson catalogs
-├── observables.rs    diagonal worldline estimators
-├── scattering.rs     generic local detailed-balance scattering
-├── updates.rs        diagonal and wormhole directed-loop updates
-└── vertex.rs         four-leg vertex primitives
+CsrGraph
+  -> LocalHilbertSpace
+  -> PositiveOperatorModel / sparse OperatorTerm catalog
+  -> LatticeConfiguration + WorldlineIndex
+  -> diagonal insertion/removal
+  -> local detailed-balance directed loops
+  -> estimators
+  -> LatticeSpinQmc (Carlo.rs adapter)
 ```
 
-### Configuration
+### `graph.rs`
 
-A sampled retarded vertex is
+`CsrGraph` stores a unique typed/weighted edge table plus CSR neighbor rows.
+Algorithms never infer dimensionality or shape. `from_csr` mirrors the data
+layout used by CMC without creating a crate dependency between the two physics
+packages.
+
+### `local_space.rs`
+
+`LocalHilbertSpace` is the finite local-basis contract. `SpinSpace` is the
+production implementation and supports site-resolved arbitrary `S`. Statistics
+are explicit. Fermions are reserved but rejected by the positive engine until
+a sign-aware backend exists.
+
+### `lattice/model.rs`
+
+A physical spin Hamiltonian is compiled into positive sparse matrix elements of
+`K=C-H`. `OperatorTerm` is local-space agnostic; `SpinModelBuilder` supplies
+spin algebra and automatic shifts. The model compiler:
+
+1. validates couplings;
+2. solves a graph-wide Marshall `Z2` gauge;
+3. rejects incompatible/frustrated signs;
+4. emits diagonal and off-diagonal vertex kinds;
+5. builds a local scattering table;
+6. builds an importance proposal distribution over terms.
+
+The engine has no model-name branches.
+
+### `lattice/configuration.rs`
+
+A configuration is a product-basis state at time zero plus an unsorted packed
+vector of `(tau, term, kind)` insertions. `WorldlineIndex` sorts endpoint events
+per site and builds periodic leg links. Topology is immutable during loop
+updates, so the same index can be reused across a loop block.
+
+### `lattice/scattering.rs`
+
+An extended local state is `(kind, entrance_leg, delta)` with `delta=±1` for a
+raising/lowering discontinuity. Compatible states form a local graph.
+Symmetric path flows enforce
 
 ```text
-(interaction, kind, omega, tau_a, tau_b)
+W_a P(a -> b) = W_b P(b -> a).
 ```
 
-and has four spin legs:
+The default residual-flow policy reduces bounce; a symmetric-proposal
+Metropolis policy is retained as a reference. Bounce preserves the worm charge
+for arbitrary Spin-S. The global engine samples simple non-self-intersecting
+loops; a self-intersection is reversal-symmetrically rejected instead of using
+spin-1/2-only flip assumptions.
+
+### `lattice/updates.rs`
+
+Diagonal proposals choose add/remove with a fixed probability one half,
+including at expansion order zero. A zero-order removal is a null proposal.
+This boundary rule is required by the acceptance ratios
 
 ```text
-A_in, A_out, B_in, B_out.
+R_add    = beta W / ((n_diag + 1) q_term)
+R_remove = n_diag q_term / (beta W).
 ```
 
-`WorldlineIndex` sorts both endpoints in imaginary time and creates the
-periodic links joining an outgoing leg to the next incoming leg. Retarded
-endpoint pairing is implicit in the two endpoint legs of the same vertex.
+Directed loops modify matrix-element kinds, follow periodic worldline links,
+and close on the original discontinuity. Journaling provides exact rollback on
+self-intersection, incompatible closure or a safety limit.
 
-### Bath proposal
+### `lattice/observables.rs`
 
-The diagonal update samples the normalized factor
+Implemented raw estimators include uniform/gauge-staggered magnetization,
+moments and static susceptibilities, expansion-order energy, vertex orders,
+edge `Sz Sz` correlation and update diagnostics.
 
-```text
-calJ(omega) P(omega, delta_tau),
-P(omega,tau) = omega D(omega,tau).
-```
+## Spin-boson pipeline
 
-It therefore cancels from the Metropolis ratio. Implemented shapes are:
+`src/spin_boson` remains the continuous-time retarded-interaction wormhole
+backend. It is a sibling to `lattice`, not a special case inside the lattice
+engine, because its two-time bath vertices and bath proposals have different
+configuration semantics.
 
-- one mode;
-- sharp-cutoff power law;
-- arbitrary positive tabulated spectral mass proportional to `J(omega)/omega`.
+## Extension path
 
-Directed JC vertices retain the sampled orientation. Hermitian coordinate
-couplings choose either orientation with probability one half.
-
-### Model catalog
-
-A model does not implement Monte Carlo control flow. It provides independent
-interaction channels, positive local vertex kinds, diagonal seed lookup, and a
-local scattering table.
-
-Implemented impurity catalogs:
-
-- Jaynes-Cummings: directed `S_+(tau_a) S_-(tau_b)`;
-- XXZ: exchange flips plus longitudinal diagonal interaction;
-- XYZ: exchange and pair flips;
-- original spin-boson/single-mode Rabi after rotation into the bath-coupling
-  basis.
-
-The current engine is deliberately restricted to sign-free positive catalogs.
-Spatially nonlocal propagators with negative matrix elements and genuinely
-complex spectral matrices require a different sign/phase treatment.
-
-### Updates
-
-A sweep contains a fixed number of:
-
-1. diagonal add/remove proposals;
-2. closed directed loops.
-
-Insertion draws an interaction, `tau_a`, `omega`, and `delta_tau`, then selects
-the diagonal local kind compatible with the current worldline spins. The
-acceptance ratios are
-
-```text
-R_add    = beta W_v / ((n_diag + 1) p_interaction)
-R_remove = n_diag p_interaction / (beta W_v).
-```
-
-The loop starts on a random leg. At each vertex it flips the entrance and a
-sampled exit leg. An exit on the other endpoint is a wormhole jump. The loop
-closes when it returns to its starting discontinuity.
-
-`ScatteringTable` builds symmetric path weights on the graph of compatible
-extended local states. The default residual-flow solver strongly reduces
-bounce while preserving exact local detailed balance for every positive
-catalog; a symmetric-proposal Metropolis table remains available as a reference
-and fallback. Analytic or linear-programmed minimum-bounce policies can be
-added without changing the engine API.
-
-### Observables
-
-Implemented raw estimators:
-
-- time-averaged `sigma_z` and `S_z`;
-- second/fourth powers of the time-averaged magnetization;
-- longitudinal static susceptibility sample;
-- half-period longitudinal correlation;
-- total, diagonal, and off-diagonal expansion orders;
-- shifted interaction-expansion energy `-n/beta`;
-- update acceptance, loop length, bounce, and wormhole diagnostics.
-
-Off-diagonal improved loop estimators and bath reconstruction estimators are
-separate follow-on estimator modules; they are not required for correctness of
-the sampler.
-
-## Parameter conventions
-
-All explicit `lambda*` parameters are normalized retarded vertex couplings and
-take precedence over inferred couplings.
-
-For a power-law bath:
-
-```text
-lambda_l = 2 alpha_l omega_c / s.
-```
-
-For a single mode whose coupling multiplies `S_l`:
-
-```text
-lambda_l = g_l^2 / omega0.
-```
-
-For the common standard Rabi convention
-
-```text
-H_int = g_sigma sigma_z (a + a^dagger),
-```
-
-use `g_sigma`; the rotated spin coupling is `2 g_sigma`, hence
-
-```text
-lambda = 4 g_sigma^2 / omega0.
-```
-
-Using `g` for the Rabi model instead means that `g` multiplies `S_z` before
-rotation.
-
-## Validation strategy
-
-The source includes tests for:
-
-- bath sample support;
-- vertex-catalog completeness;
-- scattering-row normalization;
-- local detailed balance;
-- circular worldline continuity and link involution;
-- mixed diagonal/wormhole updates;
-- construction and execution of every impurity catalog through Carlo.rs.
-
-Production validation should additionally compare single-mode models against
-exact diagonalization and benchmark integrated autocorrelation time against the
-specialized Winter cluster backend.
+- More spin models: emit new positive `OperatorTerm` catalogs.
+- Bosons with a finite cutoff: implement `LocalHilbertSpace` and positive terms.
+- Fermions: add a sibling sign-aware/determinant backend; do not reuse the
+  positive engine without parity handling.
+- Longer-range interactions: add weighted edges; no algorithm change.
+- Multi-site operators: extend `TermLocation`/catalog construction while keeping
+  the same leg-link and scattering concepts.
+- Projector/VMC: add sibling modules implementing Carlo-facing adapters and
+  shared QMC scheduling traits.

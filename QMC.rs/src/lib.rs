@@ -1,34 +1,37 @@
-//! # QMC.rs — Quantum Monte Carlo algorithm toolbox
+//! # QMC.rs — reusable quantum Monte Carlo algorithms
 //!
-//! QMC.rs is the physics layer built on top of Carlo.rs.  Carlo.rs owns
-//! scheduling, random-number seeding, accumulation, error analysis,
-//! checkpoint orchestration, and parallel execution.  QMC.rs owns quantum
-//! representations, model catalogs, update kernels, and estimators.
+//! QMC.rs is the quantum-physics layer built on Carlo.rs. Carlo.rs owns run
+//! scheduling, random seeds, accumulation, error analysis, checkpoint
+//! orchestration, and parallel execution. QMC.rs owns representations, sparse
+//! operator catalogs, update kernels, and estimators.
 //!
-//! ## Architecture
+//! ## Current production backends
 //!
-//! - [`algorithm`] — reusable update-kernel contracts and fixed sweep schedules
-//! - [`spin_boson`] — continuous-time retarded-interaction wormhole QMC
-//! - [`worldline`] — reusable continuous and discrete worldline containers
-//! - [`discrete`] — discrete-time path-integral update prototypes
-//! - [`hamiltonian`] / [`lattice`] — lattice-model foundations
-//! - [`heisenberg_chain`] — existing Carlo.rs adapter for the Heisenberg chain
+//! - [`lattice`] — continuous-time interaction-expansion directed-loop QMC on
+//!   arbitrary CSR adjacency graphs, with arbitrary quantum spin `S`.
+//! - [`spin_boson`] — continuous-time retarded-interaction wormhole QMC for
+//!   spin-boson impurity models.
+//!
+//! Discrete-time prototypes and the old chain-specific Heisenberg adapter have
+//! been removed. Lattice geometry is now data, not an algorithm type.
 
 pub mod algorithm;
-pub mod discrete;
-pub mod hamiltonian;
-pub mod heisenberg_chain;
+pub mod graph;
 pub mod lattice;
+pub mod local_space;
 pub mod spin_boson;
-pub mod worldline;
 
 pub use algorithm::{QmcKernel, UpdateSchedule};
-pub use discrete::{local_metropolis_sweep, worm_sweep, SpaceTimeConfig, Spin as DiscreteSpin};
-pub use hamiltonian::{
-    heisenberg_chain_ground_energy_per_site, HeisenbergChain, QuantumHamiltonian,
+pub use graph::{CsrGraph, Edge, EdgeSpec, GraphError, Neighbor};
+pub use lattice::{
+    ContinuousLatticeEngine, EdgeCoupling, GaugePolicy, LatticeConfiguration, LatticeObservables,
+    LatticeQmcError, LatticeSpinQmc, LatticeUpdateStats, OperatorTerm, PositiveOperatorModel,
+    ScatteringPolicy, SiteCoupling, SpinLatticeModel, SpinModelBuilder, TermLocation,
+    Vertex as LatticeVertex, VertexKind as LatticeVertexKind, WorldlineIndex,
 };
-pub use heisenberg_chain::HeisenbergChainMC;
-pub use lattice::ChainLattice;
+pub use local_space::{
+    BasisState, LocalHilbertSpace, LocalSpaceError, ParticleStatistics, SpinSpace,
+};
 pub use spin_boson::{
     Bath, PowerLawBath, SingleModeBath, SpinBosonModel, SpinBosonModelKind, SpinBosonQmc,
     TabulatedBath, WormholeConfiguration, WormholeEngine,

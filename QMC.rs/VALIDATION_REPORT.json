@@ -1,90 +1,78 @@
 {
-  "scope": "static and independent Python mirror audit; not a Rust compiler run",
-  "rust_toolchain_available": false,
-  "rust_source_files": 25,
-  "delimiter_errors": {},
-  "models": {
-    "jc": {
-      "vertex_kinds": 5,
-      "low_bounce": {
-        "max_row_error": 0.0,
-        "max_detailed_balance_error": 0.0,
-        "mean_bounce_probability": 0.18666666666666668
-      },
-      "metropolis": {
-        "max_row_error": 0.0,
-        "max_detailed_balance_error": 0.0,
-        "mean_bounce_probability": 0.6366666666666667
-      },
-      "mirrored_chain": {
-        "valid": true,
+  "delivery": "continuous-time generic lattice QMC foundation in QMC.rs",
+  "native_rust_toolchain_available": false,
+  "native_cargo_commands_executed": false,
+  "unchanged_sibling_crates": {
+    "Carlo.rs": true,
+    "CMC.rs": true
+  },
+  "old_qmc_removed": {
+    "discrete_module": true,
+    "chain_specific_heisenberg": true,
+    "old_worldline_module": true
+  },
+  "source_audit": {
+    "rust_files": 27,
+    "balanced_delimiters": true,
+    "old_module_references_found": false
+  },
+  "lattice_backend": {
+    "representation": "continuous-time interaction expansion",
+    "topology": "typed/weighted CSR graph plus unique edge table",
+    "local_space": "uniform or site-resolved arbitrary Spin-S via exact integer 2S",
+    "models": [
+      "Heisenberg",
+      "XY",
+      "XXZ",
+      "XYZ",
+      "transverse-field Ising",
+      "fields",
+      "single-ion anisotropy"
+    ],
+    "updates": [
+      "fixed-probability diagonal add/remove",
+      "low-bounce directed loop",
+      "Metropolis reference scattering",
+      "self-intersection rollback"
+    ],
+    "sign_policy": "automatic Z2 Marshall gauge; reject frustrated/non-stoquastic models",
+    "fermion_boundary": "reserved LocalHilbertSpace statistics; positive engine explicitly rejects Fermion"
+  },
+  "independent_python_mirror": {
+    "arbitrary_spin_worldline_runs": [
+      {
+        "two_s": 1,
         "sweeps": 5000,
-        "final_order": 3,
-        "max_order": 14
-      }
-    },
-    "xxz": {
-      "vertex_kinds": 6,
-      "low_bounce": {
-        "max_row_error": 0.0,
-        "max_detailed_balance_error": 0.0,
-        "mean_bounce_probability": 0.1666666666666667
+        "valid": true
       },
-      "metropolis": {
-        "max_row_error": 0.0,
-        "max_detailed_balance_error": 0.0,
-        "mean_bounce_probability": 0.5523809523809524
-      },
-      "mirrored_chain": {
-        "valid": true,
+      {
+        "two_s": 2,
         "sweeps": 5000,
-        "final_order": 3,
-        "max_order": 10
-      }
-    },
-    "xyz": {
-      "vertex_kinds": 8,
-      "low_bounce": {
-        "max_row_error": 2.220446049250313e-16,
-        "max_detailed_balance_error": 0.0,
-        "mean_bounce_probability": 0.125
+        "valid": true
       },
-      "metropolis": {
-        "max_row_error": 0.0,
-        "max_detailed_balance_error": 0.0,
-        "mean_bounce_probability": 0.375
-      },
-      "mirrored_chain": {
-        "valid": true,
+      {
+        "two_s": 4,
         "sweeps": 5000,
-        "final_order": 1,
-        "max_order": 8
+        "valid": true
       }
-    },
-    "rabi": {
-      "vertex_kinds": 8,
-      "low_bounce": {
-        "max_row_error": 0.0,
-        "max_detailed_balance_error": 0.0,
-        "mean_bounce_probability": 0.09401709401709402
-      },
-      "metropolis": {
-        "max_row_error": 0.0,
-        "max_detailed_balance_error": 0.0,
-        "mean_bounce_probability": 0.3675213675213675
-      },
-      "mirrored_chain": {
-        "valid": true,
-        "sweeps": 5000,
-        "final_order": 2,
-        "max_order": 13
-      }
+    ],
+    "local_detailed_balance_max_residual": 0.0,
+    "dimer_energy": {
+      "beta": 3.0,
+      "j_xy_abs": 0.8,
+      "j_z": 0.3,
+      "exact": -0.2825496052558523,
+      "ferromagnetic_qmc": -0.28135733333333335,
+      "ferromagnetic_stderr": 0.004826086936035686,
+      "antiferromagnetic_marshall_qmc": -0.2779073333333334,
+      "antiferromagnetic_stderr": 0.004727130213974637
     }
   },
   "required_native_verification": [
     "cargo fmt --all -- --check",
     "cargo clippy --workspace --all-targets --all-features",
     "cargo test --workspace --all-features",
+    "cargo run -p qmc-rs --example lattice_continuous",
     "cargo run -p qmc-rs --example spin_boson_wormhole"
   ]
 }
