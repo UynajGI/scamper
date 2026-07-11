@@ -2,6 +2,94 @@
 
 use super::error::SpinBosonError;
 
+/// Stable slot identifier for a vertex in the configuration.
+///
+/// Unlike a raw `Vec` index, a `VertexId` remains valid across insertions
+/// and deletions because vertices occupy fixed slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VertexId(pub usize);
+
+/// Identifies one of the two endpoints (A or B) of a retarded vertex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EndpointId {
+    /// The vertex that owns this endpoint.
+    pub vertex: VertexId,
+    /// `0` for endpoint A, `1` for endpoint B.
+    pub endpoint: u8,
+}
+
+/// Which side of an endpoint a leg belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LegSide {
+    /// Incoming leg (toward earlier imaginary time).
+    Incoming,
+    /// Outgoing leg (toward later imaginary time).
+    Outgoing,
+}
+
+/// Fully qualified identifier for one of the four legs of a retarded vertex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LegId {
+    /// The endpoint that owns this leg.
+    pub endpoint: EndpointId,
+    /// Whether this is the incoming or outgoing leg.
+    pub side: LegSide,
+}
+
+impl LegId {
+    /// Construct a `LegId` from a vertex and a local leg index.
+    ///
+    /// Local leg numbering:
+    /// - `0` = `A_IN`  (endpoint A, incoming)
+    /// - `1` = `A_OUT` (endpoint A, outgoing)
+    /// - `2` = `B_IN`  (endpoint B, incoming)
+    /// - `3` = `B_OUT` (endpoint B, outgoing)
+    pub fn from_local(vertex: VertexId, local_leg: usize) -> Self {
+        match local_leg {
+            A_IN => Self {
+                endpoint: EndpointId {
+                    vertex,
+                    endpoint: 0,
+                },
+                side: LegSide::Incoming,
+            },
+            A_OUT => Self {
+                endpoint: EndpointId {
+                    vertex,
+                    endpoint: 0,
+                },
+                side: LegSide::Outgoing,
+            },
+            B_IN => Self {
+                endpoint: EndpointId {
+                    vertex,
+                    endpoint: 1,
+                },
+                side: LegSide::Incoming,
+            },
+            B_OUT => Self {
+                endpoint: EndpointId {
+                    vertex,
+                    endpoint: 1,
+                },
+                side: LegSide::Outgoing,
+            },
+            _ => panic!("invalid local leg index: {local_leg}"),
+        }
+    }
+
+    /// Convert back to the local leg index (0..4).
+    pub fn local_leg(self) -> usize {
+        match (self.endpoint.endpoint, self.side) {
+            (0, LegSide::Incoming) => A_IN,
+            (0, LegSide::Outgoing) => A_OUT,
+            (1, LegSide::Incoming) => B_IN,
+            (1, LegSide::Outgoing) => B_OUT,
+            _ => unreachable!("invalid endpoint value: {}", self.endpoint.endpoint),
+        }
+    }
+}
+
 /// Spin state stored on a worldline leg (`-1` or `+1`, corresponding to
 /// `sigma_z`).
 pub type Spin = i8;

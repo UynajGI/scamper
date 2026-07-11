@@ -3,7 +3,7 @@
 use rand::Rng;
 use rand::RngExt;
 
-use super::configuration::{event_spins, WorldlineIndex, WormholeConfiguration};
+use super::configuration::WormholeConfiguration;
 use super::error::SpinBosonError;
 use super::model::SpinBosonModel;
 
@@ -45,17 +45,15 @@ pub fn measure_observables<R: Rng + ?Sized>(
     correlation_samples: usize,
     rng: &mut R,
 ) -> Result<SpinBosonObservables, SpinBosonError> {
-    let index = WorldlineIndex::build(configuration, model)?;
-    let magnetization_sigma_z = integrated_sigma_z(configuration, model, &index);
+    let magnetization_sigma_z = integrated_sigma_z(configuration, model)?;
     let magnetization_s_z = 0.5 * magnetization_sigma_z;
     let correlation_sigma_z_half = correlation_sigma_z(
         configuration,
         model,
-        &index,
         0.5 * configuration.beta(),
         correlation_samples,
         rng,
-    );
+    )?;
     let expansion_order = configuration.expansion_order() as f64;
     Ok(SpinBosonObservables {
         magnetization_sigma_z,
@@ -66,8 +64,8 @@ pub fn measure_observables<R: Rng + ?Sized>(
         correlation_sigma_z_half,
         correlation_s_z_half: 0.25 * correlation_sigma_z_half,
         expansion_order,
-        diagonal_order: configuration.diagonal_order(model) as f64,
-        offdiagonal_order: configuration.offdiagonal_order(model) as f64,
+        diagonal_order: configuration.diagonal_order() as f64,
+        offdiagonal_order: configuration.offdiagonal_order() as f64,
         shifted_interaction_energy: -expansion_order / configuration.beta(),
     })
 }
@@ -76,42 +74,39 @@ pub fn measure_observables<R: Rng + ?Sized>(
 pub fn integrated_sigma_z(
     configuration: &WormholeConfiguration,
     model: &SpinBosonModel,
-    index: &WorldlineIndex,
-) -> f64 {
-    if index.events().is_empty() {
-        return f64::from(configuration.empty_spin());
+) -> Result<f64, SpinBosonError> {
+    if configuration.expansion_order() == 0 {
+        return Ok(f64::from(configuration.empty_spin()));
     }
-    let first = index.events()[0];
-    let mut spin = event_spins(configuration, model, first).0;
+    let mut spin = configuration.spin_at(model, 0.0)?;
     let mut previous = 0.0;
     let mut total = 0.0;
-    for event in index.events() {
-        total += f64::from(spin) * (event.time - previous);
-        spin = event_spins(configuration, model, *event).1;
-        previous = event.time;
+    for (time, endpoint) in configuration.time_ordered_endpoints() {
+        total += f64::from(spin) * (time - previous);
+        spin = configuration.endpoint_outgoing_spin(endpoint, model)?;
+        previous = time;
     }
     total += f64::from(spin) * (configuration.beta() - previous);
-    total / configuration.beta()
+    Ok(total / configuration.beta())
 }
 
 /// Random-origin estimator of the longitudinal imaginary-time correlation.
 pub fn correlation_sigma_z<R: Rng + ?Sized>(
     configuration: &WormholeConfiguration,
     model: &SpinBosonModel,
-    index: &WorldlineIndex,
     delta_tau: f64,
     samples: usize,
     rng: &mut R,
-) -> f64 {
+) -> Result<f64, SpinBosonError> {
     let sample_count = samples.max(1);
     let mut total = 0.0;
     for _ in 0..sample_count {
         let tau = rng.random::<f64>() * configuration.beta();
-        let left = index.spin_at(configuration, model, tau);
-        let right = index.spin_at(configuration, model, tau + delta_tau);
+        let left = configuration.spin_at(model, tau)?;
+        let right = configuration.spin_at(model, tau + delta_tau)?;
         total += f64::from(left * right);
     }
-    total / sample_count as f64
+    Ok(total / sample_count as f64)
 }
 
 #[cfg(test)]

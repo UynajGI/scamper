@@ -5,10 +5,10 @@ use rand::RngExt;
 
 use crate::algorithm::{QmcKernel, UpdateSchedule};
 
-use super::configuration::{WorldlineIndex, WormholeConfiguration};
+use super::configuration::WormholeConfiguration;
 use super::error::SpinBosonError;
 use super::model::SpinBosonModel;
-use super::vertex::{Vertex, LEGS_PER_VERTEX};
+use super::vertex::{LegId, Vertex, VertexId};
 
 /// Accumulated update diagnostics.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -118,11 +118,11 @@ impl WormholeEngine {
     ) -> Result<(), SpinBosonError> {
         for _ in 0..self.schedule.diagonal_proposals {
             self.stats.diagonal_proposals += 1;
-            let diagonal_order = configuration.diagonal_order(&self.model);
+            let diagonal_order = configuration.diagonal_order();
             if rng.random::<bool>() {
                 self.try_add_diagonal(configuration, diagonal_order, rng)?;
             } else if diagonal_order > 0 {
-                self.try_remove_diagonal(configuration, diagonal_order, rng);
+                self.try_remove_diagonal(configuration, diagonal_order, rng)?;
             }
         }
         Ok(())
@@ -142,22 +142,24 @@ impl WormholeEngine {
                 .bath()
                 .sample(configuration.beta(), interaction.direction(), rng)?;
         let tau_b = (tau_a - sample.delta_tau).rem_euclid(configuration.beta());
-        let index = WorldlineIndex::build(configuration, &self.model)?;
-        let spin_a = index.spin_before(configuration, &self.model, tau_a);
-        let spin_b = index.spin_before(configuration, &self.model, tau_b);
+        let spin_a = configuration.spin_before(&self.model, tau_a)?;
+        let spin_b = configuration.spin_before(&self.model, tau_b)?;
         let kind = interaction.diagonal_kind(spin_a, spin_b);
         let weight = interaction.kind(kind).weight();
         let interaction_probability = 1.0 / self.model.interaction_count() as f64;
         let ratio =
             configuration.beta() * weight / ((diagonal_order + 1) as f64 * interaction_probability);
         if rng.random::<f64>() < ratio.min(1.0) {
-            configuration.vertices_mut().push(Vertex {
-                tau_a,
-                tau_b,
-                omega: sample.omega,
-                interaction: interaction_id,
-                kind,
-            });
+            configuration.insert_vertex(
+                Vertex {
+                    tau_a,
+                    tau_b,
+                    omega: sample.omega,
+                    interaction: interaction_id,
+                    kind,
+                },
+                &self.model,
+            )?;
             self.stats.diagonal_add_accepts += 1;
         }
         Ok(())
@@ -168,30 +170,19 @@ impl WormholeEngine {
         configuration: &mut WormholeConfiguration,
         diagonal_order: usize,
         rng: &mut R,
-    ) {
-        let diagonal_vertices: Vec<usize> = configuration
-            .vertices()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, vertex)| {
-                self.model
-                    .interaction(vertex.interaction)
-                    .kind(vertex.kind)
-                    .is_diagonal()
-                    .then_some(index)
-            })
-            .collect();
-        let selected = diagonal_vertices[rng.random_range(0..diagonal_vertices.len())];
-        let vertex = &configuration.vertices()[selected];
+    ) -> Result<(), SpinBosonError> {
+        let selected = configuration.random_diagonal_vertex(rng)?;
+        let vertex = configuration.vertex(selected)?;
         let interaction = self.model.interaction(vertex.interaction);
         let weight = interaction.kind(vertex.kind).weight();
         let interaction_probability = 1.0 / self.model.interaction_count() as f64;
         let ratio =
             diagonal_order as f64 * interaction_probability / (configuration.beta() * weight);
         if rng.random::<f64>() < ratio.min(1.0) {
-            configuration.vertices_mut().swap_remove(selected);
+            configuration.remove_vertex(selected)?;
             self.stats.diagonal_remove_accepts += 1;
         }
+        Ok(())
     }
 
     fn directed_loop_block<R: Rng + ?Sized>(
@@ -199,7 +190,7 @@ impl WormholeEngine {
         configuration: &mut WormholeConfiguration,
         rng: &mut R,
     ) -> Result<(), SpinBosonError> {
-        if configuration.vertices().is_empty() {
+        if configuration.expansion_order() == 0 {
             if rng.random::<bool>() {
                 configuration.set_empty_spin(-configuration.empty_spin());
             }
@@ -207,25 +198,34 @@ impl WormholeEngine {
         }
 
         for _ in 0..self.schedule.directed_loops {
-            let index = WorldlineIndex::build(configuration, &self.model)?;
-            let start = rng.random_range(0..index.leg_count());
+            let start = configuration.random_leg(rng)?;
             let mut current = start;
-            let limit = (self.schedule.max_loop_steps_factor * index.leg_count()).max(32);
+            let leg_count = 4 * configuration.expansion_order();
+            let limit = (self.schedule.max_loop_steps_factor * leg_count).max(32);
             let mut steps = 0_usize;
 
+            // Rollback journal: records (vertex_id, old_kind) for each kind change.
+            let mut journal: Vec<(VertexId, usize)> = Vec::new();
+
             loop {
-                let vertex_id = current / LEGS_PER_VERTEX;
-                let entrance = current % LEGS_PER_VERTEX;
-                let vertex = &configuration.vertices()[vertex_id];
+                let vertex_id = current.endpoint.vertex;
+                let entrance = current.local_leg();
+
+                let vertex = configuration.vertex(vertex_id)?;
                 let interaction_id = vertex.interaction;
                 let old_kind = vertex.kind;
+
                 let choice = self
                     .model
                     .interaction(interaction_id)
                     .scattering()
                     .sample(old_kind, entrance, rng);
-                configuration.vertices_mut()[vertex_id].kind = choice.new_kind;
-                let exit_global = LEGS_PER_VERTEX * vertex_id + choice.exit_leg;
+
+                // Record before modifying.
+                journal.push((vertex_id, old_kind));
+                configuration.set_kind(vertex_id, choice.new_kind, &self.model)?;
+
+                let exit = LegId::from_local(vertex_id, choice.exit_leg);
 
                 self.stats.loop_steps += 1;
                 steps += 1;
@@ -237,12 +237,17 @@ impl WormholeEngine {
                     self.stats.same_endpoint_exits += 1;
                 }
 
-                let next = index.linked_leg(exit_global);
+                let next = configuration.linked_leg(exit)?;
                 if next == start {
                     break;
                 }
                 current = next;
+
                 if steps > limit {
+                    // Rollback all kind changes.
+                    for (vid, old_kind) in journal.into_iter().rev() {
+                        configuration.set_kind(vid, old_kind, &self.model)?;
+                    }
                     return Err(SpinBosonError::LoopDidNotClose { steps, limit });
                 }
             }

@@ -37,7 +37,7 @@ pub mod updates;
 pub mod vertex;
 
 pub use bath::{Bath, BathSample, KernelDirection, PowerLawBath, SingleModeBath, TabulatedBath};
-pub use configuration::{WorldlineIndex, WormholeConfiguration};
+pub use configuration::WormholeConfiguration;
 pub use error::SpinBosonError;
 pub use mc::SpinBosonQmc;
 pub use model::{InteractionChannel, SpinBosonModel, SpinBosonModelKind};
@@ -48,4 +48,6 @@ pub use scattering::{
     kind_after_flips, ScatteringChoice, ScatteringDiagnostics, ScatteringPolicy, ScatteringTable,
 };
 pub use updates::{WormholeEngine, WormholeUpdateStats};
-pub use vertex::{Event, Spin, Vertex, VertexKind, A_IN, A_OUT, B_IN, B_OUT};
+pub use vertex::{
+    EndpointId, Event, LegId, LegSide, Spin, Vertex, VertexId, VertexKind, A_IN, A_OUT, B_IN, B_OUT,
+};
