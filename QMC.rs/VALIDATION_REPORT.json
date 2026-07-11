@@ -1,0 +1,90 @@
+{
+  "scope": "static and independent Python mirror audit; not a Rust compiler run",
+  "rust_toolchain_available": false,
+  "rust_source_files": 25,
+  "delimiter_errors": {},
+  "models": {
+    "jc": {
+      "vertex_kinds": 5,
+      "low_bounce": {
+        "max_row_error": 0.0,
+        "max_detailed_balance_error": 0.0,
+        "mean_bounce_probability": 0.18666666666666668
+      },
+      "metropolis": {
+        "max_row_error": 0.0,
+        "max_detailed_balance_error": 0.0,
+        "mean_bounce_probability": 0.6366666666666667
+      },
+      "mirrored_chain": {
+        "valid": true,
+        "sweeps": 5000,
+        "final_order": 3,
+        "max_order": 14
+      }
+    },
+    "xxz": {
+      "vertex_kinds": 6,
+      "low_bounce": {
+        "max_row_error": 0.0,
+        "max_detailed_balance_error": 0.0,
+        "mean_bounce_probability": 0.1666666666666667
+      },
+      "metropolis": {
+        "max_row_error": 0.0,
+        "max_detailed_balance_error": 0.0,
+        "mean_bounce_probability": 0.5523809523809524
+      },
+      "mirrored_chain": {
+        "valid": true,
+        "sweeps": 5000,
+        "final_order": 3,
+        "max_order": 10
+      }
+    },
+    "xyz": {
+      "vertex_kinds": 8,
+      "low_bounce": {
+        "max_row_error": 2.220446049250313e-16,
+        "max_detailed_balance_error": 0.0,
+        "mean_bounce_probability": 0.125
+      },
+      "metropolis": {
+        "max_row_error": 0.0,
+        "max_detailed_balance_error": 0.0,
+        "mean_bounce_probability": 0.375
+      },
+      "mirrored_chain": {
+        "valid": true,
+        "sweeps": 5000,
+        "final_order": 1,
+        "max_order": 8
+      }
+    },
+    "rabi": {
+      "vertex_kinds": 8,
+      "low_bounce": {
+        "max_row_error": 0.0,
+        "max_detailed_balance_error": 0.0,
+        "mean_bounce_probability": 0.09401709401709402
+      },
+      "metropolis": {
+        "max_row_error": 0.0,
+        "max_detailed_balance_error": 0.0,
+        "mean_bounce_probability": 0.3675213675213675
+      },
+      "mirrored_chain": {
+        "valid": true,
+        "sweeps": 5000,
+        "final_order": 2,
+        "max_order": 13
+      }
+    }
+  },
+  "required_native_verification": [
+    "cargo fmt --all -- --check",
+    "cargo clippy --workspace --all-targets --all-features",
+    "cargo test --workspace --all-features",
+    "cargo run -p qmc-rs --example spin_boson_wormhole"
+  ]
+}

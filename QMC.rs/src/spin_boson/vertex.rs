@@ -1,0 +1,126 @@
+//! Retarded four-leg vertices.
+
+use super::error::SpinBosonError;
+
+/// Spin state stored on a worldline leg (`-1` or `+1`, corresponding to
+/// `sigma_z`).
+pub type Spin = i8;
+
+/// Local leg numbering of one retarded vertex.
+pub const A_IN: usize = 0;
+/// Outgoing leg at endpoint A.
+pub const A_OUT: usize = 1;
+/// Incoming leg at endpoint B.
+pub const B_IN: usize = 2;
+/// Outgoing leg at endpoint B.
+pub const B_OUT: usize = 3;
+/// Number of legs on a retarded vertex.
+pub const LEGS_PER_VERTEX: usize = 4;
+
+/// Immutable local vertex type supplied by a spin-boson model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VertexKind {
+    name: String,
+    legs: [Spin; LEGS_PER_VERTEX],
+    weight: f64,
+    diagonal: bool,
+}
+
+impl VertexKind {
+    /// Construct a positive local vertex type.
+    pub fn new(
+        name: impl Into<String>,
+        legs: [Spin; LEGS_PER_VERTEX],
+        weight: f64,
+        diagonal: bool,
+    ) -> Result<Self, SpinBosonError> {
+        if legs.iter().any(|spin| !matches!(spin, -1 | 1)) {
+            return Err(SpinBosonError::parameter(
+                "vertex legs",
+                "spin-1/2 legs must be encoded as -1 or +1",
+            ));
+        }
+        if !weight.is_finite() || weight <= 0.0 {
+            return Err(SpinBosonError::parameter(
+                "vertex weight",
+                format!("must be finite and positive, got {weight}"),
+            ));
+        }
+        let inferred_diagonal = legs[A_IN] == legs[A_OUT] && legs[B_IN] == legs[B_OUT];
+        if inferred_diagonal != diagonal {
+            return Err(SpinBosonError::parameter(
+                "diagonal",
+                "diagonal flag does not match the leg pattern",
+            ));
+        }
+        Ok(Self {
+            name: name.into(),
+            legs,
+            weight,
+            diagonal,
+        })
+    }
+
+    /// Human-readable vertex name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Four local spin legs.
+    pub fn legs(&self) -> &[Spin; LEGS_PER_VERTEX] {
+        &self.legs
+    }
+
+    /// Positive local matrix-element weight.
+    pub fn weight(&self) -> f64 {
+        self.weight
+    }
+
+    /// Whether both endpoint operators are diagonal.
+    pub fn is_diagonal(&self) -> bool {
+        self.diagonal
+    }
+
+    /// Spin on one local leg.
+    pub fn spin(&self, leg: usize) -> Spin {
+        self.legs[leg]
+    }
+}
+
+/// One sampled retarded interaction vertex.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Vertex {
+    /// First endpoint time.
+    pub tau_a: f64,
+    /// Second endpoint time.
+    pub tau_b: f64,
+    /// Sampled bath frequency.
+    pub omega: f64,
+    /// Interaction-channel index.
+    pub interaction: usize,
+    /// Local kind index inside the interaction channel.
+    pub kind: usize,
+}
+
+/// One time-ordered endpoint in the worldline index.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Event {
+    /// Imaginary time.
+    pub time: f64,
+    /// Vertex index.
+    pub vertex: usize,
+    /// Endpoint (`0` for A, `1` for B).
+    pub endpoint: usize,
+}
+
+impl Event {
+    /// Incoming global leg index.
+    pub fn incoming_leg(self) -> usize {
+        LEGS_PER_VERTEX * self.vertex + 2 * self.endpoint
+    }
+
+    /// Outgoing global leg index.
+    pub fn outgoing_leg(self) -> usize {
+        self.incoming_leg() + 1
+    }
+}

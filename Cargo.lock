@@ -1167,6 +1167,7 @@ dependencies = [
  "carlo-rs",
  "rand",
  "rand_xoshiro",
+ "thiserror",
 ]
 
 [[package]]
