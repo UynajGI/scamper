@@ -8,6 +8,74 @@ representations, model catalogs, update kernels, invariants, and estimators.
 The module boundary and extension rules are documented in
 [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
+## Continuous-time lattice QMC
+
+`qmc_rs::lattice` is a general continuous-time interaction-expansion
+directed-loop engine for sign-problem-free quantum spin models on arbitrary
+CSR adjacency graphs with arbitrary quantum spin `S`.
+
+### Architecture
+
+```text
+CsrGraph → LocalHilbertSpace → PositiveOperatorModel (sparse K=C-H catalog)
+  → LatticeConfiguration + WorldlineIndex
+  → diagonal add/remove + low-bounce directed loops
+  → estimators → LatticeSpinQmc (Carlo.rs adapter)
+```
+
+### Implemented models
+
+Set parameter `model` to:
+
+- `heisenberg` — isotropic XXZ with `J`
+- `xy` — `J_xy` only
+- `xxz` — `J_xy` + `J_z`
+- `xyz` — `J_x` + `J_y` + `J_z`
+- `tfim` — transverse-field Ising (`J_z` + `h_x`)
+
+### Topologies
+
+Set parameter `topology` to: `chain`, `square`, `hypercubic`, `edges` (edge list), `adjacency`.
+
+### Carlo.rs usage
+
+```rust
+use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
+use qmc_rs::LatticeSpinQmc;
+
+let mut params = Params::new();
+params.set("beta", 8.0);
+params.set("model", "heisenberg");
+params.set("topology", "square");
+params.set("Lx", 4);
+params.set("Ly", 4);
+params.set("spin", 0.5);
+params.set("J", 1.0);
+
+let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
+    .run_one::<LatticeSpinQmc>(&params);
+```
+
+A complete runnable example is in
+[`examples/lattice_continuous.rs`](examples/lattice_continuous.rs).
+
+### Common parameters
+
+```text
+beta                    required inverse temperature
+model                   heisenberg | xy | xxz | xyz | tfim
+topology                chain | square | hypercubic | edges | adjacency
+spin / two_s            quantum spin magnitude
+J / J_xy / J_z / J_x…   exchange couplings
+h_x / h_z               transverse/longitudinal fields
+D                       single-ion anisotropy
+gauge                   auto (Marshall Z2) | identity
+scattering              low_bounce | metropolis
+adaptive_schedule       warmup-only work adaptation
+diagonal_proposals      per measured sweep
+directed_loops          per measured sweep
+```
+
 ## Continuous-time spin-boson wormhole QMC
 
 `qmc_rs::spin_boson` implements a generic retarded-interaction directed-loop
@@ -118,5 +186,6 @@ With a Rust toolchain installed at the workspace root:
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features
 cargo test --workspace --all-features
+cargo run -p qmc-rs --example lattice_continuous
 cargo run -p qmc-rs --example spin_boson_wormhole
 ```

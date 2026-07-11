@@ -3,14 +3,14 @@
 Scuttle — Monte Carlo framework with three Rust crates: Carlo.rs (core), QMC.rs (quantum), CMC.rs (classical).
 
 
-Hooks via **lefthook** (`lefthook.yml` + `.lefthook/` scripts). pre-commit runs `fmt --check` → `cargo check` → `clippy` → `typos` on staged `.rs` (affected crates only); commit-msg enforces Conventional Commits; pre-push runs `cargo deny` only (test moved to CI for fast pushes — run `just test` manually before pushing). Install: `lefthook install` or `just hooks`. Skip: `LEFTHOOK=0 git commit`. Lint policy (incl. `unsafe_code = "deny"`) is codified in `[workspace.lints]` (`Cargo.toml`) — no `RUSTFLAGS` needed; the sole exception is `Carlo.rs/src/backend/mpi.rs` (`#![allow(unsafe_code)]` for MPI FFI). CI (`.github/workflows/ci.yml`) runs fmt + clippy + test + deny (`--all-features`) as parallel jobs.
+Hooks via **lefthook** (`lefthook.yml` + `.lefthook/` scripts). pre-commit runs `fmt --check` → `cargo check` → `clippy` → `typos` on staged `.rs` (affected crates only); commit-msg enforces Conventional Commits; post-commit runs `codegraph sync` (non-blocking); pre-push runs `cargo deny` only (test moved to CI for fast pushes — run `just test` manually before pushing). Install: `lefthook install` or `just hooks`. Skip: `LEFTHOOK=0 git commit`. Lint policy (incl. `unsafe_code = "deny"`) is codified in `[workspace.lints]` (`Cargo.toml`) — no `RUSTFLAGS` needed; the sole exception is `Carlo.rs/src/backend/mpi.rs` (`#![allow(unsafe_code)]` for MPI FFI). CI (`.github/workflows/ci.yml`) runs fmt + clippy + test + deny (`--all-features`) as parallel jobs.
 
 ## Workspace
 
 | Crate | Role | Description |
 |-------|------|-------------|
 | Carlo.rs | Core framework | `MonteCarlo` trait, `Scheduler`, `Context`, `Measurements`, `Merge`, `Backend` |
-| QMC.rs | Quantum MC | Worldline objects (continuous/discrete) — pure toolbox, no `MonteCarlo` impl |
+| QMC.rs | Quantum MC | General continuous-time lattice QMC (`LatticeSpinQmc` implements `MonteCarlo` + `FromParams`), spin-boson wormhole QMC
 | CMC.rs | Classical MC | Layered: `Lattice` → `System` → `Model` → `Algorithm` → `ClassicalMC` wrapper |
 
 ## Carlo.rs Architecture
@@ -61,6 +61,47 @@ Key patterns:
 - Derived observables measured post-run from E²/M²/M⁴ moments stored in `Results`
 - `lattice_type` param: `"chain"`, `"square"`, `"triangular"`, `"honeycomb"`, `"kagome"`
 - Users can ignore `ClassicalMC` and compose manually for custom behavior
+
+## QMC.rs Architecture
+
+Boundary: Carlo.rs owns runtime (scheduling, RNG, measurements, I/O); QMC.rs owns physics (representations, kernels, estimators).
+
+Two production backends:
+
+### Lattice QMC (primary)
+
+| Module | File | Purpose |
+|--------|------|---------|
+| `graph` | `graph.rs` | `CsrGraph` — typed/weighted CSR adjacency + unique edge table; builders (chain, square, hypercubic, adjacency, CSR) |
+| `local_space` | `local_space.rs` | `LocalHilbertSpace` trait, `SpinSpace` — site-resolved arbitrary `S` with exact integer `2S` algebra |
+| `lattice::model` | `lattice/model.rs` | `SpinModelBuilder` → `SpinLatticeModel` — sparse positive `OperatorTerm` catalog, Marshall `Z2` gauge, Heisenberg/XY/XXZ/XYZ/tfim/generic |
+| `lattice::vertex` | `lattice/vertex.rs` | `VertexKind` (positive local matrix elements), `Vertex` (sampled insertion), `Event` (worldline endpoint) |
+| `lattice::configuration` | `lattice/configuration.rs` | `LatticeConfiguration` — product state + unsorted vertex vector; `WorldlineIndex` — time-ordered leg links |
+| `lattice::scattering` | `lattice/scattering.rs` | `ScatteringTable` — exact local-detailed-balance directed-loop routing (LowBounce + Metropolis policies) |
+| `lattice::updates` | `lattice/updates.rs` | `ContinuousLatticeEngine<M>` — diagonal add/remove + directed-loop blocks; journal-based rollback |
+| `lattice::observables` | `lattice/observables.rs` | Magnetization, staggered magnetization, susceptibility, energy, vertex orders, edge SzSz correlation |
+| `lattice::mc` | `lattice/mc.rs` | `LatticeSpinQmc` — Carlo.rs adapter (`MonteCarlo` + `FromParams`); warmup schedule adaptation |
+
+### Spin-Boson QMC
+
+| Module | File | Purpose |
+|--------|------|---------|
+| `spin_boson` | `spin_boson/` | Continuous-time retarded-interaction wormhole QMC (spin-boson impurity, bath samplers, scattering table, diagonal/loop updates, observables) |
+
+### Shared
+
+| Module | File | Purpose |
+|--------|------|---------|
+| `algorithm` | `algorithm.rs` | `QmcKernel<C,R>` trait, `UpdateSchedule` — reusable kernel contract |
+
+Key patterns:
+- `LatticeSpinQmc` wraps `ContinuousLatticeEngine<SpinLatticeModel>` and implements `MonteCarlo` + `FromParams` — drop-in for `Scheduler.run_one()`
+- Models are compiled from physical couplings into positive `K=C-H` operator catalogs; the engine has no model-name branches
+- `CsrGraph` is data, not an algorithm — `from_csr` mirrors CMC's layout without crate coupling
+- Marshall gauge: BFS solves bipartite `Z2` phases; rejects frustrated/non-stoquastic models
+- `rand` 0.10: use `RngExt` for `random()`/`random_range()`, `Rng` for trait bounds (`R: Rng + ?Sized`)
+- `UpdateSchedule` (diagonal proposals, directed loops, max loop steps) fixed during measurement; adaptation allowed during thermalization
+- `from_sparse()` on `OperatorTerm` is the extension point for future bosonic/fermionic catalogs
 
 ## Features
 
@@ -140,41 +181,11 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
+## CodeGraph
 
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
+This project has a CodeGraph index (`.codegraph/`). ALWAYS use
+`codegraph explore` (CLI) or `codegraph_explore` (MCP) BEFORE Grep/Glob/Read
+to explore the codebase. One call returns verbatim source + call paths +
+blast-radius summary — faster and cheaper than reading files yourself.
 
-### When to use graph tools FIRST
-
-- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
-- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
-- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
-- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview` + `list_communities`
-
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
-
-### Key Tools
-
-| Tool                        | Use when                                               |
-| --------------------------- | ------------------------------------------------------ |
-| `detect_changes`            | Reviewing code changes — gives risk-scored analysis    |
-| `get_review_context`        | Need source snippets for review — token-efficient      |
-| `get_impact_radius`         | Understanding blast radius of a change                 |
-| `get_affected_flows`        | Finding which execution paths are impacted             |
-| `query_graph`               | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes`     | Finding functions/classes by name or keyword           |
-| `get_architecture_overview` | Understanding high-level codebase structure            |
-| `refactor_tool`             | Planning renames, finding dead code                    |
-
-### Workflow
-
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes` for code review.
-3. Use `get_affected_flows` to understand impact.
-4. Use `query_graph` pattern="tests_for" to check coverage.
+Syncs automatically on post-commit via lefthook.

@@ -7,7 +7,7 @@ Monte Carlo simulation framework in Rust, ported from [Carlo.jl](https://github.
 | Crate | Purpose |
 |-------|---------|
 | [Carlo.rs](Carlo.rs/README.md) | Core framework — scheduler, measurements, MPI backend, checkpointing |
-| QMC.rs | Quantum Monte Carlo toolbox — worldline objects |
+| QMC.rs | Quantum Monte Carlo — general continuous-time lattice QMC (arbitrary graph/spin), spin-boson wormhole QMC |
 | CMC.rs | Classical Monte Carlo toolbox — CSR lattice, Ising/Potts/XY/Heisenberg, Metropolis/Wolff/SW/Heat-bath algorithms, multi-spin coding, Parallel Tempering |
 
 ## Quick Start
