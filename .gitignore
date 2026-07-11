@@ -3,7 +3,6 @@
 
 # Agent tooling
 .qoder/
-.trellis/tasks/
 
 # Build artifacts
 target/
@@ -55,4 +54,4 @@ skills-lock.json
 docs/ref
 graphify-out/
 # Added by code-review-graph
-.code-review-graph/
+.codegraph/
