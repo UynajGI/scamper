@@ -1228,4 +1228,74 @@ mod tests {
             assert_eq!(new_spin, old_spin, "spin_before mismatch at tau={}", tau);
         }
     }
+
+    #[test]
+    fn random_insert_remove_stress() {
+        use rand::SeedableRng;
+        use rand_xoshiro::Xoshiro256PlusPlus;
+
+        let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
+        let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
+        let mut configuration = WormholeConfiguration::new(8.0, 1).expect("configuration");
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(99);
+
+        let mut live_ids: Vec<VertexId> = Vec::new();
+
+        for _ in 0..1000 {
+            if live_ids.is_empty() || rng.random::<bool>() {
+                // Insert a same-spin diagonal vertex.
+                let interaction = model.interaction(0);
+                let kind = interaction.diagonal_kind(1, 1);
+                let tau_a = rng.random::<f64>() * configuration.beta();
+                let tau_b = (tau_a + 0.05).rem_euclid(configuration.beta());
+                let vertex = Vertex {
+                    tau_a,
+                    tau_b,
+                    omega: 1.0,
+                    interaction: 0,
+                    kind,
+                };
+                let id = configuration.insert_vertex(vertex, &model).expect("insert");
+                live_ids.push(id);
+            } else {
+                // Remove a random live vertex.
+                let idx = rng.random_range(0..live_ids.len());
+                let id = live_ids.swap_remove(idx);
+                configuration.remove_vertex(id).expect("remove");
+            }
+        }
+
+        configuration.validate(&model).expect("valid after stress");
+    }
+
+    #[test]
+    fn many_sweeps_preserve_valid_configuration() {
+        use rand::SeedableRng;
+        use rand_xoshiro::Xoshiro256PlusPlus;
+
+        use crate::algorithm::{QmcKernel, UpdateSchedule};
+        use crate::spin_boson::updates::WormholeEngine;
+
+        let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
+        let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
+        let mut engine = WormholeEngine::new(model.clone(), UpdateSchedule::new(4, 4, 64));
+        engine.set_validate_each_sweep(true);
+        let mut configuration = WormholeConfiguration::new(8.0, 1).expect("configuration");
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(2026);
+
+        for _ in 0..1000 {
+            engine.sweep(&mut configuration, &mut rng).expect("sweep");
+        }
+
+        <WormholeEngine as QmcKernel<WormholeConfiguration, Xoshiro256PlusPlus>>::validate(
+            &engine,
+            &configuration,
+        )
+        .expect("valid configuration after 1000 sweeps");
+
+        assert!(engine.stats().loops > 0);
+        assert!(
+            engine.stats().diagonal_add_accepts > 0 || engine.stats().diagonal_remove_accepts > 0
+        );
+    }
 }
