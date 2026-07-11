@@ -50,6 +50,13 @@ commit-msg:
     - name: conventional
       run: .lefthook/commit-msg-check.sh {1}
 
+post-commit:
+  jobs:
+    - name: codegraph sync
+      # Sync the CodeGraph index after each commit. Runs in background;
+      # non-blocking — the next commit still sees a consistent index.
+      run: codegraph sync --quiet 2>/dev/null || true
+
 pre-push:
   jobs:
     - name: deny
