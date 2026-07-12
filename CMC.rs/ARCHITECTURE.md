@@ -46,12 +46,12 @@ Carlo.rs exposes an explicit `RunPhase`:
 ## Transactional trial path
 
 ```text
-proposal mechanics             state backend                 target policy
-------------------             -------------                 -------------
-ProposedMove<Movement>  ->  TrialEvaluator::evaluate  ->  Ensemble::log_weight_ratio
-       |                         |                                  |
-       | Hastings correction     | Delta + reusable Patch           | log π(new)-log π(old)
-       +-------------------------+-------------------------------+--+
+proposal mechanics             state backend                 target policy              acceptance rule
+------------------             -------------                 -------------              ---------------
+ProposedMove<Movement>  ->  TrialEvaluator::evaluate  ->  Ensemble::log_weight_ratio  ->  AcceptanceRule::log_acceptance
+       |                         |                                  |                           |
+       | Hastings correction     | Delta + reusable Patch           | log π(new)-log π(old)      | MH, Barker, …
+       +-------------------------+-------------------------------+--+---------------------------+
                                                                    |
                                                           accept/reject in log domain
                                                                    |
@@ -67,6 +67,7 @@ The accepted state is never modified during evaluation. This prevents rollback b
 - `TrialEvaluator<Model, Movement>` defines `Delta` and reusable `Patch` types.
 - `ThermodynamicDelta` currently drives canonical lattice updates and reserves energy, particle-count, volume and Jacobian changes for later backends.
 - `Ensemble<D>` maps a physical delta to a log target-weight ratio.
+- `AcceptanceRule<D>` converts ensemble ratio + proposal asymmetry into log acceptance probability. `MetropolisHastingsAcceptance` is the only implementation shipped in Phase 1.
 - `CanonicalEnsemble` applies beta exactly once.
 
 ## Lattice-spin backend
@@ -104,6 +105,18 @@ Each physical edge is counted once, including parallel bonds and self-loops. Wol
 - `n_edges()`: physical bond count.
 
 It supports irregular graphs, arbitrary dimension, weighted/disordered interactions, parallel bonds and self-loops without an implicit divide-by-two convention.
+
+## Source module layout (Phase 1)
+
+| Directory | Contents |
+|-----------|----------|
+| `core/` | `move.rs`, `cache.rs`, `trial.rs`, `ensemble.rs`, `acceptance.rs`, `visit.rs` |
+| `lattice/` | `graph.rs`, `state.rs`, `interaction.rs`, `models.rs`, `proposal.rs` |
+| `algorithms/` | `common.rs` (trait + phase), 6 kernel files |
+| `observables/` | `energy.rs`, `magnetization.rs`, `correlation.rs`, `common.rs` |
+| Top-level | `classical_mc.rs`, `multi_spin.rs`, `postprocess.rs` |
+
+All public types are re-exported flat from `lib.rs`.
 
 ## Update kernels on the foundation
 

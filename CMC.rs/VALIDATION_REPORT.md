@@ -2,9 +2,12 @@
 
 Date: 2026-07-12
 
-## Phase 0 completion status
+## Phase 1 completion status
 
-The sampling-core-v2 stabilization (Phase 0) is complete. All local verification passes:
+Phase 1 (CMC.rs module reorganization) is complete. The 15 flat source files have been
+reorganized into `core/`, `lattice/`, `algorithms/`, and `observables/` subdirectories
+(30 files total), with a new `AcceptanceRule<D>` trait extracted from the trial layer.
+Public API is preserved via flat re-exports from `lib.rs`.
 
 ```bash
 cargo fmt --all --check     # PASS
@@ -12,6 +15,18 @@ cargo check --workspace      # PASS
 cargo clippy --workspace     # PASS (no warnings)
 cargo test --workspace       # 245 passed, 7 ignored
 ```
+
+### Phase 1 changes
+
+- **Module tree**: `core/` (6 files), `lattice/` (5 files), `algorithms/` (8 files), `observables/` (4 files), plus 3 top-level modules
+- **`AcceptanceRule<D>` trait**: extracted to `core/acceptance.rs` with `MetropolisHastingsAcceptance`; `metropolis_hastings_step` now accepts `&impl AcceptanceRule`
+- **Algorithm split**: 776-line `algorithm.rs` → `algorithms/{common,metropolis,wolff,swendsen_wang,heat_bath,microcanonical,hybrid}.rs`
+- **Cache split**: `EnergyPatch`/`BatchEnergyWorkspace` → `core/cache.rs`; move types stay in `core/move.rs`
+- **Observables split**: `observables.rs` → `observables/{energy,magnetization,correlation}.rs`; `compute_correlation_1d` moved from `postprocess.rs`
+
+## Phase 0 completion status
+
+The sampling-core-v2 stabilization (Phase 0) was completed before Phase 1. All local verification passes:
 
 Note: `--all-features` cannot run locally because `mpi` requires `libopenmpi-dev` and `hdf5` has a crate API mismatch — both are pre-existing issues tracked separately, not introduced by sampling-core-v2.
 

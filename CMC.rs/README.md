@@ -28,15 +28,30 @@ let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
 
 The same wrapper continues to support `WolffCore`, `SWCore`, `HeatBathCore`, `ContinuousHeatBathCore`, `MicrocanonicalCore`, and statically composed `HybridCore` updates when the model implements the required capability trait.
 
+## Module organisation (Phase 1)
+
+Source code is organised into four subdirectories plus three top-level adapter modules:
+
+| Directory | Purpose |
+|-----------|---------|
+| `core/` | Move types, caches, `TrialEvaluator`, `Ensemble`, `AcceptanceRule`, visit schedules |
+| `lattice/` | `CsrLattice` graph, `System` state, `Hamiltonian` traits, built-in models, `ProposalStrategy` |
+| `algorithms/` | `Algorithm<H>` trait, 6 kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
+| `observables/` | `Observable<H>`, `DefaultObservableSet`, energy, magnetisation, correlation |
+| Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
+
+The public API is re-exported flat from `lib.rs` — user code sees no change.
+
 ## Sampling foundation
 
-The local Metropolis path now has four independent parts:
+The local Metropolis path now has five independent parts:
 
 ```text
 ProposalStrategy
     -> ProposedMove<M>
     -> TrialEvaluator<Model, M>::evaluate_trial (no accepted-state mutation)
     -> Ensemble<Delta>::log_weight_ratio
+    -> AcceptanceRule<Delta>::log_acceptance
     -> commit_trial only when accepted
 ```
 
@@ -46,6 +61,7 @@ Important public building blocks are:
 - `TrialEvaluator<Model, Movement>`: state-specific trial evaluation and atomic cache commit;
 - `ThermodynamicDelta`: physical extensive-variable changes;
 - `Ensemble<Delta>` and `CanonicalEnsemble`: target-weight policy;
+- `AcceptanceRule<D>` and `MetropolisHastingsAcceptance`: log-acceptance formula (extensible to Barker, rejection-free);
 - `EnergyPatch` / `BatchEnergyPatch`: reusable cache workspaces;
 - `SiteSpinMove` / `BatchSpinMove`: the current lattice-spin move backend;
 - `VisitSchedule` / `SiteOrder`: reusable site traversal without per-sweep allocation.
@@ -58,6 +74,7 @@ let outcome = cmc_rs::metropolis_hastings_step(
     &model,
     &proposal,
     &ensemble,
+    &MetropolisHastingsAcceptance,
     &mut patch,
     &mut rng,
 );

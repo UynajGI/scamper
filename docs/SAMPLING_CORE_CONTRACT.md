@@ -127,15 +127,43 @@ Initialization → Thermalization → Measurement → Finished
 
 ---
 
-## 5. Ensemble Independence
+## 5. Acceptance Rule Independence
 
-### 5.1 Ensemble trait
+### 5.1 AcceptanceRule trait
+
+```rust
+pub trait AcceptanceRule<D> {
+    fn log_acceptance(
+        &self,
+        ensemble: &impl Ensemble<D>,
+        delta: &D,
+        log_proposal_ratio: f64,
+    ) -> f64;
+}
+```
+
+- Receives the ensemble weight ratio and the proposal Hastings correction.
+- Returns the log acceptance probability.
+- `MetropolisHastingsAcceptance`: `log_acceptance = ensemble.log_weight_ratio(delta) + log_proposal_ratio`
+- Future: `BarkerAcceptance`, rejection-free rules, etc. can implement this trait without modifying the trial layer.
+
+### 5.2 Current implementations
+
+| Rule | Formula |
+|------|---------|
+| `MetropolisHastingsAcceptance` | `ln π(new)/π(old) + ln q(old\|new)/q(new\|old)` |
+
+---
+
+## 6. Ensemble Independence
+
+### 6.1 Ensemble trait
 
 - Converts `ThermodynamicDelta → ln π(new) − ln π(old)`.
 - Stateless: the same delta always produces the same ratio.
 - `Send + Sync`: safe for Carlo.rs multi-threaded scheduling.
 
-### 5.2 Current implementations
+### 6.2 Current implementations
 
 | Ensemble | Formula |
 |----------|---------|
@@ -145,15 +173,15 @@ Initialization → Thermalization → Measurement → Finished
 
 ---
 
-## 6. Snapshot Format
+## 7. Snapshot Format
 
-### 6.1 Version tag
+### 7.1 Version tag
 
 - Format identifier: `"cmc-rs-snapshot-v2"`.
 - Validated on `load_snapshot`; unknown formats are rejected with
   `CarloError::CheckpointCorrupted`.
 
-### 6.2 Bond type encoding
+### 7.2 Bond type encoding
 
 - `BondType` serialized via stable `as_label()` method, NOT `Debug` display.
 - Labels use snake_case: `"generic"`, `"chain_x"`, `"square_x"`, `"square_y"`,
@@ -161,7 +189,7 @@ Initialization → Thermalization → Measurement → Finished
   `"tri_diag"`, `"honey_x"`, `"honey_y"`, `"kagome"`.
 - `BondType::from_label()` is the stable inverse; unknown labels are rejected.
 
-### 6.3 JSON schema
+### 7.3 JSON schema
 
 ```json
 {
@@ -180,7 +208,7 @@ Initialization → Thermalization → Measurement → Finished
 }
 ```
 
-### 6.4 Energy handling
+### 7.4 Energy handling
 
 - The snapshot does NOT store cached energy.
 - On load, energy is always recomputed via `recompute_energy()`.
@@ -189,23 +217,23 @@ Initialization → Thermalization → Measurement → Finished
 
 ---
 
-## 7. Error Types
+## 8. Error Types
 
-### 7.1 Checkpoint errors
+### 8.1 Checkpoint errors
 
 Use `CarloError::CheckpointCorrupted` for:
 - Snapshot format validation failures
 - Topology mismatches
 - Corrupted field values
 
-### 7.2 Configuration errors
+### 8.2 Configuration errors
 
 Use `CarloError::InvalidConfig` for:
 - Invalid model/lattice parameters
 - Parameter parsing failures
 - Run configuration errors
 
-### 7.3 Assertion panics
+### 8.3 Assertion panics
 
 Assertions guard programming errors that should never occur in production:
 - NaN energy or log-probability
@@ -215,16 +243,16 @@ Assertions guard programming errors that should never occur in production:
 
 ---
 
-## 8. Testing Contract
+## 9. Testing Contract
 
-### 8.1 Statistical correctness
+### 9.1 Statistical correctness
 
 - Small systems (N ≤ 4) must match exact enumeration within 3σ.
 - Different algorithms (Metropolis, Wolff, SW) must agree within statistical
   error at identical parameters.
 - Fixed seeds must produce bitwise-identical results.
 
-### 8.2 Detailed balance
+### 9.2 Detailed balance
 
 - For N ≤ 4, the transition matrix T(x→y) must satisfy:
 
@@ -234,7 +262,7 @@ Assertions guard programming errors that should never occur in production:
 
 - Tolerance accounts for Monte Carlo sampling noise (~3%).
 
-### 8.3 Snapshot persistence
+### 9.3 Snapshot persistence
 
 - `save_snapshot → load_snapshot` must round-trip spin state and energy.
 - Split runs (therm → save → restore → meas) must produce identical final

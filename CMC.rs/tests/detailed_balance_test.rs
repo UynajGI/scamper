@@ -5,8 +5,8 @@
 
 use cmc_rs::{
     build_chain, Algorithm, Bond, BondType, CanonicalEnsemble, CsrLattice, EnergyPatch,
-    Hamiltonian, HeatBathable, IsingModel, ProposalStrategy, ProposedSpin, SiteSpinMove, Spin,
-    System, TrialEvaluator, WolffCore,
+    Hamiltonian, HeatBathable, IsingModel, MetropolisHastingsAcceptance, ProposalStrategy,
+    ProposedSpin, SiteSpinMove, Spin, System, TrialEvaluator, WolffCore,
 };
 use rand::{RngExt, SeedableRng};
 
@@ -114,6 +114,7 @@ fn asymmetric_hastings_detailed_balance_n2() {
                 &model,
                 &proposal,
                 &ensemble,
+                &MetropolisHastingsAcceptance,
                 &mut patch,
                 &mut rng,
             );
@@ -198,6 +199,7 @@ fn parallel_edge_detailed_balance_n2() {
                 &model,
                 &proposal,
                 &ensemble,
+                &MetropolisHastingsAcceptance,
                 &mut patch,
                 &mut rng,
             );
@@ -479,6 +481,7 @@ fn self_loop_detailed_balance_n2() {
                 &model,
                 &proposal,
                 &ensemble,
+                &MetropolisHastingsAcceptance,
                 &mut patch,
                 &mut rng,
             );

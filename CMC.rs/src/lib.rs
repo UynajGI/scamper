@@ -19,6 +19,15 @@
 //!     .run_one::<Simulation>(&params);
 //! ```
 //!
+//! # Module structure
+//!
+//! | Directory | Purpose |
+//! |-----------|---------|
+//! | [`core`] | Move types, trial evaluation, ensemble, acceptance rules, visit schedules |
+//! | [`lattice`] | Graph topology, physical state, Hamiltonian traits, models, proposals |
+//! | [`algorithms`] | Update kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
+//! | [`observables`] | Measurement traits and built-in observables (energy, magnetization, correlation) |
+//!
 //! # Extensibility
 //!
 //! * [`CsrLattice`] is an arbitrary weighted undirected multigraph.
@@ -28,46 +37,47 @@
 //! * [`ClassicalMC`] composes model + kernel + observable set into Carlo.rs's
 //!   [`carlo_rs::MonteCarlo`] trait.
 
-pub mod algorithm;
-pub mod classical_mc;
-pub mod ensemble;
-pub mod hamiltonian;
-pub mod lattice;
-pub mod models;
-pub mod moves;
-pub mod multi_spin;
-pub mod observables;
-pub mod postprocess;
-pub mod proposal;
-pub mod system;
-pub mod trial;
-pub mod visit;
+// ── Module tree ──────────────────────────────────────────────
 
-pub use algorithm::{
+// Top-level adapter modules
+pub mod classical_mc;
+pub mod multi_spin;
+pub mod postprocess;
+
+// Hierarchical modules
+
+pub mod algorithms;
+pub mod core;
+pub mod lattice;
+pub mod observables;
+
+// ── Flat public re-exports (backward-compatible) ─────────────
+
+pub use algorithms::{
     Algorithm, ContinuousHeatBathCore, HeatBathCore, HybridCore, MetropolisCore,
     MicrocanonicalCore, SWCore, SimulationPhase, WolffCore,
 };
 pub use classical_mc::{build_lattice_from_params, ClassicalMC, FromHamiltonianParams};
-pub use ensemble::{CanonicalEnsemble, Ensemble, ThermodynamicDelta};
-pub use hamiltonian::{
-    ClusterAuxiliary, ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable,
-    Initializable, LocalFieldModel, Measurable, PairInteraction, Proposable,
-};
-pub use lattice::{
+pub use core::acceptance::{AcceptanceRule, MetropolisHastingsAcceptance};
+pub use core::cache::{BatchEnergyPatch, BatchEnergyWorkspace, EnergyPatch};
+pub use core::ensemble::{CanonicalEnsemble, Ensemble, ThermodynamicDelta};
+pub use core::r#move::{BatchSpinMove, SiteSpinMove, Spin};
+pub use core::trial::{metropolis_hastings_step, ProposedMove, TrialEvaluator, TrialOutcome};
+pub use core::visit::{SiteOrder, VisitSchedule};
+pub use lattice::graph::{
     build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
     Bond, BondType, CsrLattice,
 };
-pub use models::{HeisenbergModel, IsingModel, ONModel, PottsModel, XYModel};
-pub use moves::{
-    BatchEnergyPatch, BatchEnergyWorkspace, BatchSpinMove, EnergyPatch, SiteSpinMove, Spin,
+pub use lattice::interaction::{
+    ClusterAuxiliary, ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable,
+    Initializable, LocalFieldModel, Measurable, PairInteraction, Proposable,
 };
+pub use lattice::models::{HeisenbergModel, IsingModel, ONModel, PottsModel, XYModel};
+pub use lattice::proposal::{OPSSStrategy, ProposalStrategy, ProposedSpin, StandardStrategy};
+pub use lattice::state::{SiteChange, System};
 pub use multi_spin::{MultiSpinIsing, N_REPLICAS};
 pub use observables::{
-    DefaultObservableSet, EmptyObservableSet, EnergyPerSite, Magnetization, MomentSpec, Observable,
-    ObservableSet, TotalEnergy,
+    compute_correlation_1d, DefaultObservableSet, EmptyObservableSet, EnergyPerSite, Magnetization,
+    MomentSpec, Observable, ObservableSet, TotalEnergy,
 };
-pub use postprocess::{binder_cumulant, compute_correlation_1d, specific_heat, susceptibility};
-pub use proposal::{OPSSStrategy, ProposalStrategy, ProposedSpin, StandardStrategy};
-pub use system::{SiteChange, System};
-pub use trial::{metropolis_hastings_step, ProposedMove, TrialEvaluator, TrialOutcome};
-pub use visit::{SiteOrder, VisitSchedule};
+pub use postprocess::{binder_cumulant, specific_heat, susceptibility};

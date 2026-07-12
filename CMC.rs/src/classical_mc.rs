@@ -1,13 +1,13 @@
 //! Carlo.rs adapter for composing a physical model, update kernel and observables.
 
-use crate::algorithm::{Algorithm, SimulationPhase};
-use crate::hamiltonian::{Hamiltonian, Initializable, Measurable};
-use crate::lattice::{
+use crate::algorithms::{Algorithm, SimulationPhase};
+use crate::lattice::graph::{
     build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
     BondType, CsrLattice,
 };
+use crate::lattice::interaction::{Hamiltonian, Initializable, Measurable};
+use crate::lattice::state::System;
 use crate::observables::{DefaultObservableSet, ObservableSet};
-use crate::system::System;
 use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible, Params};
 use serde_json::Value as Json;
 use std::{fmt::Display, str::FromStr};
@@ -488,13 +488,13 @@ fn finite_coupling(params: &Params) -> Result<f64, CarloError> {
     }
 }
 
-impl FromHamiltonianParams for crate::models::IsingModel {
+impl FromHamiltonianParams for crate::lattice::models::IsingModel {
     fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
         Ok(Self::new(finite_coupling(params)?))
     }
 }
 
-impl FromHamiltonianParams for crate::models::PottsModel {
+impl FromHamiltonianParams for crate::lattice::models::PottsModel {
     fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
         let q = parse_param::<usize>(params, "q")?.unwrap_or(3);
         if q < 2 {
@@ -504,7 +504,7 @@ impl FromHamiltonianParams for crate::models::PottsModel {
     }
 }
 
-impl<const D: usize> FromHamiltonianParams for crate::models::ONModel<D> {
+impl<const D: usize> FromHamiltonianParams for crate::lattice::models::ONModel<D> {
     fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
         if D < 2 {
             return Err(invalid("spin_dim", "O(N) dimension must be >= 2"));

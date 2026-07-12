@@ -83,9 +83,9 @@ pub fn compute_correlation_1d(spins: &[f64], spin_dim: usize, n_sites: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithm::MetropolisCore;
+    use crate::algorithms::MetropolisCore;
     use crate::classical_mc::ClassicalMC;
-    use crate::models::IsingModel;
+    use crate::lattice::models::IsingModel;
     use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 
     #[test]

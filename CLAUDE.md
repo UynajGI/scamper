@@ -37,24 +37,16 @@ MonteCarlo trait → Scheduler.run_one() → Results flow:
 
 ## CMC.rs Architecture
 
-Orthogonal traits instead of a monolithic trait — each concern is a separate trait:
+Orthogonal traits instead of a monolithic trait — each concern is a separate trait.
+Directories group related modules; public API is re-exported flat from `lib.rs`.
 
-| Layer | File | Purpose |
-|-------|------|---------|
-| Lattice | `lattice.rs` | `CsrLattice` — flat CSR arrays (offsets + neighbors), `Bond`, `BondType` (stable labels), builders |
-| System | `system.rs` | `System { lattice, spins, energy, beta }` — pub fields, impl `TrialEvaluator` for `SiteSpinMove`/`BatchSpinMove` |
-| Traits | `hamiltonian.rs` | `Hamiltonian`, `PairInteraction` (blanket impl), `ClusterModel`, `Proposable`, `Measurable`, `HeatBathable`, `ContinuousHeatBathable` |
-| Models | `models.rs` | `IsingModel`, `PottsModel`, `ONModel<D>` (XY=O(2), Heisenberg=O(3)) — impl `PairInteraction` |
-| Move types | `moves.rs` | `Spin`, `SiteSpinMove`, `BatchSpinMove`, `EnergyPatch`, `BatchEnergyWorkspace`, `BatchEnergyPatch` |
-| Trial eval | `trial.rs` | `TrialEvaluator<Model,M>`, `ProposedMove<M>`, `metropolis_hastings_step()`, `TrialOutcome` |
-| Ensemble | `ensemble.rs` | `Ensemble<D>` trait, `CanonicalEnsemble`, `ThermodynamicDelta` |
-| Visit order | `visit.rs` | `VisitSchedule` (Sequential/RandomPermutation), `SiteOrder` workspace |
-| Algorithm | `algorithm.rs` | `Algorithm<H>` trait — `MetropolisCore`, `WolffCore`, `SWCore`, `HeatBathCore`, `MicrocanonicalCore`, `ContinuousHeatBathCore`, `HybridCore` |
-| Proposal | `proposal.rs` | `ProposalStrategy<H>` — `StandardStrategy`, `OPSSStrategy` (adaptive rotation) |
-| Wrapper | `classical_mc.rs` | `ClassicalMC<H, A, O>` — `MonteCarlo`, `FromParams`, `ParallelTemperingCompatible`, JSON snapshot v2 |
-| Multi-spin | `multi_spin.rs` | `MultiSpinIsing` — bit-parallel Ising with 64 replicas, impl `MonteCarlo` + `FromParams` + PT |
-| Observables | `observables.rs` | Pluggable `Observable<H>` + `DefaultObservableSet` (Energy, Magnetization) |
-| Postprocess | `postprocess.rs` | Derived observables: `susceptibility()`, `specific_heat()`, `binder_cumulant()`, `compute_correlation_1d()` |
+| Directory | Files | Purpose |
+|-----------|-------|---------|
+| `core/` | `move.rs`, `cache.rs`, `trial.rs`, `ensemble.rs`, `acceptance.rs`, `visit.rs` | Move types, incremental patches, `TrialEvaluator`, `MetropolisHastingsAcceptance`, visit schedules |
+| `lattice/` | `graph.rs`, `state.rs`, `interaction.rs`, `models.rs`, `proposal.rs` | `CsrLattice` + builders, `System`, `Hamiltonian` + capability traits, built-in models, `ProposalStrategy` |
+| `algorithms/` | `metropolis.rs`, `wolff.rs`, `swendsen_wang.rs`, `heat_bath.rs`, `microcanonical.rs`, `hybrid.rs`, `common.rs` | `Algorithm<H>` trait + 6 kernels, `SimulationPhase`, `checked_probability` |
+| `observables/` | `energy.rs`, `magnetization.rs`, `correlation.rs`, `common.rs` | `Observable<H>`, `DefaultObservableSet`, `TotalEnergy`, `Magnetization`, `compute_correlation_1d` |
+| Top-level | `classical_mc.rs`, `multi_spin.rs`, `postprocess.rs` | `ClassicalMC` Carlo.rs adapter, `MultiSpinIsing`, derived observables |
 
 Key patterns:
 - `ClassicalMC<IsingModel, MetropolisCore>` → `Scheduler.run_one()` → `Results`

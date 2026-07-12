@@ -9,9 +9,9 @@
 //! but evolve independently with different random number sequences.
 
 use crate::classical_mc::{build_lattice_from_params, parse_bool, parse_param};
-use crate::hamiltonian::Hamiltonian;
-use crate::models::IsingModel;
-use crate::system::System;
+use crate::lattice::interaction::Hamiltonian;
+use crate::lattice::models::IsingModel;
+use crate::lattice::state::System;
 use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible, Params};
 use rand::Rng;
 use rand::RngExt;
@@ -383,7 +383,7 @@ impl ParallelTemperingCompatible for MultiSpinIsing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lattice::build_chain;
+    use crate::lattice::graph::build_chain;
     use carlo_rs::{RayonBackend, RunConfig, Scheduler};
     use rand::SeedableRng;
 
