@@ -1,36 +1,50 @@
-//! Physics model implementations.
+//! Built-in lattice-spin models.
 //!
-//! Each model implements the appropriate subset of traits:
-//! - Hamiltonian: Energy computation
-//! - ClusterModel: Cluster algorithm support
-//! - Proposable: Spin proposal
-//! - Measurable: Magnetization
+//! Ising and Potts use discrete scalar storage.  XY and Heisenberg are aliases
+//! of the const-generic [`ONModel`], which also enables arbitrary O(N) spins.
 
 use crate::hamiltonian::{
-    ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable, Measurable, Proposable,
+    ClusterAuxiliary, ClusterModel, ContinuousHeatBathable, HeatBathable, Initializable,
+    LocalFieldModel, Measurable, PairInteraction, Proposable, Spin,
 };
-use crate::lattice::CsrLattice;
-use rand::Rng;
-use rand::RngExt;
+use crate::lattice::{Bond, CsrLattice};
+use rand::{Rng, RngExt};
 use smallvec::{smallvec, SmallVec};
 
-// ── Ising Model ─────────────────────────────────────────────
+#[inline]
+fn clamp_probability(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else if value.is_sign_positive() {
+        1.0
+    } else {
+        0.0
+    }
+}
 
-/// Ising model: H = -J Σ_{⟨i,j⟩} σ_i σ_j, σ_i ∈ {±1}.
-///
-/// Parameters: `j` (coupling). Temperature (β) is stored in [`System`](crate::System).
+// ── Ising ───────────────────────────────────────────────────
+
+/// Ising model `H = -J Σ_e w_e σ_i σ_j`, `σ_i ∈ {±1}`.
 #[derive(Debug, Clone)]
 pub struct IsingModel {
     pub j: f64,
 }
 
 impl IsingModel {
-    pub fn new(j: f64) -> Self {
+    pub const fn new(j: f64) -> Self {
         Self { j }
+    }
+
+    pub const fn spin_dim(&self) -> usize {
+        1
+    }
+
+    pub const fn coupling(&self) -> f64 {
+        self.j
     }
 }
 
-impl Hamiltonian for IsingModel {
+impl PairInteraction for IsingModel {
     fn spin_dim(&self) -> usize {
         1
     }
@@ -39,48 +53,110 @@ impl Hamiltonian for IsingModel {
         self.j
     }
 
-    fn local_energy(
-        &self,
-        spins: &[f64],
-        lattice: &CsrLattice,
-        site: usize,
-        _beta: f64,
-        proposed: &[f64],
-    ) -> f64 {
-        let s = proposed[0];
-        let mut e = 0.0;
-        for &nb in lattice.neighbors(site) {
-            e += -self.j * s * spins[nb];
-        }
-        e
+    fn bond_energy(&self, left: &[f64], right: &[f64], bond: &Bond) -> f64 {
+        -self.j * bond.weight * left[0] * right[0]
     }
 }
 
-impl ClusterModel for IsingModel {
-    fn fk_bond_probability(&self, beta: f64) -> f64 {
-        1.0 - (-2.0 * self.j * beta).exp()
-    }
-
-    fn flip_in_place(&self, spin: &mut [f64], _rng: &mut impl Rng) {
-        spin[0] = -spin[0];
-    }
-
-    fn opposite_spin(&self, spin: f64, _rng: &mut impl Rng) -> f64 {
-        -spin
-    }
-
-    fn random_cluster_spin(&self, rng: &mut impl Rng) -> f64 {
+impl Initializable for IsingModel {
+    fn random_spin(&self, rng: &mut impl Rng) -> Spin {
         if rng.random::<bool>() {
-            1.0
+            smallvec![1.0]
         } else {
-            -1.0
+            smallvec![-1.0]
         }
+    }
+
+    fn ordered_spin(&self) -> Spin {
+        smallvec![1.0]
     }
 }
 
 impl Proposable for IsingModel {
-    fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
-        if rng.random::<bool>() {
+    fn propose(&self, rng: &mut impl Rng) -> Spin {
+        self.random_spin(rng)
+    }
+
+    fn propose_from(&self, current: &[f64], _rng: &mut impl Rng) -> Spin {
+        smallvec![-current[0]]
+    }
+}
+
+impl Measurable for IsingModel {
+    fn magnetization(&self, spins: &[f64]) -> f64 {
+        if spins.is_empty() {
+            return 0.0;
+        }
+        spins.iter().sum::<f64>().abs() / spins.len() as f64
+    }
+}
+
+impl ClusterModel for IsingModel {
+    fn wolff_auxiliary(&self, seed_spin: &[f64], _rng: &mut impl Rng) -> ClusterAuxiliary {
+        ClusterAuxiliary::DiscreteTarget(-seed_spin[0])
+    }
+
+    fn sw_bond_auxiliary(&self, _rng: &mut impl Rng) -> ClusterAuxiliary {
+        ClusterAuxiliary::None
+    }
+
+    fn sw_cluster_auxiliary(
+        &self,
+        _representative_spin: &[f64],
+        _bond_auxiliary: &ClusterAuxiliary,
+        rng: &mut impl Rng,
+    ) -> ClusterAuxiliary {
+        ClusterAuxiliary::DiscreteTarget(if rng.random::<bool>() { 1.0 } else { -1.0 })
+    }
+
+    fn cluster_bond_probability(
+        &self,
+        left: &[f64],
+        right: &[f64],
+        bond: &Bond,
+        _auxiliary: &ClusterAuxiliary,
+        beta: f64,
+    ) -> f64 {
+        let coupling = self.j * bond.weight;
+        assert!(
+            coupling >= 0.0,
+            "ferromagnetic Ising cluster updates require J * bond.weight >= 0"
+        );
+        if coupling == 0.0 || (left[0] - right[0]).abs() > 1e-12 {
+            return 0.0;
+        }
+        clamp_probability(1.0 - (-2.0 * beta * coupling).exp())
+    }
+
+    fn transform_cluster_spin(&self, spin: &[f64], auxiliary: &ClusterAuxiliary) -> Spin {
+        match auxiliary {
+            ClusterAuxiliary::DiscreteTarget(target) => smallvec![*target],
+            ClusterAuxiliary::Identity | ClusterAuxiliary::None => SmallVec::from_slice(spin),
+            ClusterAuxiliary::Reflection(_) => SmallVec::from_slice(spin),
+        }
+    }
+}
+
+impl HeatBathable for IsingModel {
+    fn heat_bath_sample_site(
+        &self,
+        spins: &[f64],
+        lattice: &CsrLattice,
+        site: usize,
+        beta: f64,
+        rng: &mut impl Rng,
+    ) -> Spin {
+        let field: f64 = lattice
+            .incidences(site)
+            .map(|(neighbor, edge_id)| self.j * lattice.edges[edge_id].weight * spins[neighbor])
+            .sum();
+        let x = 2.0 * beta * field;
+        let p_plus = if x >= 0.0 {
+            1.0 / (1.0 + (-x).exp())
+        } else {
+            x.exp() / (1.0 + x.exp())
+        };
+        if rng.random::<f64>() < p_plus {
             smallvec![1.0]
         } else {
             smallvec![-1.0]
@@ -88,39 +164,9 @@ impl Proposable for IsingModel {
     }
 }
 
-impl Measurable for IsingModel {
-    fn magnetization(&self, spins: &[f64]) -> f64 {
-        let sum: f64 = spins.iter().sum();
-        (sum / spins.len() as f64).abs()
-    }
-}
+// ── Potts ───────────────────────────────────────────────────
 
-impl HeatBathable for IsingModel {
-    fn n_states(&self) -> usize {
-        2
-    }
-
-    fn boltzmann_weights(&self, neighbors: &[f64], beta: f64) -> Vec<f64> {
-        let h: f64 = neighbors.iter().sum::<f64>() * self.j;
-        // w[0] = P(+1) ∝ exp(βh), w[1] = P(-1) ∝ exp(-βh)
-        vec![(beta * h).exp(), (-beta * h).exp()]
-    }
-
-    fn sample_spin(&self, weights: &[f64], rng: &mut impl Rng) -> f64 {
-        let total = weights[0] + weights[1];
-        if rng.random::<f64>() < weights[0] / total {
-            1.0
-        } else {
-            -1.0
-        }
-    }
-}
-
-// ── Potts Model ──────────────────────────────────────────────
-
-/// q-state Potts model: H = -J Σ δ(s_i, s_j), s_i ∈ {0, 1, ..., q-1}.
-///
-/// FK bond probability: `1 - exp(-βJ)` (no factor 2, unlike Ising).
+/// q-state Potts model `H = -J Σ_e w_e δ(s_i,s_j)`.
 #[derive(Debug, Clone)]
 pub struct PottsModel {
     pub j: f64,
@@ -133,19 +179,24 @@ impl PottsModel {
         Self { j, q }
     }
 
-    fn state_counts(&self, spins: &[f64]) -> Vec<usize> {
-        let mut counts = vec![0usize; self.q];
-        for &s in spins {
-            let k = s as usize;
-            if k < self.q {
-                counts[k] += 1;
-            }
+    pub const fn spin_dim(&self) -> usize {
+        1
+    }
+
+    pub const fn coupling(&self) -> f64 {
+        self.j
+    }
+
+    fn random_other_state(&self, current: usize, rng: &mut impl Rng) -> usize {
+        let mut state = rng.random_range(0..self.q - 1);
+        if state >= current {
+            state += 1;
         }
-        counts
+        state
     }
 }
 
-impl Hamiltonian for PottsModel {
+impl PairInteraction for PottsModel {
     fn spin_dim(&self) -> usize {
         1
     }
@@ -154,649 +205,458 @@ impl Hamiltonian for PottsModel {
         self.j
     }
 
-    fn local_energy(
-        &self,
-        spins: &[f64],
-        lattice: &CsrLattice,
-        site: usize,
-        _beta: f64,
-        proposed: &[f64],
-    ) -> f64 {
-        let s = proposed[0] as usize;
-        let mut e = 0.0;
-        for &nb in lattice.neighbors(site) {
-            let nb_state = spins[nb] as usize;
-            if s == nb_state {
-                e += -self.j;
-            }
+    fn bond_energy(&self, left: &[f64], right: &[f64], bond: &Bond) -> f64 {
+        if left[0] as usize == right[0] as usize {
+            -self.j * bond.weight
+        } else {
+            0.0
         }
-        e
     }
 }
 
-impl ClusterModel for PottsModel {
-    fn fk_bond_probability(&self, beta: f64) -> f64 {
-        1.0 - (-self.j * beta).exp()
+impl Initializable for PottsModel {
+    fn random_spin(&self, rng: &mut impl Rng) -> Spin {
+        smallvec![rng.random_range(0..self.q) as f64]
     }
 
-    fn flip_in_place(&self, spin: &mut [f64], rng: &mut impl Rng) {
-        let current = spin[0] as usize;
-        let mut new = rng.random_range(0..self.q - 1);
-        if new >= current {
-            new += 1;
-        }
-        spin[0] = new as f64;
-    }
-
-    fn opposite_spin(&self, spin: f64, rng: &mut impl Rng) -> f64 {
-        let current = spin as usize;
-        let mut new = rng.random_range(0..self.q - 1);
-        if new >= current {
-            new += 1;
-        }
-        new as f64
-    }
-
-    fn random_cluster_spin(&self, rng: &mut impl Rng) -> f64 {
-        rng.random_range(0..self.q) as f64
+    fn ordered_spin(&self) -> Spin {
+        smallvec![0.0]
     }
 }
 
 impl Proposable for PottsModel {
-    fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
-        smallvec![rng.random_range(0..self.q) as f64]
+    fn propose(&self, rng: &mut impl Rng) -> Spin {
+        self.random_spin(rng)
+    }
+
+    fn propose_from(&self, current: &[f64], rng: &mut impl Rng) -> Spin {
+        smallvec![self.random_other_state(current[0] as usize, rng) as f64]
     }
 }
 
 impl Measurable for PottsModel {
     fn magnetization(&self, spins: &[f64]) -> f64 {
-        let n = spins.len();
-        if n == 0 {
+        if spins.is_empty() {
             return 0.0;
         }
-        let counts = self.state_counts(spins);
-        let max_n = counts.iter().max().copied().unwrap_or(0);
-        (self.q as f64 * max_n as f64 - n as f64) / (n as f64 * (self.q - 1) as f64)
+        let mut counts = vec![0usize; self.q];
+        for &spin in spins {
+            let state = spin as usize;
+            if state < self.q {
+                counts[state] += 1;
+            }
+        }
+        let largest = counts.into_iter().max().unwrap_or(0);
+        let n = spins.len() as f64;
+        (self.q as f64 * largest as f64 - n) / (n * (self.q - 1) as f64)
+    }
+}
+
+impl ClusterModel for PottsModel {
+    fn wolff_auxiliary(&self, seed_spin: &[f64], rng: &mut impl Rng) -> ClusterAuxiliary {
+        ClusterAuxiliary::DiscreteTarget(self.random_other_state(seed_spin[0] as usize, rng) as f64)
+    }
+
+    fn sw_bond_auxiliary(&self, _rng: &mut impl Rng) -> ClusterAuxiliary {
+        ClusterAuxiliary::None
+    }
+
+    fn sw_cluster_auxiliary(
+        &self,
+        _representative_spin: &[f64],
+        _bond_auxiliary: &ClusterAuxiliary,
+        rng: &mut impl Rng,
+    ) -> ClusterAuxiliary {
+        ClusterAuxiliary::DiscreteTarget(rng.random_range(0..self.q) as f64)
+    }
+
+    fn cluster_bond_probability(
+        &self,
+        left: &[f64],
+        right: &[f64],
+        bond: &Bond,
+        _auxiliary: &ClusterAuxiliary,
+        beta: f64,
+    ) -> f64 {
+        let coupling = self.j * bond.weight;
+        assert!(
+            coupling >= 0.0,
+            "ferromagnetic Potts cluster updates require J * bond.weight >= 0"
+        );
+        if coupling == 0.0 || left[0] as usize != right[0] as usize {
+            return 0.0;
+        }
+        clamp_probability(1.0 - (-beta * coupling).exp())
+    }
+
+    fn transform_cluster_spin(&self, spin: &[f64], auxiliary: &ClusterAuxiliary) -> Spin {
+        match auxiliary {
+            ClusterAuxiliary::DiscreteTarget(target) => smallvec![*target],
+            ClusterAuxiliary::Identity | ClusterAuxiliary::None => SmallVec::from_slice(spin),
+            ClusterAuxiliary::Reflection(_) => SmallVec::from_slice(spin),
+        }
     }
 }
 
 impl HeatBathable for PottsModel {
-    fn n_states(&self) -> usize {
-        self.q
-    }
-
-    fn boltzmann_weights(&self, neighbors: &[f64], beta: f64) -> Vec<f64> {
-        let mut counts = vec![0usize; self.q];
-        for &s in neighbors {
-            let k = s as usize;
-            if k < self.q {
-                counts[k] += 1;
+    fn heat_bath_sample_site(
+        &self,
+        spins: &[f64],
+        lattice: &CsrLattice,
+        site: usize,
+        beta: f64,
+        rng: &mut impl Rng,
+    ) -> Spin {
+        let mut log_weights = vec![0.0f64; self.q];
+        for (neighbor, edge_id) in lattice.incidences(site) {
+            let state = spins[neighbor] as usize;
+            if state < self.q {
+                log_weights[state] += beta * self.j * lattice.edges[edge_id].weight;
             }
         }
-        // w[k] = exp(βJ * n_k) where n_k = number of neighbors in state k
-        counts
+
+        let max_log = log_weights
             .iter()
-            .map(|&n| (beta * self.j * n as f64).exp())
-            .collect()
-    }
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        let mut total = 0.0;
+        for value in &mut log_weights {
+            *value = (*value - max_log).exp();
+            total += *value;
+        }
 
-    fn sample_spin(&self, weights: &[f64], rng: &mut impl Rng) -> f64 {
-        let total: f64 = weights.iter().sum();
-        let mut u = rng.random::<f64>() * total;
-        for (k, &w) in weights.iter().enumerate() {
-            u -= w;
-            if u <= 0.0 {
-                return k as f64;
+        let mut threshold = rng.random::<f64>() * total;
+        for (state, weight) in log_weights.into_iter().enumerate() {
+            threshold -= weight;
+            if threshold <= 0.0 {
+                return smallvec![state as f64];
             }
         }
-        (weights.len() - 1) as f64
+        smallvec![(self.q - 1) as f64]
     }
 }
 
-// ── XY Model ─────────────────────────────────────────────────
+// ── O(N) ────────────────────────────────────────────────────
 
-/// XY model: H = -J Σ cos(θ_i - θ_j) = -J Σ s_i · s_j, |s_i| = 1.
-///
-/// Each spin is a unit vector in 2D: `(cos θ, sin θ)`.
+/// Ferromagnetic O(N) model `H = -J Σ_e w_e s_i·s_j`, `|s_i|=1`.
 #[derive(Debug, Clone)]
-pub struct XYModel {
+pub struct ONModel<const D: usize> {
     pub j: f64,
 }
 
-impl XYModel {
+impl<const D: usize> ONModel<D> {
     pub fn new(j: f64) -> Self {
+        assert!(D >= 2, "O(N) spin dimension must be >= 2");
         Self { j }
+    }
+
+    pub const fn spin_dim(&self) -> usize {
+        D
+    }
+
+    pub const fn coupling(&self) -> f64 {
+        self.j
+    }
+
+    fn random_unit_vector(&self, rng: &mut impl Rng) -> Spin {
+        // Normalize independent standard-normal components generated in pairs
+        // with Box-Muller.  This is uniform on S^(D-1) for every D >= 2.
+        let mut vector = SmallVec::<[f64; 3]>::with_capacity(D);
+        while vector.len() < D {
+            let u1 = rng.random::<f64>().max(f64::MIN_POSITIVE);
+            let u2 = rng.random::<f64>();
+            let radius = (-2.0 * u1.ln()).sqrt();
+            let angle = std::f64::consts::TAU * u2;
+            vector.push(radius * angle.cos());
+            if vector.len() < D {
+                vector.push(radius * angle.sin());
+            }
+        }
+        normalize(&mut vector);
+        vector
     }
 }
 
-impl Hamiltonian for XYModel {
+pub type XYModel = ONModel<2>;
+pub type HeisenbergModel = ONModel<3>;
+
+#[inline]
+fn dot(left: &[f64], right: &[f64]) -> f64 {
+    left.iter().zip(right).map(|(a, b)| a * b).sum()
+}
+
+fn normalize(spin: &mut [f64]) {
+    let norm = spin.iter().map(|value| value * value).sum::<f64>().sqrt();
+    if norm > 1e-15 {
+        for value in spin {
+            *value /= norm;
+        }
+    }
+}
+
+impl<const D: usize> PairInteraction for ONModel<D> {
     fn spin_dim(&self) -> usize {
-        2
+        D
     }
 
     fn coupling(&self) -> f64 {
         self.j
     }
 
-    fn local_energy(
+    fn bond_energy(&self, left: &[f64], right: &[f64], bond: &Bond) -> f64 {
+        -self.j * bond.weight * dot(left, right)
+    }
+}
+
+impl<const D: usize> Initializable for ONModel<D> {
+    fn random_spin(&self, rng: &mut impl Rng) -> Spin {
+        self.random_unit_vector(rng)
+    }
+
+    fn ordered_spin(&self) -> Spin {
+        let mut spin = SmallVec::from_elem(0.0, D);
+        spin[0] = 1.0;
+        spin
+    }
+}
+
+impl<const D: usize> Proposable for ONModel<D> {
+    fn propose(&self, rng: &mut impl Rng) -> Spin {
+        self.random_unit_vector(rng)
+    }
+
+    fn normalize_spin(&self, spin: &mut [f64]) {
+        normalize(spin);
+    }
+}
+
+impl<const D: usize> Measurable for ONModel<D> {
+    fn magnetization(&self, spins: &[f64]) -> f64 {
+        let n_sites = spins.len() / D;
+        if n_sites == 0 {
+            return 0.0;
+        }
+        let mut sum = vec![0.0; D];
+        for spin in spins.chunks_exact(D) {
+            for (component, value) in sum.iter_mut().zip(spin) {
+                *component += *value;
+            }
+        }
+        sum.iter().map(|value| value * value).sum::<f64>().sqrt() / n_sites as f64
+    }
+}
+
+impl<const D: usize> ClusterModel for ONModel<D> {
+    fn wolff_auxiliary(&self, _seed_spin: &[f64], rng: &mut impl Rng) -> ClusterAuxiliary {
+        ClusterAuxiliary::Reflection(self.random_unit_vector(rng))
+    }
+
+    fn sw_bond_auxiliary(&self, rng: &mut impl Rng) -> ClusterAuxiliary {
+        ClusterAuxiliary::Reflection(self.random_unit_vector(rng))
+    }
+
+    fn sw_cluster_auxiliary(
+        &self,
+        _representative_spin: &[f64],
+        bond_auxiliary: &ClusterAuxiliary,
+        rng: &mut impl Rng,
+    ) -> ClusterAuxiliary {
+        if rng.random::<bool>() {
+            bond_auxiliary.clone()
+        } else {
+            ClusterAuxiliary::Identity
+        }
+    }
+
+    fn cluster_bond_probability(
+        &self,
+        left: &[f64],
+        right: &[f64],
+        bond: &Bond,
+        auxiliary: &ClusterAuxiliary,
+        beta: f64,
+    ) -> f64 {
+        let ClusterAuxiliary::Reflection(direction) = auxiliary else {
+            return 0.0;
+        };
+        let coupling = self.j * bond.weight;
+        assert!(
+            coupling >= 0.0,
+            "ferromagnetic O(N) cluster updates require J * bond.weight >= 0"
+        );
+        let product = dot(left, direction) * dot(right, direction);
+        if coupling == 0.0 || product <= 0.0 {
+            return 0.0;
+        }
+        // Correct Wolff embedded-Ising activation probability.
+        clamp_probability(1.0 - (-2.0 * beta * coupling * product).exp())
+    }
+
+    fn transform_cluster_spin(&self, spin: &[f64], auxiliary: &ClusterAuxiliary) -> Spin {
+        match auxiliary {
+            ClusterAuxiliary::Reflection(direction) => {
+                let projection = dot(spin, direction);
+                let mut reflected = SmallVec::from_slice(spin);
+                for (value, normal) in reflected.iter_mut().zip(direction) {
+                    *value -= 2.0 * projection * normal;
+                }
+                normalize(&mut reflected);
+                reflected
+            }
+            ClusterAuxiliary::Identity | ClusterAuxiliary::None => SmallVec::from_slice(spin),
+            ClusterAuxiliary::DiscreteTarget(_) => SmallVec::from_slice(spin),
+        }
+    }
+}
+
+impl<const D: usize> LocalFieldModel for ONModel<D> {
+    fn local_field(&self, spins: &[f64], lattice: &CsrLattice, site: usize, output: &mut [f64]) {
+        assert_eq!(output.len(), D);
+        output.fill(0.0);
+        for (neighbor, edge_id) in lattice.incidences(site) {
+            let scale = self.j * lattice.edges[edge_id].weight;
+            let base = neighbor * D;
+            for component in 0..D {
+                output[component] += scale * spins[base + component];
+            }
+        }
+    }
+}
+
+impl ContinuousHeatBathable for ONModel<2> {
+    fn heat_bath_sample_site(
         &self,
         spins: &[f64],
         lattice: &CsrLattice,
         site: usize,
-        _beta: f64,
-        proposed: &[f64],
-    ) -> f64 {
-        let (sx, sy) = (proposed[0], proposed[1]);
-        let mut e = 0.0;
-        for &nb in lattice.neighbors(site) {
-            let base = nb * 2;
-            e += -self.j * (sx * spins[base] + sy * spins[base + 1]);
-        }
-        e
-    }
-}
-
-impl ClusterModel for XYModel {
-    fn fk_bond_probability(&self, beta: f64) -> f64 {
-        1.0 - (-self.j * beta).exp()
-    }
-
-    fn reflect(&self, spin: &mut [f64], direction: &[f64]) {
-        let proj = spin[0] * direction[0] + spin[1] * direction[1];
-        spin[0] -= 2.0 * proj * direction[0];
-        spin[1] -= 2.0 * proj * direction[1];
-        self.normalize_spin(spin);
-    }
-
-    fn embedding_direction(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
-        let theta: f64 = rng.random_range(0.0..std::f64::consts::TAU);
-        smallvec![theta.cos(), theta.sin()]
-    }
-}
-
-impl Proposable for XYModel {
-    fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
-        let theta: f64 = rng.random_range(0.0..std::f64::consts::TAU);
-        smallvec![theta.cos(), theta.sin()]
-    }
-
-    fn normalize_spin(&self, spin: &mut [f64]) {
-        let r = (spin[0] * spin[0] + spin[1] * spin[1]).sqrt();
-        if r > 1e-12 {
-            spin[0] /= r;
-            spin[1] /= r;
-        }
-    }
-}
-
-impl Measurable for XYModel {
-    fn magnetization(&self, spins: &[f64]) -> f64 {
-        let (mut sx, mut sy) = (0.0, 0.0);
-        for chunk in spins.chunks(2) {
-            sx += chunk[0];
-            sy += chunk[1];
-        }
-        let n = (spins.len() / 2) as f64;
-        (sx * sx + sy * sy).sqrt() / n
-    }
-}
-
-impl ContinuousHeatBathable for XYModel {
-    fn heat_bath_sample(
-        &self,
-        neighbors: &[f64],
         beta: f64,
         rng: &mut impl Rng,
-    ) -> SmallVec<[f64; 3]> {
-        let hx: f64 = neighbors.chunks(2).map(|c| c[0]).sum();
-        let hy: f64 = neighbors.chunks(2).map(|c| c[1]).sum();
-        let h_norm = (hx * hx + hy * hy).sqrt();
-        let kappa = beta * self.j * h_norm;
-
-        // Sample angle from von Mises VM(0, κ) via Best-Fisher (1979)
-        let theta = sample_von_mises(rng, kappa);
-
-        // Rotate to local field direction
-        let mu = hy.atan2(hx);
-        let angle = theta + mu;
-        smallvec![angle.cos(), angle.sin()]
+    ) -> Spin {
+        let mut field = [0.0; 2];
+        self.local_field(spins, lattice, site, &mut field);
+        let norm = field.iter().map(|value| value * value).sum::<f64>().sqrt();
+        if norm < 1e-15 {
+            return self.random_unit_vector(rng);
+        }
+        let theta = sample_von_mises(rng, beta * norm) + field[1].atan2(field[0]);
+        smallvec![theta.cos(), theta.sin()]
     }
 }
 
-/// Best & Fisher (1979) rejection sampling for von Mises VM(0, κ).
-///
-/// Generates θ ~ VM(0, κ) = exp(κ cos θ) / (2π I₀(κ)).
-/// Only elementary functions (sqrt, cos, ln) — no Bessel calls inside loop.
-fn sample_von_mises(rng: &mut impl Rng, kappa: f64) -> f64 {
-    use std::f64::consts::PI;
+impl ContinuousHeatBathable for ONModel<3> {
+    fn heat_bath_sample_site(
+        &self,
+        spins: &[f64],
+        lattice: &CsrLattice,
+        site: usize,
+        beta: f64,
+        rng: &mut impl Rng,
+    ) -> Spin {
+        let mut field = [0.0; 3];
+        self.local_field(spins, lattice, site, &mut field);
+        let norm = field.iter().map(|value| value * value).sum::<f64>().sqrt();
+        let kappa = beta * norm;
+        if kappa < 1e-12 {
+            return self.random_unit_vector(rng);
+        }
 
-    if kappa < 1e-8 {
-        return rng.random::<f64>() * 2.0 * PI;
+        // Stable inverse CDF for exp(kappa * cos(theta)).
+        let u = rng.random::<f64>().max(f64::MIN_POSITIVE);
+        let cos_theta = 1.0 + (u + (1.0 - u) * (-2.0 * kappa).exp()).ln() / kappa;
+        let cos_theta = cos_theta.clamp(-1.0, 1.0);
+        let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
+        let phi = std::f64::consts::TAU * rng.random::<f64>();
+        let local_x = sin_theta * phi.cos();
+        let local_y = sin_theta * phi.sin();
+
+        let ux = field[0] / norm;
+        let uy = field[1] / norm;
+        let uz = field[2] / norm;
+        let transverse = (ux * ux + uy * uy).sqrt();
+        let (x, y, z) = if transverse < 1e-12 {
+            if uz >= 0.0 {
+                (local_x, local_y, cos_theta)
+            } else {
+                (local_x, local_y, -cos_theta)
+            }
+        } else {
+            let inverse = 1.0 / transverse;
+            (
+                -uy * inverse * local_x - ux * uz * inverse * local_y + ux * cos_theta,
+                ux * inverse * local_x - uy * uz * inverse * local_y + uy * cos_theta,
+                transverse * local_y + uz * cos_theta,
+            )
+        };
+        smallvec![x, y, z]
     }
+}
 
-    // Best & Fisher (1979) parameters: τ = 1 + √(1 + 4κ²)
+/// Best-Fisher rejection sampler for `VM(0, kappa)`.
+fn sample_von_mises(rng: &mut impl Rng, kappa: f64) -> f64 {
+    if kappa < 1e-8 {
+        return rng.random::<f64>() * std::f64::consts::TAU;
+    }
     let tau = 1.0 + (1.0 + 4.0 * kappa * kappa).sqrt();
     let rho = (tau - (2.0 * tau).sqrt()) / (2.0 * kappa);
     let r = (1.0 + rho * rho) / (2.0 * rho);
 
-    let f = loop {
-        let u1: f64 = rng.random();
-        let z = (PI * u1).cos();
-        let f_val = (1.0 + r * z) / (r + z);
-        let c = kappa * (r - f_val);
-
-        let u2: f64 = rng.random();
-        if c * (2.0 - c) - u2 > 0.0 {
-            break f_val;
-        }
-        if (c / u2).ln() + 1.0 - c >= 0.0 {
-            break f_val;
+    let cosine = loop {
+        let z = (std::f64::consts::PI * rng.random::<f64>()).cos();
+        let value = (1.0 + r * z) / (r + z);
+        let c = kappa * (r - value);
+        let u = rng.random::<f64>().max(f64::MIN_POSITIVE);
+        if c * (2.0 - c) > u || (c / u).ln() + 1.0 >= c {
+            break value.clamp(-1.0, 1.0);
         }
     };
 
-    let u3: f64 = rng.random();
-    if u3 < 0.5 {
-        -f.acos()
+    if rng.random::<bool>() {
+        cosine.acos()
     } else {
-        f.acos()
+        -cosine.acos()
     }
 }
-
-#[cfg(test)]
-mod von_mises_tests {
-    use super::*;
-    use rand::SeedableRng;
-
-    #[test]
-    fn test_sample_von_mises_small_kappa() {
-        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
-        for _ in 0..100 {
-            let theta = sample_von_mises(&mut rng, 0.5);
-            assert!(theta.is_finite(), "theta should be finite");
-        }
-    }
-
-    #[test]
-    fn test_sample_von_mises_large_kappa() {
-        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
-        for _ in 0..100 {
-            let theta = sample_von_mises(&mut rng, 10.0);
-            assert!(theta.is_finite(), "theta should be finite");
-            assert!(theta.abs() < 1.0, "at large kappa, theta near 0");
-        }
-    }
-}
-
-// ── Heisenberg Model ─────────────────────────────────────────
-
-/// Heisenberg model: H = -J Σ s_i · s_j, |s_i| = 1.
-///
-/// Each spin is a unit vector in 3D. Uses Marsaglia's method for uniform sampling on S².
-#[derive(Debug, Clone)]
-pub struct HeisenbergModel {
-    pub j: f64,
-}
-
-impl HeisenbergModel {
-    pub fn new(j: f64) -> Self {
-        Self { j }
-    }
-}
-
-impl Hamiltonian for HeisenbergModel {
-    fn spin_dim(&self) -> usize {
-        3
-    }
-
-    fn coupling(&self) -> f64 {
-        self.j
-    }
-
-    fn local_energy(
-        &self,
-        spins: &[f64],
-        lattice: &CsrLattice,
-        site: usize,
-        _beta: f64,
-        proposed: &[f64],
-    ) -> f64 {
-        let (sx, sy, sz) = (proposed[0], proposed[1], proposed[2]);
-        let mut e = 0.0;
-        for &nb in lattice.neighbors(site) {
-            let base = nb * 3;
-            e += -self.j * (sx * spins[base] + sy * spins[base + 1] + sz * spins[base + 2]);
-        }
-        e
-    }
-}
-
-impl ClusterModel for HeisenbergModel {
-    fn fk_bond_probability(&self, beta: f64) -> f64 {
-        1.0 - (-self.j * beta).exp()
-    }
-
-    fn reflect(&self, spin: &mut [f64], direction: &[f64]) {
-        let proj = spin[0] * direction[0] + spin[1] * direction[1] + spin[2] * direction[2];
-        spin[0] -= 2.0 * proj * direction[0];
-        spin[1] -= 2.0 * proj * direction[1];
-        spin[2] -= 2.0 * proj * direction[2];
-        self.normalize_spin(spin);
-    }
-
-    fn embedding_direction(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
-        let theta: f64 = rng.random_range(0.0..std::f64::consts::TAU);
-        let phi: f64 = rng.random_range(0.0..std::f64::consts::PI);
-        smallvec![phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos()]
-    }
-}
-
-impl Proposable for HeisenbergModel {
-    fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
-        // Marsaglia: sample (x,y) in unit disk, reject if outside
-        let (x, y) = loop {
-            let x: f64 = rng.random_range(-1.0..1.0);
-            let y: f64 = rng.random_range(-1.0..1.0);
-            if x * x + y * y <= 1.0 {
-                break (x, y);
-            }
-        };
-        let r = (x * x + y * y).sqrt();
-        smallvec![
-            2.0 * x * (1.0 - r * r).sqrt(),
-            2.0 * y * (1.0 - r * r).sqrt(),
-            1.0 - 2.0 * (x * x + y * y),
-        ]
-    }
-
-    fn normalize_spin(&self, spin: &mut [f64]) {
-        let r = (spin[0] * spin[0] + spin[1] * spin[1] + spin[2] * spin[2]).sqrt();
-        if r > 1e-12 {
-            spin[0] /= r;
-            spin[1] /= r;
-            spin[2] /= r;
-        }
-    }
-}
-
-impl Measurable for HeisenbergModel {
-    fn magnetization(&self, spins: &[f64]) -> f64 {
-        let (mut sx, mut sy, mut sz) = (0.0, 0.0, 0.0);
-        for chunk in spins.chunks(3) {
-            sx += chunk[0];
-            sy += chunk[1];
-            sz += chunk[2];
-        }
-        let n = (spins.len() / 3) as f64;
-        (sx * sx + sy * sy + sz * sz).sqrt() / n
-    }
-}
-
-impl ContinuousHeatBathable for HeisenbergModel {
-    fn heat_bath_sample(
-        &self,
-        neighbors: &[f64],
-        beta: f64,
-        rng: &mut impl Rng,
-    ) -> SmallVec<[f64; 3]> {
-        // Local field h = Σ s_j (sum over neighbors)
-        let hx: f64 = neighbors.chunks(3).map(|c| c[0]).sum();
-        let hy: f64 = neighbors.chunks(3).map(|c| c[1]).sum();
-        let hz: f64 = neighbors.chunks(3).map(|c| c[2]).sum();
-        let h_norm = (hx * hx + hy * hy + hz * hz).sqrt();
-
-        // κ = βJ|h|
-        let kappa = beta * self.j * h_norm;
-
-        if kappa < 1e-12 {
-            // Isotropic: sample uniformly on S²
-            let z: f64 = rng.random::<f64>() * 2.0 - 1.0;
-            let sin_theta = (1.0 - z * z).sqrt();
-            let phi: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
-            return smallvec![sin_theta * phi.cos(), sin_theta * phi.sin(), z,];
-        }
-
-        // cosθ via inverse CDF: t = ln(u * 2sinh(κ) + e^{-κ}) / κ
-        let u: f64 = rng.random::<f64>();
-        let two_sinh_k = kappa.exp() - (-kappa).exp(); // 2sinh(κ) = e^κ - e^{-κ}
-        let exp_neg_k = (-kappa).exp();
-        let t = (u * two_sinh_k + exp_neg_k).ln() / kappa;
-
-        let sin_theta = (1.0 - t * t).sqrt().max(0.0);
-        let phi: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
-
-        // Spin in local frame where h aligns with z
-        let (sx_local, sy_local) = (sin_theta * phi.cos(), sin_theta * phi.sin());
-
-        // Rotate (0,0,1) → ĥ
-        let (ux, uy, uz) = (hx / h_norm, hy / h_norm, hz / h_norm);
-        let r = (ux * ux + uy * uy).sqrt(); // sqrt(1 - uz²)
-        let (sx, sy, sz) = if r < 1e-12 {
-            // μ ≈ ±z, trivial
-            if uz > 0.0 {
-                (sx_local, sy_local, t)
-            } else {
-                (sx_local, sy_local, -t)
-            }
-        } else {
-            let inv_r = 1.0 / r;
-            (
-                -uy * inv_r * sx_local - ux * uz * inv_r * sy_local + ux * t,
-                ux * inv_r * sx_local - uy * uz * inv_r * sy_local + uy * t,
-                r * sy_local + uz * t,
-            )
-        };
-
-        smallvec![sx, sy, sz]
-    }
-}
-
-// ── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lattice::build_chain;
+    use crate::hamiltonian::Hamiltonian;
+    use crate::lattice::{build_chain, BondType};
+    use rand::SeedableRng;
 
     #[test]
-    fn test_ising_local_energy_ferro() {
-        let lattice = build_chain(2, false);
-        let model = IsingModel::new(1.0);
-        // Two aligned spins
-        let spins = vec![1.0, 1.0];
-        // site 0 energy = -J * 1.0 * 1.0 = -1.0
-        let e0 = model.local_energy(&spins, &lattice, 0, 1.0, &[1.0]);
-        assert!((e0 + 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_ising_local_energy_antiferro() {
-        let lattice = build_chain(2, false);
-        let model = IsingModel::new(1.0);
-        let spins = vec![1.0, -1.0];
-        // site 0 energy = -J * 1.0 * (-1.0) = 1.0
-        let e0 = model.local_energy(&spins, &lattice, 0, 1.0, &[1.0]);
-        assert!((e0 - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_ising_total_energy() {
-        let lattice = build_chain(4, true); // ring
-        let model = IsingModel::new(1.0);
-        // All up: 4 bonds, each -1, total -4
-        let spins = vec![1.0, 1.0, 1.0, 1.0];
-        let total = model.compute_total_energy(&spins, &lattice, 1.0);
-        assert!((total + 4.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_ising_magnetization() {
-        let model = IsingModel::new(1.0);
-        assert!((model.magnetization(&[1.0, -1.0, 1.0, -1.0]) - 0.0).abs() < 1e-10);
-        assert!((model.magnetization(&[1.0, 1.0, 1.0, 1.0]) - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_ising_fk_bond_prob() {
-        let model = IsingModel::new(1.0);
-        let expected = 1.0 - (-1.0_f64).exp();
-        assert!((model.fk_bond_probability(0.5) - expected).abs() < 1e-10);
-    }
-
-    // ── Potts tests ───────────────────────────────────────
-
-    #[test]
-    fn test_potts_local_energy_aligned() {
-        let lattice = build_chain(2, false);
-        let model = PottsModel::new(1.0, 3);
-        // Both in state 0
-        let spins = vec![0.0, 0.0];
-        let e = model.local_energy(&spins, &lattice, 0, 1.0, &[0.0]);
-        assert!((e + 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_potts_local_energy_misaligned() {
-        let lattice = build_chain(2, false);
-        let model = PottsModel::new(1.0, 3);
-        let spins = vec![0.0, 1.0];
-        let e = model.local_energy(&spins, &lattice, 0, 1.0, &[0.0]);
-        assert!((e - 0.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_potts_fk_bond_prob() {
-        let model = PottsModel::new(1.0, 3);
-        let expected = 1.0 - (-0.5_f64).exp();
-        assert!((model.fk_bond_probability(0.5) - expected).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_potts_magnetization_ordered() {
-        let model = PottsModel::new(1.0, 4);
-        // All in state 2 → m = (4*4-4)/(4*3) = 12/12 = 1.0
-        let spins = vec![2.0, 2.0, 2.0, 2.0];
-        assert!((model.magnetization(&spins) - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_potts_magnetization_random() {
-        let model = PottsModel::new(1.0, 4);
-        // One in each state → m = (4*1-4)/(4*3) = 0
-        let spins = vec![0.0, 1.0, 2.0, 3.0];
-        assert!((model.magnetization(&spins) - 0.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_potts_total_energy() {
+    fn physical_edges_are_counted_once() {
         let lattice = build_chain(4, true);
-        let model = PottsModel::new(1.0, 3);
-        // All in state 0: 4 bonds, each -1, total -4
-        let spins = vec![0.0, 0.0, 0.0, 0.0];
-        let total = model.compute_total_energy(&spins, &lattice, 1.0);
-        assert!((total + 4.0).abs() < 1e-10);
+        let model = IsingModel::new(1.0);
+        assert_eq!(model.compute_total_energy(&[1.0; 4], &lattice, 1.0), -4.0);
     }
 
-    // ── XY tests ──────────────────────────────────────────
+    #[test]
+    fn weighted_bond_energy() {
+        let lattice = CsrLattice::from_edges(2, vec![Bond::new(0, 1, BondType::Generic, 2.5)]);
+        let model = IsingModel::new(2.0);
+        assert_eq!(model.compute_total_energy(&[1.0, 1.0], &lattice, 1.0), -5.0);
+    }
 
     #[test]
-    fn test_xy_local_energy_aligned() {
-        let lattice = build_chain(2, false);
+    fn arbitrary_on_dimension_is_normalized() {
+        let model = ONModel::<7>::new(1.0);
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(7);
+        let spin = model.random_spin(&mut rng);
+        let norm = spin.iter().map(|value| value * value).sum::<f64>();
+        assert_eq!(spin.len(), 7);
+        assert!((norm - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn on_bond_probability_depends_on_projection() {
         let model = XYModel::new(1.0);
-        // Both pointing along x: (1,0)
-        let spins = vec![1.0, 0.0, 1.0, 0.0];
-        let e = model.local_energy(&spins, &lattice, 0, 1.0, &[1.0, 0.0]);
-        assert!((e + 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_xy_local_energy_anti() {
-        let lattice = build_chain(2, false);
-        let model = XYModel::new(1.0);
-        // Opposite: (1,0) and (-1,0)
-        let spins = vec![1.0, 0.0, -1.0, 0.0];
-        let e = model.local_energy(&spins, &lattice, 0, 1.0, &[1.0, 0.0]);
-        assert!((e - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_xy_magnetization_aligned() {
-        let model = XYModel::new(1.0);
-        // Two aligned spins
-        let spins = vec![1.0, 0.0, 1.0, 0.0];
-        assert!((model.magnetization(&spins) - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_xy_magnetization_opposite() {
-        let model = XYModel::new(1.0);
-        let spins = vec![1.0, 0.0, -1.0, 0.0];
-        assert!((model.magnetization(&spins) - 0.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_xy_normalize_preserves_direction() {
-        let model = XYModel::new(1.0);
-        let mut v = vec![2.0, 0.0];
-        model.normalize_spin(&mut v);
-        assert!((v[0] - 1.0).abs() < 1e-10);
-        assert!(v[1].abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_xy_energy_total_ring() {
-        let lattice = build_chain(4, true);
-        let model = XYModel::new(1.0);
-        // All x-aligned, 4 bonds, each -J = -1, total = -4
-        let spins = vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0];
-        let total = model.compute_total_energy(&spins, &lattice, 1.0);
-        assert!((total + 4.0).abs() < 1e-10);
-    }
-
-    // ── Heisenberg tests ──────────────────────────────────
-
-    #[test]
-    fn test_heisenberg_local_energy_aligned() {
-        let lattice = build_chain(2, false);
-        let model = HeisenbergModel::new(1.0);
-        // Both along z
-        let spins = vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
-        let e = model.local_energy(&spins, &lattice, 0, 1.0, &[0.0, 0.0, 1.0]);
-        assert!((e + 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_heisenberg_local_energy_anti() {
-        let lattice = build_chain(2, false);
-        let model = HeisenbergModel::new(1.0);
-        // Opposite along z
-        let spins = vec![0.0, 0.0, 1.0, 0.0, 0.0, -1.0];
-        let e = model.local_energy(&spins, &lattice, 0, 1.0, &[0.0, 0.0, 1.0]);
-        assert!((e - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_heisenberg_magnetization_aligned() {
-        let model = HeisenbergModel::new(1.0);
-        let spins = vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
-        assert!((model.magnetization(&spins) - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_heisenberg_normalize() {
-        let model = HeisenbergModel::new(1.0);
-        let mut v = vec![0.0, 3.0, 0.0];
-        model.normalize_spin(&mut v);
-        assert!((v[1] - 1.0).abs() < 1e-10);
-        assert!((v[0] * v[0] + v[1] * v[1] + v[2] * v[2] - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_heisenberg_energy_total_ring() {
-        let lattice = build_chain(4, true);
-        let model = HeisenbergModel::new(1.0);
-        // All z-aligned, 4 bonds, each -J = -1, total = -4
-        let spins = vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
-        let total = model.compute_total_energy(&spins, &lattice, 1.0);
-        assert!((total + 4.0).abs() < 1e-10);
+        let bond = Bond::new(0, 1, BondType::Generic, 1.0);
+        let aux = ClusterAuxiliary::Reflection(smallvec![1.0, 0.0]);
+        let parallel = model.cluster_bond_probability(&[1.0, 0.0], &[1.0, 0.0], &bond, &aux, 1.0);
+        let perpendicular =
+            model.cluster_bond_probability(&[0.0, 1.0], &[0.0, 1.0], &bond, &aux, 1.0);
+        assert!(parallel > perpendicular);
+        assert_eq!(perpendicular, 0.0);
     }
 }

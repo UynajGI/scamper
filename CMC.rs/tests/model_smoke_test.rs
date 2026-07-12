@@ -2,13 +2,13 @@
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use cmc_rs::{
-    ClassicalMC, ClusterModel, FromHamiltonianParams, Hamiltonian, HeisenbergModel, IsingModel,
-    Measurable, MetropolisCore, PottsModel, Proposable, XYModel,
+    ClassicalMC, ClusterModel, FromHamiltonianParams, Hamiltonian, HeisenbergModel, Initializable,
+    IsingModel, Measurable, MetropolisCore, PottsModel, Proposable, XYModel,
 };
 
 fn run_model<M>(extra_params: &[(&str, &str)], n_sites_approx: usize) -> (f64, f64)
 where
-    M: Hamiltonian + Measurable + Proposable + ClusterModel + FromHamiltonianParams,
+    M: Hamiltonian + Initializable + Measurable + Proposable + ClusterModel + FromHamiltonianParams,
 {
     let l = (n_sites_approx as f64).sqrt().round() as usize;
     let mut params = Params::new();

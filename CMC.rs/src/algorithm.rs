@@ -1,222 +1,252 @@
-//! Monte Carlo algorithms — sweep strategies.
+//! Reusable classical Monte Carlo update kernels.
 
 use crate::hamiltonian::{
-    ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable, Proposable,
+    ClusterAuxiliary, ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable,
+    LocalFieldModel, Proposable, Spin,
 };
-use crate::proposal::ProposalStrategy;
+use crate::proposal::{ProposalStrategy, StandardStrategy};
 use crate::system::System;
-use rand::Rng;
-use rand::RngExt;
-use smallvec::{smallvec, SmallVec};
+use rand::{Rng, RngExt};
 
-/// Algorithm trait. One `sweep` = one full pass over the system.
-///
-/// The algorithm is responsible for updating both `system.spins` and `system.energy`.
+/// Carlo.rs lifecycle phase visible to adaptive update kernels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulationPhase {
+    Thermalization,
+    Measurement,
+}
+
+impl SimulationPhase {
+    #[inline]
+    pub const fn allows_adaptation(self) -> bool {
+        matches!(self, Self::Thermalization)
+    }
+}
+
+/// One update policy.  Carlo.rs owns scheduling; CMC.rs owns state transitions.
 pub trait Algorithm<H: Hamiltonian>: Send {
-    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng);
+    fn sweep_with_phase(
+        &mut self,
+        system: &mut System,
+        model: &H,
+        rng: &mut impl Rng,
+        phase: SimulationPhase,
+    );
+
+    /// Direct/manual sweeps default to the frozen measurement kernel.
+    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
+        self.sweep_with_phase(system, model, rng, SimulationPhase::Measurement);
+    }
 
     fn name(&self) -> &'static str {
         "Unknown"
     }
 }
 
-/// Dot product of two equal-length slices.
-#[inline]
-fn dot(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+fn prepare_random_order(order: &mut Vec<usize>, n_sites: usize, rng: &mut impl Rng) {
+    if order.len() != n_sites {
+        order.clear();
+        order.extend(0..n_sites);
+    }
+    for index in (1..n_sites).rev() {
+        let swap_with = rng.random_range(0..=index);
+        order.swap(index, swap_with);
+    }
 }
 
-// ── Metropolis ──────────────────────────────────────────────
+fn checked_probability(value: f64, algorithm: &str) -> f64 {
+    assert!(
+        value.is_finite() && (0.0..=1.0).contains(&value),
+        "{algorithm} model returned invalid bond probability {value}"
+    );
+    value
+}
 
-/// Metropolis algorithm with pluggable proposal strategy.
-///
-/// In one sweep, visits every site once in random order, proposes a new spin,
-/// computes ΔE, and accepts with probability `min(1, exp(-β ΔE))`.
+// ── Metropolis-Hastings ─────────────────────────────────────
+
 #[derive(Debug, Clone)]
-pub struct MetropolisCore<S = crate::proposal::StandardStrategy> {
-    strategy: S,
+pub struct MetropolisCore<S = StandardStrategy> {
+    pub strategy: S,
+    order: Vec<usize>,
+    energy_check_interval: u64,
+    sweeps: u64,
 }
 
-impl MetropolisCore {
+impl MetropolisCore<StandardStrategy> {
     pub fn new() -> Self {
+        Self::with_strategy(StandardStrategy::new())
+    }
+}
+
+impl<S: Default> Default for MetropolisCore<S> {
+    fn default() -> Self {
+        Self::with_strategy(S::default())
+    }
+}
+
+impl<S> MetropolisCore<S> {
+    pub fn with_strategy(strategy: S) -> Self {
         Self {
-            strategy: Default::default(),
+            strategy,
+            order: Vec::new(),
+            energy_check_interval: 0,
+            sweeps: 0,
         }
     }
-}
 
-impl Default for MetropolisCore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<S: Default> MetropolisCore<S> {
-    pub fn with_strategy(strategy: S) -> Self {
-        Self { strategy }
+    /// Periodically replace the cached energy with an exact recomputation.
+    /// Zero (default) disables the check.
+    pub fn with_energy_check_interval(mut self, interval: u64) -> Self {
+        self.energy_check_interval = interval;
+        self
     }
 }
 
 impl<H, S> Algorithm<H> for MetropolisCore<S>
 where
     H: Hamiltonian + Proposable,
-    S: ProposalStrategy<H> + Clone,
+    S: ProposalStrategy<H>,
 {
-    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
-        let n = system.n_sites();
-        let sd = model.spin_dim();
-        let beta = system.beta;
+    fn sweep_with_phase(
+        &mut self,
+        system: &mut System,
+        model: &H,
+        rng: &mut impl Rng,
+        phase: SimulationPhase,
+    ) {
+        let n_sites = system.n_sites();
+        let spin_dim = model.spin_dim();
+        prepare_random_order(&mut self.order, n_sites, rng);
 
-        // Random visit order
-        let mut order: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            let j = rng.random_range(0..=i);
-            order.swap(i, j);
-        }
-
-        for &site in &order {
-            let old_energy = model.local_energy(
-                &system.spins,
-                &system.lattice,
-                site,
-                beta,
-                system.spin_at(site, sd),
+        for &site in &self.order {
+            let proposal = self.strategy.propose(model, system, site, rng);
+            assert_eq!(
+                proposal.spin.len(),
+                spin_dim,
+                "proposal dimension does not match the model"
             );
+            let delta_energy =
+                model.delta_energy(&system.spins, &system.lattice, site, &proposal.spin);
+            assert!(
+                delta_energy.is_finite(),
+                "model returned non-finite delta energy"
+            );
+            assert!(
+                proposal.log_reverse_over_forward.is_finite(),
+                "proposal returned a non-finite Hastings correction"
+            );
+            let log_acceptance = -system.beta * delta_energy + proposal.log_reverse_over_forward;
+            let accepted = log_acceptance >= 0.0
+                || rng.random::<f64>().max(f64::MIN_POSITIVE).ln() < log_acceptance;
 
-            let proposed = self.strategy.propose(model, system, site, rng);
-            let new_energy =
-                model.local_energy(&system.spins, &system.lattice, site, beta, &proposed);
-
-            let delta_e = new_energy - old_energy;
-            let accepted = delta_e <= 0.0 || rng.random::<f64>() < (-beta * delta_e).exp();
-
+            self.strategy.record_result(accepted);
             if accepted {
-                system.spin_at_mut(site, sd).copy_from_slice(&proposed);
-                system.energy += delta_e;
+                system
+                    .spin_at_mut(site, spin_dim)
+                    .copy_from_slice(&proposal.spin);
+                system.energy += delta_energy;
             }
         }
 
-        self.strategy.adapt_after_sweep(model);
+        self.strategy.finish_sweep(phase.allows_adaptation());
+        self.sweeps = self.sweeps.wrapping_add(1);
+        if self.energy_check_interval > 0 && self.sweeps.is_multiple_of(self.energy_check_interval)
+        {
+            system.recompute_energy(model);
+        }
     }
 
     fn name(&self) -> &'static str {
-        "Metropolis"
+        "Metropolis-Hastings"
     }
 }
 
-// ── Wolff Cluster ───────────────────────────────────────────
+// ── Wolff ───────────────────────────────────────────────────
 
-/// Wolff single-cluster algorithm.
-///
-/// For scalar spins (Ising, Potts): grows a cluster from a random seed,
-/// connects aligned neighbors with FK bond probability, flips the cluster.
-///
-/// For vector spins (XY, Heisenberg): uses Wolff embedding — projects spins
-/// onto a random direction, builds FK clusters in the projected Ising variables,
-/// then reflects each spin across the plane perpendicular to the embedding direction.
 #[derive(Debug, Clone, Default)]
-pub struct WolffCore;
+pub struct WolffCore {
+    membership: Vec<bool>,
+    stack: Vec<usize>,
+    members: Vec<usize>,
+}
 
 impl WolffCore {
-    pub fn new() -> Self {
-        Self
+    pub const fn new() -> Self {
+        Self {
+            membership: Vec::new(),
+            stack: Vec::new(),
+            members: Vec::new(),
+        }
     }
 }
 
 impl<H: Hamiltonian + ClusterModel> Algorithm<H> for WolffCore {
-    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
-        let n = system.n_sites();
-        let sd = model.spin_dim();
-        let beta = system.beta;
-        let p_add = model.fk_bond_probability(beta);
+    fn sweep_with_phase(
+        &mut self,
+        system: &mut System,
+        model: &H,
+        rng: &mut impl Rng,
+        _phase: SimulationPhase,
+    ) {
+        let n_sites = system.n_sites();
+        if n_sites == 0 {
+            return;
+        }
+        let spin_dim = model.spin_dim();
+        if self.membership.len() != n_sites {
+            self.membership.resize(n_sites, false);
+        }
+        self.membership.fill(false);
+        self.stack.clear();
+        self.members.clear();
 
-        if sd == 1 {
-            // ── scalar fast path (Ising, Potts) ──
-            let seed = rng.random_range(0..n);
-            let seed_spin = system.spins[seed];
-            let opposite = model.opposite_spin(seed_spin, rng);
+        let seed = rng.random_range(0..n_sites);
+        let seed_spin = system.spin_at(seed, spin_dim).to_vec();
+        let auxiliary = model.wolff_auxiliary(&seed_spin, rng);
+        self.membership[seed] = true;
+        self.stack.push(seed);
 
-            let mut cluster = vec![false; n];
-            let mut stack = vec![seed];
-            cluster[seed] = true;
-
-            while let Some(site) = stack.pop() {
-                for &nb in system.lattice.neighbors(site) {
-                    if cluster[nb] {
-                        continue;
-                    }
-                    let nb_spin = system.spins[nb];
-                    if (nb_spin - seed_spin).abs() > 1e-10 {
-                        continue;
-                    }
-                    if rng.random::<f64>() < p_add {
-                        cluster[nb] = true;
-                        stack.push(nb);
-                    }
+        while let Some(site) = self.stack.pop() {
+            self.members.push(site);
+            let left_base = site * spin_dim;
+            let left = &system.spins[left_base..left_base + spin_dim];
+            for (neighbor, edge_id) in system.lattice.incidences(site) {
+                if self.membership[neighbor] {
+                    continue;
                 }
-            }
-
-            for (site, &in_cluster) in cluster.iter().enumerate() {
-                if in_cluster {
-                    let old_local = model.local_energy(
-                        &system.spins,
-                        &system.lattice,
-                        site,
-                        beta,
-                        system.spin_at(site, sd),
-                    );
-                    let new_spin: SmallVec<[f64; 3]> = smallvec![opposite];
-                    let new_local =
-                        model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin);
-                    system.energy += new_local - old_local;
-                    system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
-                }
-            }
-        } else {
-            // ── embedding path (XY, Heisenberg) ──
-            let direction = model.embedding_direction(rng);
-
-            let seed = rng.random_range(0..n);
-            let seed_spin = system.spin_at(seed, sd);
-            let seed_proj: f64 = dot(seed_spin, &direction);
-
-            // BFS cluster based on projected spins
-            let mut cluster = vec![false; n];
-            let mut stack = vec![seed];
-            cluster[seed] = true;
-
-            while let Some(site) = stack.pop() {
-                for &nb in system.lattice.neighbors(site) {
-                    if cluster[nb] {
-                        continue;
-                    }
-                    let nb_spin = system.spin_at(nb, sd);
-                    let nb_proj: f64 = dot(nb_spin, &direction);
-                    if seed_proj * nb_proj <= 0.0 {
-                        continue;
-                    }
-                    if rng.random::<f64>() < p_add {
-                        cluster[nb] = true;
-                        stack.push(nb);
-                    }
-                }
-            }
-
-            // Reflect spins across plane ⟂ direction
-            for (site, &in_cluster) in cluster.iter().enumerate() {
-                if in_cluster {
-                    let spin = system.spin_at(site, sd);
-                    let old_local =
-                        model.local_energy(&system.spins, &system.lattice, site, beta, spin);
-                    let mut new_spin = SmallVec::<[f64; 3]>::from_slice(spin);
-                    model.reflect(&mut new_spin, &direction);
-                    let new_local =
-                        model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin);
-                    system.energy += new_local - old_local;
-                    system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
+                let right_base = neighbor * spin_dim;
+                let right = &system.spins[right_base..right_base + spin_dim];
+                let probability = checked_probability(
+                    model.cluster_bond_probability(
+                        left,
+                        right,
+                        &system.lattice.edges[edge_id],
+                        &auxiliary,
+                        system.beta,
+                    ),
+                    "Wolff",
+                );
+                if rng.random::<f64>() < probability {
+                    self.membership[neighbor] = true;
+                    self.stack.push(neighbor);
                 }
             }
         }
+
+        for &site in &self.members {
+            let transformed =
+                model.transform_cluster_spin(system.spin_at(site, spin_dim), &auxiliary);
+            assert_eq!(
+                transformed.len(),
+                spin_dim,
+                "cluster transform dimension mismatch"
+            );
+            system
+                .spin_at_mut(site, spin_dim)
+                .copy_from_slice(&transformed);
+        }
+        // Cluster moves touch many sites.  Exact recomputation prevents all
+        // order-dependent local-energy accounting and accumulated drift.
+        system.recompute_energy(model);
     }
 
     fn name(&self) -> &'static str {
@@ -226,148 +256,121 @@ impl<H: Hamiltonian + ClusterModel> Algorithm<H> for WolffCore {
 
 // ── Swendsen-Wang ───────────────────────────────────────────
 
-/// Swendsen-Wang cluster algorithm.
-///
-/// For scalar spins (Ising, Potts): visits all bonds, connects aligned neighbors
-/// with FK bond probability, identifies clusters via union-find, flips each
-/// cluster with 50% probability.
-///
-/// For vector spins (XY, Heisenberg): uses SW embedding — projects spins onto
-/// a random direction, builds FK clusters, flips clusters via spin reflection.
 #[derive(Debug, Clone, Default)]
-pub struct SWCore;
+pub struct SWCore {
+    parent: Vec<usize>,
+    rank: Vec<u8>,
+    root_auxiliary: Vec<Option<ClusterAuxiliary>>,
+}
 
 impl SWCore {
-    pub fn new() -> Self {
-        Self
+    pub const fn new() -> Self {
+        Self {
+            parent: Vec::new(),
+            rank: Vec::new(),
+            root_auxiliary: Vec::new(),
+        }
+    }
+
+    fn reset_union_find(&mut self, n_sites: usize) {
+        self.parent.clear();
+        self.parent.extend(0..n_sites);
+        self.rank.clear();
+        self.rank.resize(n_sites, 0);
+        self.root_auxiliary.clear();
+        self.root_auxiliary.resize(n_sites, None);
+    }
+
+    fn find(&mut self, site: usize) -> usize {
+        let mut root = site;
+        while self.parent[root] != root {
+            root = self.parent[root];
+        }
+        let mut current = site;
+        while self.parent[current] != root {
+            let next = self.parent[current];
+            self.parent[current] = root;
+            current = next;
+        }
+        root
+    }
+
+    fn union(&mut self, left: usize, right: usize) {
+        let left_root = self.find(left);
+        let right_root = self.find(right);
+        if left_root == right_root {
+            return;
+        }
+        match self.rank[left_root].cmp(&self.rank[right_root]) {
+            std::cmp::Ordering::Less => self.parent[left_root] = right_root,
+            std::cmp::Ordering::Greater => self.parent[right_root] = left_root,
+            std::cmp::Ordering::Equal => {
+                self.parent[right_root] = left_root;
+                self.rank[left_root] += 1;
+            }
+        }
     }
 }
 
 impl<H: Hamiltonian + ClusterModel> Algorithm<H> for SWCore {
-    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
-        let n = system.n_sites();
-        let sd = model.spin_dim();
-        let beta = system.beta;
-        let p_add = model.fk_bond_probability(beta);
+    fn sweep_with_phase(
+        &mut self,
+        system: &mut System,
+        model: &H,
+        rng: &mut impl Rng,
+        _phase: SimulationPhase,
+    ) {
+        let n_sites = system.n_sites();
+        let spin_dim = model.spin_dim();
+        self.reset_union_find(n_sites);
+        let bond_auxiliary = model.sw_bond_auxiliary(rng);
 
-        // Union-find
-        let mut parent: Vec<usize> = (0..n).collect();
-        let mut rank = vec![0usize; n];
-
-        fn find(parent: &mut [usize], x: usize) -> usize {
-            let mut px = parent[x];
-            while parent[px] != px {
-                px = parent[px];
-            }
-            let root = px;
-            let mut x = x;
-            while parent[x] != root {
-                let nx = parent[x];
-                parent[x] = root;
-                x = nx;
-            }
-            root
-        }
-
-        fn union(parent: &mut [usize], rank: &mut [usize], a: usize, b: usize) {
-            let ra = find(parent, a);
-            let rb = find(parent, b);
-            if ra == rb {
-                return;
-            }
-            match rank[ra].cmp(&rank[rb]) {
-                std::cmp::Ordering::Less => parent[ra] = rb,
-                std::cmp::Ordering::Greater => parent[rb] = ra,
-                std::cmp::Ordering::Equal => {
-                    parent[rb] = ra;
-                    rank[ra] += 1;
-                }
+        // Physical edges are visited exactly once.
+        for edge in &system.lattice.edges {
+            let left_base = edge.source * spin_dim;
+            let right_base = edge.target * spin_dim;
+            let probability = checked_probability(
+                model.cluster_bond_probability(
+                    &system.spins[left_base..left_base + spin_dim],
+                    &system.spins[right_base..right_base + spin_dim],
+                    edge,
+                    &bond_auxiliary,
+                    system.beta,
+                ),
+                "Swendsen-Wang",
+            );
+            if rng.random::<f64>() < probability {
+                self.union(edge.source, edge.target);
             }
         }
 
-        if sd == 1 {
-            // ── scalar fast path (Ising, Potts) ──
-            for i in 0..n {
-                for &nb in system.lattice.neighbors(i) {
-                    if i >= nb {
-                        continue;
-                    }
-                    if (system.spins[i] - system.spins[nb]).abs() > 1e-10 {
-                        continue;
-                    }
-                    if rng.random::<f64>() < p_add {
-                        union(&mut parent, &mut rank, i, nb);
-                    }
-                }
-            }
-
-            let mut flip_root = vec![false; n];
-            for i in 0..n {
-                if parent[i] == i {
-                    flip_root[i] = rng.random::<bool>();
-                }
-            }
-
-            let new_cluster_spin = model.random_cluster_spin(rng);
-            for site in 0..n {
-                let root = find(&mut parent, site);
-                if flip_root[root] {
-                    let old_local = model.local_energy(
-                        &system.spins,
-                        &system.lattice,
-                        site,
-                        beta,
-                        system.spin_at(site, sd),
-                    );
-                    let new_spin: SmallVec<[f64; 3]> = smallvec![new_cluster_spin];
-                    let new_local =
-                        model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin);
-                    system.energy += new_local - old_local;
-                    system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
-                }
-            }
-        } else {
-            // ── embedding path (XY, Heisenberg) ──
-            let direction = model.embedding_direction(rng);
-
-            for i in 0..n {
-                for &nb in system.lattice.neighbors(i) {
-                    if i >= nb {
-                        continue;
-                    }
-                    let proj_i: f64 = dot(system.spin_at(i, sd), &direction);
-                    let proj_nb: f64 = dot(system.spin_at(nb, sd), &direction);
-                    if proj_i * proj_nb <= 0.0 {
-                        continue;
-                    }
-                    if rng.random::<f64>() < p_add {
-                        union(&mut parent, &mut rank, i, nb);
-                    }
-                }
-            }
-
-            let mut flip_root = vec![false; n];
-            for i in 0..n {
-                if parent[i] == i {
-                    flip_root[i] = rng.random::<bool>();
-                }
-            }
-
-            for site in 0..n {
-                let root = find(&mut parent, site);
-                if flip_root[root] {
-                    let spin = system.spin_at(site, sd);
-                    let old_local =
-                        model.local_energy(&system.spins, &system.lattice, site, beta, spin);
-                    let mut new_spin = SmallVec::<[f64; 3]>::from_slice(spin);
-                    model.reflect(&mut new_spin, &direction);
-                    let new_local =
-                        model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin);
-                    system.energy += new_local - old_local;
-                    system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
-                }
+        // Every root receives an independent target/reflection decision.
+        for site in 0..n_sites {
+            let root = self.find(site);
+            if self.root_auxiliary[root].is_none() {
+                let representative = system.spin_at(site, spin_dim).to_vec();
+                self.root_auxiliary[root] =
+                    Some(model.sw_cluster_auxiliary(&representative, &bond_auxiliary, rng));
             }
         }
+
+        for site in 0..n_sites {
+            let root = self.find(site);
+            let auxiliary = self.root_auxiliary[root]
+                .as_ref()
+                .expect("SW root transformation must be initialized");
+            let transformed =
+                model.transform_cluster_spin(system.spin_at(site, spin_dim), auxiliary);
+            assert_eq!(
+                transformed.len(),
+                spin_dim,
+                "cluster transform dimension mismatch"
+            );
+            system
+                .spin_at_mut(site, spin_dim)
+                .copy_from_slice(&transformed);
+        }
+        system.recompute_energy(model);
     }
 
     fn name(&self) -> &'static str {
@@ -375,76 +378,58 @@ impl<H: Hamiltonian + ClusterModel> Algorithm<H> for SWCore {
     }
 }
 
-// ── Microcanonical Over-Relaxation ───────────────────────────
+// ── Exact microcanonical over-relaxation ────────────────────
 
-/// Reflect a spin across the unit vector of the local field.
-///
-/// `s_new = 2 (s·ĥ) ĥ - s`. Energy is exactly preserved (ΔE = 0).
-/// Works for any spin dimension (XY: sd=2, Heisenberg: sd=3).
-#[inline]
-fn reflect_spin(spin: &[f64], local_field: &[f64], sd: usize) -> SmallVec<[f64; 3]> {
-    let h_norm: f64 = local_field.iter().map(|&x| x * x).sum::<f64>().sqrt();
-    if h_norm < 1e-12 {
-        return SmallVec::from_slice(spin);
-    }
-    let h_hat: SmallVec<[f64; 3]> = local_field.iter().map(|&x| x / h_norm).collect();
-    let s_dot_h: f64 = spin.iter().zip(&h_hat).map(|(&s, &h)| s * h).sum();
-    let mut new = SmallVec::from_elem(0.0, sd);
-    for k in 0..sd {
-        new[k] = 2.0 * s_dot_h * h_hat[k] - spin[k];
-    }
-    new
-}
-
-/// Microcanonical over-relaxation algorithm.
-///
-/// Visits every site once in random order and reflectes each spin across the
-/// local field direction. Energy is exactly preserved — no acceptance step
-/// needed. For XY and Heisenberg models. Mix with Metropolis/HeatBath sweeps
-/// (typically 1 ergodic + 4-10 OR sweeps) to reduce critical slowing down.
 #[derive(Debug, Clone, Default)]
-pub struct MicrocanonicalCore;
+pub struct MicrocanonicalCore {
+    order: Vec<usize>,
+    field: Vec<f64>,
+}
 
 impl MicrocanonicalCore {
-    pub fn new() -> Self {
-        Self
+    pub const fn new() -> Self {
+        Self {
+            order: Vec::new(),
+            field: Vec::new(),
+        }
     }
 }
 
-impl<H: Hamiltonian + Proposable> Algorithm<H> for MicrocanonicalCore {
-    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
-        let n = system.n_sites();
-        let sd = model.spin_dim();
+impl<H: Hamiltonian + LocalFieldModel> Algorithm<H> for MicrocanonicalCore {
+    fn sweep_with_phase(
+        &mut self,
+        system: &mut System,
+        model: &H,
+        rng: &mut impl Rng,
+        _phase: SimulationPhase,
+    ) {
+        let n_sites = system.n_sites();
+        let spin_dim = model.spin_dim();
+        prepare_random_order(&mut self.order, n_sites, rng);
+        self.field.resize(spin_dim, 0.0);
 
-        // Random visit order
-        let mut order: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            let j = rng.random_range(0..=i);
-            order.swap(i, j);
-        }
-
-        for &site in &order {
-            // Compute local field from neighbors
-            let mut h = vec![0.0; sd];
-            for &nb in system.lattice.neighbors(site) {
-                let base = nb * sd;
-                for (k, hk) in h.iter_mut().enumerate() {
-                    *hk += system.spins[base + k];
-                }
+        for &site in &self.order {
+            model.local_field(&system.spins, &system.lattice, site, &mut self.field);
+            let norm_squared = self.field.iter().map(|value| value * value).sum::<f64>();
+            if norm_squared < 1e-28 {
+                continue;
             }
-
-            let old = system.spin_at(site, sd).to_vec();
-            let reflected = reflect_spin(&old, &h, sd);
-            let reflected_norm: f64 = reflected.iter().map(|&x| x * x).sum::<f64>().sqrt();
-
-            // Normalize and write back
-            let inv_norm = 1.0 / reflected_norm.max(1e-15);
-            let spin = system.spin_at_mut(site, sd);
-            for (k, s) in spin.iter_mut().enumerate() {
-                *s = reflected.get(k).copied().unwrap_or(0.0) * inv_norm;
+            let old = system.spin_at(site, spin_dim).to_vec();
+            let projection = old
+                .iter()
+                .zip(&self.field)
+                .map(|(spin, field)| spin * field)
+                .sum::<f64>()
+                / norm_squared;
+            let mut reflected = Spin::from_slice(&old);
+            for component in 0..spin_dim {
+                reflected[component] = 2.0 * projection * self.field[component] - old[component];
             }
+            system
+                .spin_at_mut(site, spin_dim)
+                .copy_from_slice(&reflected);
         }
-        // Energy is exactly preserved — no update needed
+        system.recompute_energy(model);
     }
 
     fn name(&self) -> &'static str {
@@ -452,118 +437,44 @@ impl<H: Hamiltonian + Proposable> Algorithm<H> for MicrocanonicalCore {
     }
 }
 
-// ── Continuous Heat-Bath ──────────────────────────────────────
+// ── Heat bath ───────────────────────────────────────────────
 
-/// Continuous-spin heat-bath algorithm.
-///
-/// For XY and Heisenberg models. Visits every site once in random order and
-/// samples a new spin from the equilibrium distribution P(s_i | neighbors)
-/// using exact inverse-CDF (Heisenberg) or Best-Fisher rejection (XY).
 #[derive(Debug, Clone, Default)]
-pub struct ContinuousHeatBathCore;
-
-impl ContinuousHeatBathCore {
-    pub fn new() -> Self {
-        Self
-    }
+pub struct HeatBathCore {
+    order: Vec<usize>,
 }
-
-impl<H: Hamiltonian + ContinuousHeatBathable> Algorithm<H> for ContinuousHeatBathCore {
-    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
-        let n = system.n_sites();
-        let sd = model.spin_dim();
-        let beta = system.beta;
-
-        let mut order: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            let j = rng.random_range(0..=i);
-            order.swap(i, j);
-        }
-
-        for &site in &order {
-            let old_spin = system.spin_at(site, sd).to_vec();
-            let old_energy =
-                model.local_energy(&system.spins, &system.lattice, site, beta, &old_spin);
-
-            // Collect neighbor spins as flat slice
-            let nbs: Vec<f64> = system
-                .lattice
-                .neighbors(site)
-                .iter()
-                .flat_map(|&nb| {
-                    let base = nb * sd;
-                    system.spins[base..base + sd].to_vec()
-                })
-                .collect();
-
-            let new_spin = model.heat_bath_sample(&nbs, beta, rng);
-            let new_energy =
-                model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin);
-
-            system.energy += new_energy - old_energy;
-            system.spin_at_mut(site, sd).copy_from_slice(&new_spin);
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        "ContinuousHeatBath"
-    }
-}
-
-// ── Heat-Bath (Glauber Dynamics) ─────────────────────────────
-
-/// Heat-bath (Glauber dynamics) algorithm.
-///
-/// Visits every site once in random order and directly samples a new spin
-/// from the equilibrium distribution P(s_i) ∝ exp(-β E(s_i | neighbors)),
-/// with no Metropolis rejection step. Exact for scalar discrete models
-/// (Ising, Potts).
-#[derive(Debug, Clone, Default)]
-pub struct HeatBathCore;
 
 impl HeatBathCore {
-    pub fn new() -> Self {
-        Self
+    pub const fn new() -> Self {
+        Self { order: Vec::new() }
     }
 }
 
 impl<H: Hamiltonian + HeatBathable> Algorithm<H> for HeatBathCore {
-    fn sweep(&mut self, system: &mut System, model: &H, rng: &mut impl Rng) {
-        let n = system.n_sites();
-        let beta = system.beta;
-
-        // Random visit order
-        let mut order: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            let j = rng.random_range(0..=i);
-            order.swap(i, j);
-        }
-
-        for &site in &order {
-            // Collect neighbor spins
-            let nbs: Vec<f64> = system
-                .lattice
-                .neighbors(site)
-                .iter()
-                .map(|&nb| system.spins[nb])
-                .collect();
-
-            let old_energy = model.local_energy(
-                &system.spins,
-                &system.lattice,
-                site,
-                beta,
-                system.spin_at(site, 1),
+    fn sweep_with_phase(
+        &mut self,
+        system: &mut System,
+        model: &H,
+        rng: &mut impl Rng,
+        _phase: SimulationPhase,
+    ) {
+        let n_sites = system.n_sites();
+        let spin_dim = model.spin_dim();
+        prepare_random_order(&mut self.order, n_sites, rng);
+        for &site in &self.order {
+            let proposed =
+                model.heat_bath_sample_site(&system.spins, &system.lattice, site, system.beta, rng);
+            assert_eq!(
+                proposed.len(),
+                spin_dim,
+                "heat-bath sample dimension mismatch"
             );
-
-            let weights = model.boltzmann_weights(&nbs, beta);
-            let new_val = model.sample_spin(&weights, rng);
-            let new_spin_arr = [new_val];
-            let new_energy =
-                model.local_energy(&system.spins, &system.lattice, site, beta, &new_spin_arr);
-
-            system.energy += new_energy - old_energy;
-            system.spins[site] = new_val;
+            let delta = model.delta_energy(&system.spins, &system.lattice, site, &proposed);
+            assert!(delta.is_finite(), "model returned non-finite delta energy");
+            system
+                .spin_at_mut(site, spin_dim)
+                .copy_from_slice(&proposed);
+            system.energy += delta;
         }
     }
 
@@ -572,413 +483,169 @@ impl<H: Hamiltonian + HeatBathable> Algorithm<H> for HeatBathCore {
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────
+#[derive(Debug, Clone, Default)]
+pub struct ContinuousHeatBathCore {
+    order: Vec<usize>,
+}
+
+impl ContinuousHeatBathCore {
+    pub const fn new() -> Self {
+        Self { order: Vec::new() }
+    }
+}
+
+impl<H: Hamiltonian + ContinuousHeatBathable> Algorithm<H> for ContinuousHeatBathCore {
+    fn sweep_with_phase(
+        &mut self,
+        system: &mut System,
+        model: &H,
+        rng: &mut impl Rng,
+        _phase: SimulationPhase,
+    ) {
+        let n_sites = system.n_sites();
+        let spin_dim = model.spin_dim();
+        prepare_random_order(&mut self.order, n_sites, rng);
+        for &site in &self.order {
+            let proposed =
+                model.heat_bath_sample_site(&system.spins, &system.lattice, site, system.beta, rng);
+            assert_eq!(
+                proposed.len(),
+                spin_dim,
+                "heat-bath sample dimension mismatch"
+            );
+            let delta = model.delta_energy(&system.spins, &system.lattice, site, &proposed);
+            assert!(delta.is_finite(), "model returned non-finite delta energy");
+            system
+                .spin_at_mut(site, spin_dim)
+                .copy_from_slice(&proposed);
+            system.energy += delta;
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "ContinuousHeatBath"
+    }
+}
+
+// ── Hybrid composition ──────────────────────────────────────
+
+/// Statically composed hybrid update without trait-object overhead.
+#[derive(Debug, Clone)]
+pub struct HybridCore<A, B> {
+    pub first: A,
+    pub second: B,
+    pub first_repetitions: usize,
+    pub second_repetitions: usize,
+}
+
+impl<A, B> HybridCore<A, B> {
+    pub fn new(first: A, second: B) -> Self {
+        Self {
+            first,
+            second,
+            first_repetitions: 1,
+            second_repetitions: 1,
+        }
+    }
+
+    pub fn repetitions(mut self, first: usize, second: usize) -> Self {
+        self.first_repetitions = first;
+        self.second_repetitions = second;
+        self
+    }
+}
+
+impl<H, A, B> Algorithm<H> for HybridCore<A, B>
+where
+    H: Hamiltonian,
+    A: Algorithm<H>,
+    B: Algorithm<H>,
+{
+    fn sweep_with_phase(
+        &mut self,
+        system: &mut System,
+        model: &H,
+        rng: &mut impl Rng,
+        phase: SimulationPhase,
+    ) {
+        for _ in 0..self.first_repetitions {
+            self.first.sweep_with_phase(system, model, rng, phase);
+        }
+        for _ in 0..self.second_repetitions {
+            self.second.sweep_with_phase(system, model, rng, phase);
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "Hybrid"
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lattice::build_chain;
-    use crate::models::{HeisenbergModel, IsingModel, PottsModel, XYModel};
+    use crate::models::{IsingModel, PottsModel, XYModel};
     use rand::SeedableRng;
 
-    fn make_rng() -> rand_xoshiro::Xoshiro256PlusPlus {
+    fn rng() -> rand_xoshiro::Xoshiro256PlusPlus {
         rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42)
     }
 
-    /// Check that all XY/Heisenberg spins are approximately parallel.
-    fn all_aligned(spins: &[f64], sd: usize) -> bool {
-        let ref_spin = &spins[..sd];
-        for chunk in spins.chunks(sd) {
-            let d: f64 = dot(ref_spin, chunk);
-            if d < 0.99 {
-                return false;
-            }
-        }
-        true
-    }
-
     #[test]
-    fn test_metropolis_single_site() {
-        let lattice = build_chain(1, false);
-        let mut system = System::new(lattice, 1, 1.0, 1.0);
-        system.energy = 0.0;
-
+    fn metropolis_cache_matches_exact_energy() {
         let model = IsingModel::new(1.0);
-        let mut algo = MetropolisCore::new();
-        let mut rng = make_rng();
-
+        let mut system = System::new(build_chain(8, true), 1, 1.0, 0.8);
+        system.recompute_energy(&model);
+        let mut algorithm = MetropolisCore::new();
+        let mut random = rng();
         for _ in 0..100 {
-            algo.sweep(&mut system, &model, &mut rng);
+            algorithm.sweep(&mut system, &model, &mut random);
         }
-        assert!((system.energy - 0.0).abs() < 1e-10);
+        assert!(system.energy_error(&model).abs() < 1e-10);
     }
 
     #[test]
-    fn test_metropolis_cools_to_ground() {
-        let lattice = build_chain(4, true);
-        let model = IsingModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 1, 1.0, 10.0); // beta = 10, very cold
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let mut algo = MetropolisCore::new();
-        let mut rng = make_rng();
-
-        for _ in 0..500 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        assert!(system.energy < -3.5);
-        let all_same = system.spins.iter().all(|&s| s == system.spins[0]);
-        assert!(all_same);
-    }
-
-    #[test]
-    fn test_wolff_preserves_energy_sign() {
-        // At low T, Wolff should maintain ferromagnetic order
-        let lattice = build_chain(8, true);
-        let model = IsingModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 1, 1.0, 5.0); // beta=5, cold
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let mut algo = WolffCore::new();
-        let mut rng = make_rng();
-
-        for _ in 0..100 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        // After Wolff at low T, all spins should be aligned (cluster covers system)
-        let all_same = system.spins.iter().all(|&s| s == system.spins[0]);
-        assert!(all_same);
-        assert!(system.energy < -7.0); // all aligned, 8 bonds × -J = -8
-    }
-
-    #[test]
-    fn test_sw_preserves_energy_sign() {
-        let lattice = build_chain(8, true);
-        let model = IsingModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 1, 1.0, 5.0);
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let mut algo = SWCore::new();
-        let mut rng = make_rng();
-
-        for _ in 0..100 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        // SW at high β should converge to all aligned
-        let all_same = system.spins.iter().all(|&s| s == system.spins[0]);
-        assert!(all_same);
-        assert!(system.energy < -7.0);
-    }
-
-    // ── Embedding tests (XY / Heisenberg) ──────────────────
-
-    #[test]
-    fn test_wolff_xy_single_site() {
-        let lattice = build_chain(1, false);
-        let mut system = System::new(lattice, 2, 1.0, 1.0);
-        system.energy = 0.0;
-
+    fn wolff_on_energy_is_exact_after_batch_move() {
         let model = XYModel::new(1.0);
-        let mut algo = WolffCore::new();
-        let mut rng = make_rng();
-
-        for _ in 0..50 {
-            algo.sweep(&mut system, &model, &mut rng);
+        let mut system = System::new(build_chain(8, true), 2, 0.0, 1.0);
+        for spin in system.spins.chunks_exact_mut(2) {
+            spin[0] = 1.0;
         }
-        assert!((system.energy - 0.0).abs() < 1e-10);
+        system.recompute_energy(&model);
+        let mut algorithm = WolffCore::new();
+        let mut random = rng();
+        for _ in 0..20 {
+            algorithm.sweep(&mut system, &model, &mut random);
+            assert!(system.energy_error(&model).abs() < 1e-10);
+        }
     }
 
     #[test]
-    fn test_wolff_xy_cools_to_ground() {
-        let lattice = build_chain(4, true);
+    fn sw_potts_assigns_valid_independent_states() {
+        let model = PottsModel::new(1.0, 5);
+        let mut system = System::new(build_chain(16, false), 1, 0.0, 0.0);
+        system.recompute_energy(&model);
+        let mut algorithm = SWCore::new();
+        let mut random = rng();
+        algorithm.sweep(&mut system, &model, &mut random);
+        assert!(system.spins.iter().all(|spin| (0.0..5.0).contains(spin)));
+        // beta=0 forms singleton clusters; independent assignments should
+        // almost surely produce more than one state with this fixed seed.
+        assert!(system.spins.windows(2).any(|pair| pair[0] != pair[1]));
+    }
+
+    #[test]
+    fn microcanonical_preserves_on_energy() {
         let model = XYModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 2, 1.0, 10.0);
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let mut algo = WolffCore::new();
-        let mut rng = make_rng();
-
-        for _ in 0..800 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        // At high beta, XY spins should align: 4 bonds × -J = -4
-        assert!(system.energy < -3.5);
-        assert!(all_aligned(&system.spins, 2));
-    }
-
-    #[test]
-    fn test_wolff_heisenberg_cools_to_ground() {
-        let lattice = build_chain(4, true);
-        let model = HeisenbergModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 3, 1.0, 10.0);
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let mut algo = WolffCore::new();
-        let mut rng = make_rng();
-
-        for _ in 0..800 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        assert!(system.energy < -3.5);
-        assert!(all_aligned(&system.spins, 3));
-    }
-
-    #[test]
-    fn test_sw_xy_cools_to_ground() {
-        let lattice = build_chain(8, true);
-        let model = XYModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 2, 1.0, 5.0);
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let mut algo = SWCore::new();
-        let mut rng = make_rng();
-
-        for _ in 0..500 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        assert!(system.energy < -7.0);
-        assert!(all_aligned(&system.spins, 2));
-    }
-
-    #[test]
-    fn test_sw_heisenberg_cools_to_ground() {
-        let lattice = build_chain(8, true);
-        let model = HeisenbergModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 3, 1.0, 5.0);
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let mut algo = SWCore::new();
-        let mut rng = make_rng();
-
-        for _ in 0..500 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        assert!(system.energy < -7.0);
-        assert!(all_aligned(&system.spins, 3));
-    }
-
-    #[test]
-    fn test_heat_bath_ising_cools_to_ground() {
-        let lattice = build_chain(8, true);
-        let model = IsingModel::new(1.0);
-        // Start random, beta=5 (cold)
-        let mut system = System::new(lattice, 1, 1.0, 5.0);
-        let mut rng = make_rng();
-        // Randomize initial spins
-        for i in 0..system.n_sites() {
-            system.spins[i] = if rng.random::<bool>() { 1.0 } else { -1.0 };
-        }
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let mut algo = HeatBathCore::new();
-        for _ in 0..200 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-        // At beta=5, should converge to ground state (all aligned)
-        assert!(system.energy < -7.0, "energy = {}", system.energy);
-    }
-
-    // ── Microcanonical over-relaxation tests ───────────────────
-
-    #[test]
-    fn test_microcanonical_xy_energy_preserved() {
-        let lattice = build_chain(4, true);
-        let model = XYModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 2, 0.0, 1.0);
-
-        // Manual spin config: alternating (0°, 180°), not ground state
-        // site 0: (1,0), site 1: (-1,0), site 2: (1,0), site 3: (-1,0)
-        let spins_init: Vec<f64> = vec![1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0];
-        system.spins.copy_from_slice(&spins_init);
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let energy_before = system.energy;
-        let mut algo = MicrocanonicalCore::new();
-        let mut rng = make_rng();
-
-        for _ in 0..10 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        let energy_after = system.energy;
-        assert!(
-            (energy_after - energy_before).abs() < 1e-10,
-            "energy should be preserved: before={}, after={}",
-            energy_before,
-            energy_after
-        );
-    }
-
-    #[test]
-    fn test_microcanonical_heisenberg_energy_preserved() {
-        let lattice = build_chain(4, true);
-        let model = HeisenbergModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 3, 0.0, 1.0);
-
-        // Manual 3D config
-        #[rustfmt::skip]
-        let spins_init: Vec<f64> = vec![
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0,
-            -1.0, 0.0, 0.0,
-        ];
-        system.spins.copy_from_slice(&spins_init);
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let energy_before = system.energy;
-        let mut algo = MicrocanonicalCore::new();
-        let mut rng = make_rng();
-
-        for _ in 0..10 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        let energy_after = system.energy;
-        assert!(
-            (energy_after - energy_before).abs() < 1e-10,
-            "energy should be preserved: before={}, after={}",
-            energy_before,
-            energy_after
-        );
-    }
-
-    #[test]
-    fn test_microcanonical_spins_change() {
-        // Verify that microcanonical sweep actually changes spins
-        // (i.e., it's not a no-op)
-        let lattice = build_chain(8, true);
-        let model = XYModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 2, 0.0, 1.0);
-
-        // Random initial spins
-        let mut rng = make_rng();
-        for i in 0..system.n_sites() {
-            let angle: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
-            system.spins[2 * i] = angle.cos();
-            system.spins[2 * i + 1] = angle.sin();
-        }
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let spins_before = system.spins.clone();
-        let energy_before = system.energy;
-        let mut algo = MicrocanonicalCore::new();
-
-        for _ in 0..5 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        // Spins should have changed from the initial random config
-        let changed = spins_before
-            .iter()
-            .zip(&system.spins)
-            .any(|(a, b)| (a - b).abs() > 1e-10);
-        assert!(changed, "spins should change during microcanonical sweep");
-
-        // Energy must still be preserved
-        assert!(
-            (system.energy - energy_before).abs() < 1e-10,
-            "energy preserved even with spin changes"
-        );
-    }
-
-    // ── Continuous heat-bath tests ──────────────────────────
-
-    #[test]
-    fn test_continuous_heat_bath_xy_cools() {
-        let lattice = build_chain(8, true);
-        let model = XYModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 2, 0.0, 5.0); // beta=5 cold
-        let mut rng = make_rng();
-        // Random initial spins on S¹
-        for i in 0..system.n_sites() {
-            let angle: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
-            system.spins[2 * i] = angle.cos();
-            system.spins[2 * i + 1] = angle.sin();
-        }
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let energy_before = system.energy;
-        let mut algo = ContinuousHeatBathCore::new();
-
-        for _ in 0..200 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        // At beta=5, should order: e/site < -0.7
-        let e_per_site = system.energy / system.n_sites() as f64;
-        assert!(
-            e_per_site < -0.7,
-            "XY heat-bath should cool: e/site = {:.4}",
-            e_per_site
-        );
-        assert!(
-            system.energy < energy_before,
-            "energy should decrease from random state"
-        );
-    }
-
-    #[test]
-    fn test_continuous_heat_bath_heisenberg_cools() {
-        let lattice = build_chain(8, true);
-        let model = HeisenbergModel::new(1.0);
-        let mut system = System::new(lattice.clone(), 3, 0.0, 5.0);
-        let mut rng = make_rng();
-        // Random initial spins on S²
-        for i in 0..system.n_sites() {
-            let z: f64 = rng.random::<f64>() * 2.0 - 1.0;
-            let sin_theta = (1.0 - z * z).sqrt();
-            let phi: f64 = rng.random::<f64>() * 2.0 * std::f64::consts::PI;
-            system.spins[3 * i] = sin_theta * phi.cos();
-            system.spins[3 * i + 1] = sin_theta * phi.sin();
-            system.spins[3 * i + 2] = z;
-        }
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let energy_before = system.energy;
-        let mut algo = ContinuousHeatBathCore::new();
-
-        for _ in 0..200 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-
-        // At beta=5, should order: 8 bonds × -J = -8, e/site < -0.7
-        let e_per_site = system.energy / system.n_sites() as f64;
-        assert!(
-            e_per_site < -0.7,
-            "Heisenberg heat-bath should cool: e/site = {:.4}",
-            e_per_site
-        );
-        assert!(
-            system.energy < energy_before,
-            "energy should decrease from random state"
-        );
-    }
-
-    #[test]
-    fn test_heat_bath_potts_cools_to_ground() {
-        let lattice = build_chain(8, true);
-        let model = PottsModel::new(1.0, 3);
-        let mut system = System::new(lattice, 1, 0.0, 5.0);
-        let mut rng = make_rng();
-        // Randomize initial spins
-        for i in 0..system.n_sites() {
-            system.spins[i] = rng.random_range(0..3) as f64;
-        }
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-
-        let mut algo = HeatBathCore::new();
-        for _ in 0..200 {
-            algo.sweep(&mut system, &model, &mut rng);
-        }
-        // At beta=5, should converge (all same state, energy = -8)
-        assert!(system.energy < -6.0, "energy = {}", system.energy);
+        let mut system = System::new(build_chain(4, true), 2, 0.0, 1.0);
+        system
+            .spins
+            .copy_from_slice(&[1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0]);
+        system.recompute_energy(&model);
+        let before = system.energy;
+        let mut algorithm = MicrocanonicalCore::new();
+        algorithm.sweep(&mut system, &model, &mut rng());
+        assert!((system.energy - before).abs() < 1e-10);
     }
 }

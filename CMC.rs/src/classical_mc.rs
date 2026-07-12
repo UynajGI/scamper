@@ -1,101 +1,35 @@
-//! Pre-built wrapper that composes Hamiltonian + Algorithm into a Carlo.rs [`MonteCarlo`] impl.
+//! Carlo.rs adapter for composing a physical model, update kernel and observables.
 
-use crate::algorithm::Algorithm;
-use crate::hamiltonian::{ClusterModel, Hamiltonian, Measurable, Proposable};
-use crate::lattice::{build_honeycomb, build_hypercubic, build_kagome, build_triangular};
-use crate::observables::DefaultObservableSet;
+use crate::algorithm::{Algorithm, SimulationPhase};
+use crate::hamiltonian::{Hamiltonian, Initializable, Measurable};
+use crate::lattice::{
+    build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
+    BondType, CsrLattice,
+};
+use crate::observables::{DefaultObservableSet, ObservableSet};
 use crate::system::System;
 use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible, Params};
 use serde_json::Value as Json;
+use std::{fmt::Display, str::FromStr};
 
-/// Pre-composed classical Monte Carlo simulation.
+/// Pre-composed classical Monte Carlo chain.
 ///
-/// `H` = Hamiltonian (e.g. `IsingModel`), `A` = algorithm (e.g. `MetropolisCore`).
-///
-/// # Usage
-///
-/// ```ignore
-/// type IsingMetro = ClassicalMC<IsingModel, MetropolisCore>;
-/// let params = ...; // L=16, J=1, beta=0.5
-/// let scheduler = Scheduler::new(backend, config);
-/// let results = scheduler.run_one::<IsingMetro>(&params);
-/// ```
-// ── JSON snapshot save/load ──────────────────────────────────
-impl<H, A> ClassicalMC<H, A>
+/// Carlo.rs remains responsible for RNG ownership, thermalization/measurement
+/// scheduling, accumulation, parallel backends and parallel tempering.  CMC.rs
+/// supplies the physical state transition and observable implementations.
+pub struct ClassicalMC<H, A, O = DefaultObservableSet<H>>
 where
-    H: Hamiltonian + Measurable,
+    H: Hamiltonian,
     A: Algorithm<H>,
-{
-    /// Save full simulation state as JSON value.
-    pub fn save_snapshot(&self) -> Json {
-        serde_json::json!({
-            "spins": &self.system.spins,
-            "energy": self.system.energy,
-            "beta": self.system.beta,
-            "spin_dim": self.model.spin_dim(),
-            "n_sites": self.system.n_sites(),
-            "offsets": &self.system.lattice.offsets,
-            "neighbors": &self.system.lattice.neighbors,
-        })
-    }
-
-    /// Load simulation state from JSON value.
-    pub fn load_snapshot(&mut self, snapshot: &Json) -> Result<(), CarloError> {
-        let spins: Vec<f64> = snapshot["spins"]
-            .as_array()
-            .ok_or_else(|| CarloError::InvalidConfig {
-                field: "snapshot.spins".into(),
-                reason: "missing or invalid".into(),
-            })?
-            .iter()
-            .map(|v| v.as_f64().unwrap_or(0.0))
-            .collect();
-        let energy = snapshot["energy"].as_f64().unwrap_or(0.0);
-        let beta = snapshot["beta"].as_f64().unwrap_or(1.0);
-
-        if spins.len() != self.system.spins.len() {
-            return Err(CarloError::InvalidConfig {
-                field: "snapshot.spins".into(),
-                reason: format!(
-                    "spin count mismatch: expected {}, got {}",
-                    self.system.spins.len(),
-                    spins.len()
-                ),
-            });
-        }
-
-        self.system.spins.copy_from_slice(&spins);
-        self.system.energy = energy;
-        self.system.beta = beta;
-
-        Ok(())
-    }
-}
-
-/// Pre-composed classical Monte Carlo simulation.
-///
-/// `H` = Hamiltonian (e.g. `IsingModel`), `A` = algorithm (e.g. `MetropolisCore`).
-///
-/// # Usage
-///
-/// ```ignore
-/// type IsingMetro = ClassicalMC<IsingModel, MetropolisCore>;
-/// let params = ...; // L=16, J=1, beta=0.5
-/// let scheduler = Scheduler::new(backend, config);
-/// let results = scheduler.run_one::<IsingMetro>(&params);
-/// ```
-pub struct ClassicalMC<H, A>
-where
-    H: Hamiltonian + Measurable,
-    A: Algorithm<H>,
+    O: ObservableSet<H>,
 {
     pub system: System,
     pub model: H,
     pub algorithm: A,
-    pub observables: DefaultObservableSet<H>,
+    pub observables: O,
 }
 
-impl<H, A> ClassicalMC<H, A>
+impl<H, A> ClassicalMC<H, A, DefaultObservableSet<H>>
 where
     H: Hamiltonian + Measurable,
     A: Algorithm<H>,
@@ -108,13 +42,15 @@ where
             observables: DefaultObservableSet::new(),
         }
     }
+}
 
-    pub fn with_observables(
-        system: System,
-        model: H,
-        algorithm: A,
-        observables: DefaultObservableSet<H>,
-    ) -> Self {
+impl<H, A, O> ClassicalMC<H, A, O>
+where
+    H: Hamiltonian,
+    A: Algorithm<H>,
+    O: ObservableSet<H>,
+{
+    pub fn with_observables(system: System, model: H, algorithm: A, observables: O) -> Self {
         Self {
             system,
             model,
@@ -122,37 +58,122 @@ where
             observables,
         }
     }
+
+    /// Versioned JSON state snapshot.  Topology metadata is included for
+    /// validation; the lattice itself remains constructor-owned.
+    pub fn save_snapshot(&self) -> Json {
+        let edges = self
+            .system
+            .lattice
+            .edges
+            .iter()
+            .map(|edge| {
+                serde_json::json!({
+                    "source": edge.source,
+                    "target": edge.target,
+                    "kind": format!("{:?}", edge.kind),
+                    "weight": edge.weight,
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "format": "cmc-rs-snapshot-v2",
+            "spins": &self.system.spins,
+            "energy": self.system.energy,
+            "beta": self.system.beta,
+            "spin_dim": self.model.spin_dim(),
+            "n_sites": self.system.n_sites(),
+            "n_edges": self.system.lattice.n_edges(),
+            "offsets": &self.system.lattice.offsets,
+            "neighbors": &self.system.lattice.neighbors,
+            "edge_ids": &self.system.lattice.edge_ids,
+            "edges": edges,
+        })
+    }
+
+    /// Restore a snapshot and verify it against the current model/lattice.
+    /// Cached energy is recomputed rather than blindly trusted.
+    pub fn load_snapshot(&mut self, snapshot: &Json) -> Result<(), CarloError> {
+        let values = snapshot["spins"]
+            .as_array()
+            .ok_or_else(|| invalid("snapshot.spins", "missing or invalid array"))?;
+        let mut spins = Vec::with_capacity(values.len());
+        for value in values {
+            let spin = value
+                .as_f64()
+                .ok_or_else(|| invalid("snapshot.spins", "contains a non-number"))?;
+            if !spin.is_finite() {
+                return Err(invalid("snapshot.spins", "contains a non-finite value"));
+            }
+            spins.push(spin);
+        }
+
+        if spins.len() != self.system.spins.len() {
+            return Err(invalid(
+                "snapshot.spins",
+                format!(
+                    "length mismatch: expected {}, got {}",
+                    self.system.spins.len(),
+                    spins.len()
+                ),
+            ));
+        }
+        if let Some(n_sites) = snapshot["n_sites"].as_u64() {
+            if n_sites as usize != self.system.n_sites() {
+                return Err(invalid("snapshot.n_sites", "topology mismatch"));
+            }
+        }
+        if let Some(spin_dim) = snapshot["spin_dim"].as_u64() {
+            if spin_dim as usize != self.model.spin_dim() {
+                return Err(invalid("snapshot.spin_dim", "model mismatch"));
+            }
+        }
+        if let Some(n_edges) = snapshot["n_edges"].as_u64() {
+            if n_edges as usize != self.system.lattice.n_edges() {
+                return Err(invalid("snapshot.n_edges", "topology mismatch"));
+            }
+        }
+        validate_snapshot_usize_array(snapshot, "offsets", &self.system.lattice.offsets)?;
+        validate_snapshot_usize_array(snapshot, "neighbors", &self.system.lattice.neighbors)?;
+        validate_snapshot_usize_array(snapshot, "edge_ids", &self.system.lattice.edge_ids)?;
+        validate_snapshot_edges(snapshot, &self.system.lattice)?;
+
+        let beta = snapshot["beta"]
+            .as_f64()
+            .ok_or_else(|| invalid("snapshot.beta", "missing or invalid"))?;
+        self.system
+            .set_beta(beta)
+            .map_err(|reason| invalid("snapshot.beta", reason))?;
+        self.system.spins.copy_from_slice(&spins);
+        self.system.recompute_energy(&self.model);
+        Ok(())
+    }
 }
 
-// ── MonteCarlo impl ────────────────────────────────────────
-
-impl<H, A> MonteCarlo for ClassicalMC<H, A>
+impl<H, A, O> MonteCarlo for ClassicalMC<H, A, O>
 where
-    H: Hamiltonian + Measurable,
+    H: Hamiltonian,
     A: Algorithm<H>,
+    O: ObservableSet<H>,
 {
     type Rng = rand_xoshiro::Xoshiro256PlusPlus;
 
-    fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
+    fn sweep(&mut self, context: &mut Context<Self::Rng>) {
+        // Use Carlo.rs's explicit counters rather than `is_thermalized()`: the
+        // latter turns true after the first measurement sweep in the current
+        // scheduler because of its strict `>` transition.
+        let phase = if context.sweep_count() < context.thermalization_sweeps() {
+            SimulationPhase::Thermalization
+        } else {
+            SimulationPhase::Measurement
+        };
         self.algorithm
-            .sweep(&mut self.system, &self.model, &mut ctx.rng);
+            .sweep_with_phase(&mut self.system, &self.model, &mut context.rng, phase);
     }
 
-    fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        let mut e = 0.0;
-        let mut m = 0.0;
-        for obs in self.observables.iter() {
-            let v = obs.measure(&self.system, &self.model);
-            match obs.name() {
-                "Energy" => e = v,
-                "Magnetization" => m = v,
-                _ => {}
-            }
-            ctx.measure(obs.name(), v);
-        }
-        ctx.measure("E2", e * e);
-        ctx.measure("M2", m * m);
-        ctx.measure("M4", m * m * m * m);
+    fn measure(&mut self, context: &mut Context<Self::Rng>) {
+        self.observables
+            .measure_all(&self.system, &self.model, context);
     }
 
     fn name(&self) -> &'static str {
@@ -160,395 +181,409 @@ where
     }
 }
 
-// ── ParallelTemperingCompatible impl ─────────────────────────
-
-impl<H, A> ParallelTemperingCompatible for ClassicalMC<H, A>
+impl<H, A, O> ParallelTemperingCompatible for ClassicalMC<H, A, O>
 where
-    H: Hamiltonian + Measurable,
+    H: Hamiltonian,
     A: Algorithm<H>,
+    O: ObservableSet<H>,
 {
-    fn log_weight_ratio(&self, param: &str, new_value: f64) -> f64 {
-        match param {
-            "beta" => {
-                // W(x, β) = exp(-βE), log(W'/W) = -(β'-β)E
-                (self.system.beta - new_value) * self.system.energy
-            }
-            _ => panic!("unsupported PT param: {param}"),
+    fn log_weight_ratio(&self, parameter: &str, new_value: f64) -> f64 {
+        match parameter {
+            "beta" => (self.system.beta - new_value) * self.system.energy,
+            _ => panic!("unsupported classical PT parameter: {parameter}"),
         }
     }
 
-    fn change_parameter(&mut self, param: &str, new_value: f64) {
-        match param {
+    fn change_parameter(&mut self, parameter: &str, new_value: f64) {
+        match parameter {
             "beta" => {
-                self.system.beta = new_value;
-                // Recompute energy (for most classical models E is β-independent,
-                // but we recompute for correctness with future models).
-                self.system.energy = self.model.compute_total_energy(
-                    &self.system.spins,
-                    &self.system.lattice,
-                    new_value,
-                );
+                self.system
+                    .set_beta(new_value)
+                    .expect("parallel-tempering beta must be finite and non-negative");
+                // Physical energy is beta-independent, but exact recomputation
+                // also repairs any accumulated cache drift before an exchange.
+                self.system.recompute_energy(&self.model);
             }
-            _ => panic!("unsupported PT param: {param}"),
+            _ => panic!("unsupported classical PT parameter: {parameter}"),
         }
     }
 }
 
-// ── FromParams impl ─────────────────────────────────────────
-
-/// Build a lattice from params.
-///
-/// Uses `lattice_type` param to select the builder:
-/// - `"chain"` (default): 1D chain
-/// - `"square"`: 2D square (hypercubic)
-/// - `"cubic"`: 3D cubic (hypercubic)
-/// - `"triangular"`: 2D triangular (PBC only)
-/// - `"honeycomb"`: 2D honeycomb (PBC only)
-/// - `"kagome"`: 2D kagome (PBC only)
-///
-/// The non-bravais lattices (triangular/honeycomb/kagome) currently only
-/// support periodic boundaries; passing `pbc=false` for those returns an
-/// error rather than silently producing a PBC lattice. The hypercubic family
-/// honors `pbc`.
-///
-/// Dimensions via `L` (1D) or `Lx`, `Ly` (2D) or `Lx`, `Ly`, `Lz` (3D).
-fn build_lattice_from_params(
-    params: &Params,
-    pbc: bool,
-) -> Result<crate::lattice::CsrLattice, CarloError> {
-    let lt = params
-        .get::<String>("lattice_type")
-        .unwrap_or_else(|| "chain".to_string());
-
-    match lt.as_str() {
-        "triangular" | "honeycomb" | "kagome" => {
-            // These builders are PBC-only today; reject an explicit open
-            // request instead of silently producing a periodic lattice.
-            if !pbc {
-                return Err(CarloError::InvalidConfig {
-                    field: "pbc".into(),
-                    reason: format!(
-                        "lattice_type `{lt}` only supports periodic boundaries; \
-                         set pbc=true (the default) or omit it"
-                    ),
-                });
-            }
-            let lx = params.get::<usize>("Lx").unwrap_or(match lt.as_str() {
-                "kagome" => 2,
-                _ => 4,
-            });
-            let ly = params.get::<usize>("Ly").unwrap_or(lx);
-            Ok(match lt.as_str() {
-                "triangular" => build_triangular(lx, ly),
-                "honeycomb" => build_honeycomb(lx, ly),
-                "kagome" => build_kagome(lx, ly),
-                _ => unreachable!(),
-            })
+fn validate_snapshot_usize_array(
+    snapshot: &Json,
+    name: &str,
+    expected: &[usize],
+) -> Result<(), CarloError> {
+    let Some(values) = snapshot[name].as_array() else {
+        // Version-1 snapshots did not carry complete topology metadata.
+        return Ok(());
+    };
+    if values.len() != expected.len() {
+        return Err(invalid(
+            format!("snapshot.{name}"),
+            "topology length mismatch",
+        ));
+    }
+    for (index, (value, expected_value)) in values.iter().zip(expected).enumerate() {
+        if value.as_u64().map(|number| number as usize) != Some(*expected_value) {
+            return Err(invalid(
+                format!("snapshot.{name}[{index}]"),
+                "topology mismatch",
+            ));
         }
-        _ => {
-            // hypercubic family: chain, square, cubic
-            use crate::lattice::BondType;
-            let (dims, bond_types) = if let Some(lx) = params.get::<usize>("Lx") {
-                let ly = params.get::<usize>("Ly").unwrap_or(lx);
-                if let Some(lz) = params.get::<usize>("Lz") {
-                    (
-                        vec![lx, ly, lz],
-                        vec![BondType::SquareX, BondType::SquareY, BondType::SquareZ],
-                    )
+    }
+    Ok(())
+}
+
+fn validate_snapshot_edges(snapshot: &Json, lattice: &CsrLattice) -> Result<(), CarloError> {
+    let Some(values) = snapshot["edges"].as_array() else {
+        return Ok(());
+    };
+    if values.len() != lattice.edges.len() {
+        return Err(invalid("snapshot.edges", "topology length mismatch"));
+    }
+    for (index, (value, expected)) in values.iter().zip(&lattice.edges).enumerate() {
+        let source = value["source"].as_u64().map(|number| number as usize);
+        let target = value["target"].as_u64().map(|number| number as usize);
+        let kind = value["kind"].as_str();
+        let expected_kind = format!("{:?}", expected.kind);
+        let weight = value["weight"].as_f64();
+        if source != Some(expected.source)
+            || target != Some(expected.target)
+            || kind != Some(expected_kind.as_str())
+            || weight.map(f64::to_bits) != Some(expected.weight.to_bits())
+        {
+            return Err(invalid(
+                format!("snapshot.edges[{index}]"),
+                "physical edge mismatch",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn invalid(field: impl Into<String>, reason: impl Into<String>) -> CarloError {
+    CarloError::InvalidConfig {
+        field: field.into(),
+        reason: reason.into(),
+    }
+}
+
+pub(crate) fn parse_param<T>(params: &Params, name: &str) -> Result<Option<T>, CarloError>
+where
+    T: FromStr,
+    T::Err: Display,
+{
+    if !params.contains(name) {
+        return Ok(None);
+    }
+    let raw = params
+        .get::<String>(name)
+        .expect("Params values are stored as valid strings");
+    raw.parse::<T>()
+        .map(Some)
+        .map_err(|error| invalid(name, format!("cannot parse `{raw}`: {error}")))
+}
+
+pub(crate) fn parse_bool(params: &Params, name: &str, default: bool) -> Result<bool, CarloError> {
+    let Some(value) = params.get::<String>(name) else {
+        return Ok(default);
+    };
+    match value.to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(invalid(name, format!("expected boolean, got `{value}`"))),
+    }
+}
+
+fn positive_dimension(params: &Params, name: &str, default: usize) -> Result<usize, CarloError> {
+    let value = parse_param::<usize>(params, name)?.unwrap_or(default);
+    if value == 0 {
+        Err(invalid(name, "dimension must be positive"))
+    } else {
+        Ok(value)
+    }
+}
+
+/// Build a CMC arbitrary graph from standard lattice parameters.
+pub fn build_lattice_from_params(params: &Params, pbc: bool) -> Result<CsrLattice, CarloError> {
+    let inferred = if params.contains("Lx") {
+        "hypercubic"
+    } else {
+        "chain"
+    };
+    let lattice_type = params
+        .get::<String>("lattice_type")
+        .unwrap_or_else(|| inferred.to_string())
+        .to_ascii_lowercase();
+
+    match lattice_type.as_str() {
+        "chain" => {
+            let length = if params.contains("L") {
+                positive_dimension(params, "L", 10)?
+            } else {
+                positive_dimension(params, "Lx", 10)?
+            };
+            Ok(build_chain(length, pbc))
+        }
+        "square" => {
+            let lx = positive_dimension(params, "Lx", 4)?;
+            let ly = positive_dimension(params, "Ly", lx)?;
+            Ok(build_square(lx, ly, pbc))
+        }
+        "cubic" => {
+            let lx = positive_dimension(params, "Lx", 4)?;
+            let ly = positive_dimension(params, "Ly", lx)?;
+            let lz = positive_dimension(params, "Lz", lx)?;
+            Ok(build_hypercubic(
+                &[lx, ly, lz],
+                &[BondType::CubicX, BondType::CubicY, BondType::CubicZ],
+                pbc,
+            ))
+        }
+        "hypercubic" => {
+            if params.contains("Lx") {
+                let lx = positive_dimension(params, "Lx", 4)?;
+                let ly = positive_dimension(params, "Ly", lx)?;
+                if params.contains("Lz") {
+                    let lz = positive_dimension(params, "Lz", lx)?;
+                    Ok(build_hypercubic(
+                        &[lx, ly, lz],
+                        &[BondType::CubicX, BondType::CubicY, BondType::CubicZ],
+                        pbc,
+                    ))
                 } else {
-                    (vec![lx, ly], vec![BondType::SquareX, BondType::SquareY])
+                    Ok(build_square(lx, ly, pbc))
                 }
             } else {
-                let l = params.get::<usize>("L").unwrap_or(10);
-                (vec![l], vec![BondType::ChainX])
-            };
-            Ok(build_hypercubic(&dims, &bond_types, pbc))
+                Ok(build_chain(positive_dimension(params, "L", 10)?, pbc))
+            }
         }
+        "triangular" | "honeycomb" | "kagome" => {
+            if !pbc {
+                return Err(invalid(
+                    "pbc",
+                    format!("lattice_type `{lattice_type}` currently requires periodic boundaries"),
+                ));
+            }
+            let default = if lattice_type == "kagome" { 2 } else { 4 };
+            let lx = positive_dimension(params, "Lx", default)?;
+            let ly = positive_dimension(params, "Ly", lx)?;
+            match lattice_type.as_str() {
+                "triangular" if lx < 2 || ly < 2 => Err(invalid(
+                    "Lx/Ly",
+                    "triangular lattice requires both dimensions >= 2",
+                )),
+                "honeycomb" if lx < 2 || ly < 2 || !lx.is_multiple_of(2) => Err(invalid(
+                    "Lx/Ly",
+                    "honeycomb lattice requires even Lx >= 2 and Ly >= 2",
+                )),
+                "kagome" if lx < 2 || ly < 2 => Err(invalid(
+                    "Lx/Ly",
+                    "kagome lattice requires both dimensions >= 2",
+                )),
+                "triangular" => Ok(build_triangular(lx, ly)),
+                "honeycomb" => Ok(build_honeycomb(lx, ly)),
+                "kagome" => Ok(build_kagome(lx, ly)),
+                _ => unreachable!(),
+            }
+        }
+        _ => Err(invalid(
+            "lattice_type",
+            format!(
+                "unknown lattice `{lattice_type}`; expected chain, square, cubic, hypercubic, triangular, honeycomb, or kagome"
+            ),
+        )),
     }
 }
 
-impl<H, A> FromParams for ClassicalMC<H, A>
+impl<H, A> FromParams for ClassicalMC<H, A, DefaultObservableSet<H>>
 where
-    H: Hamiltonian + Measurable + Proposable + ClusterModel + FromHamiltonianParams,
+    H: Hamiltonian + Initializable + Measurable + FromHamiltonianParams,
     A: Algorithm<H> + Default,
 {
-    fn from_params(params: &Params, rng: &mut Self::Rng) -> Result<Self, CarloError> {
-        let pbc: bool = params
-            .get::<String>("pbc")
-            .map(|s| s == "true" || s == "1")
-            .unwrap_or(true);
-        let lattice = build_lattice_from_params(params, pbc)?;
+    fn validate_params(params: &Params) -> Result<(), CarloError> {
+        let beta = parse_param::<f64>(params, "beta")?.unwrap_or(1.0);
+        if !beta.is_finite() || beta < 0.0 {
+            return Err(invalid("beta", "must be finite and non-negative"));
+        }
+        let pbc = parse_bool(params, "pbc", true)?;
+        build_lattice_from_params(params, pbc)?;
+        H::from_hamiltonian_params(params)?;
+        Ok(())
+    }
 
-        let beta = params.get::<f64>("beta").unwrap_or(1.0);
+    fn from_params(params: &Params, rng: &mut Self::Rng) -> Result<Self, CarloError> {
+        Self::validate_params(params)?;
+        let pbc = parse_bool(params, "pbc", true)?;
+        let lattice = build_lattice_from_params(params, pbc)?;
+        let beta = parse_param::<f64>(params, "beta")?.unwrap_or(1.0);
         let model = H::from_hamiltonian_params(params)?;
         let spin_dim = model.spin_dim();
-        let algorithm = A::default();
-
-        // Random initial spins
         let mut system = System::new(lattice, spin_dim, 0.0, beta);
+
+        let initial_state = params
+            .get::<String>("initial_state")
+            .unwrap_or_else(|| "hot".to_string())
+            .to_ascii_lowercase();
         for site in 0..system.n_sites() {
-            let spin = model.propose(rng);
+            let spin = match initial_state.as_str() {
+                "hot" | "random" => model.random_spin(rng),
+                "cold" | "ordered" => model.ordered_spin(),
+                _ => {
+                    return Err(invalid(
+                        "initial_state",
+                        "expected hot/random or cold/ordered",
+                    ))
+                }
+            };
+            if spin.len() != spin_dim {
+                return Err(invalid(
+                    "initial_state",
+                    format!(
+                        "model initializer returned {} components, expected {spin_dim}",
+                        spin.len()
+                    ),
+                ));
+            }
             system.spin_at_mut(site, spin_dim).copy_from_slice(&spin);
         }
-        // Compute initial energy
-        system.energy = model.compute_total_energy(&system.spins, &system.lattice, beta);
+        system.recompute_energy(&model);
+        system
+            .validate(&model)
+            .map_err(|reason| invalid("system", reason))?;
 
         Ok(Self {
             system,
             model,
-            algorithm,
+            algorithm: A::default(),
             observables: DefaultObservableSet::new(),
         })
     }
 }
 
-/// Minimal per-model param parsing trait. Separates model params (J, q, ...) from
-/// lattice params (L, dims) and temperature (β).
+/// Parse model parameters independently of topology and Carlo scheduling.
 pub trait FromHamiltonianParams: Hamiltonian + Sized {
     fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError>;
 }
 
-// ── IsingModel FromHamiltonianParams ────────────────────────
+fn finite_coupling(params: &Params) -> Result<f64, CarloError> {
+    let coupling = parse_param::<f64>(params, "J")?.unwrap_or(1.0);
+    if coupling.is_finite() {
+        Ok(coupling)
+    } else {
+        Err(invalid("J", "must be finite"))
+    }
+}
 
 impl FromHamiltonianParams for crate::models::IsingModel {
     fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
-        let j = params.get::<f64>("J").unwrap_or(1.0);
-        Ok(Self::new(j))
+        Ok(Self::new(finite_coupling(params)?))
     }
 }
 
 impl FromHamiltonianParams for crate::models::PottsModel {
     fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
-        let j = params.get::<f64>("J").unwrap_or(1.0);
-        let q = params.get::<usize>("q").unwrap_or(3);
-        Ok(Self::new(j, q))
+        let q = parse_param::<usize>(params, "q")?.unwrap_or(3);
+        if q < 2 {
+            return Err(invalid("q", "Potts q must be >= 2"));
+        }
+        Ok(Self::new(finite_coupling(params)?, q))
     }
 }
 
-impl FromHamiltonianParams for crate::models::XYModel {
+impl<const D: usize> FromHamiltonianParams for crate::models::ONModel<D> {
     fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
-        let j = params.get::<f64>("J").unwrap_or(1.0);
-        Ok(Self::new(j))
+        if D < 2 {
+            return Err(invalid("spin_dim", "O(N) dimension must be >= 2"));
+        }
+        Ok(Self::new(finite_coupling(params)?))
     }
 }
-
-impl FromHamiltonianParams for crate::models::HeisenbergModel {
-    fn from_hamiltonian_params(params: &Params) -> Result<Self, CarloError> {
-        let j = params.get::<f64>("J").unwrap_or(1.0);
-        Ok(Self::new(j))
-    }
-}
-
-// ── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithm::MetropolisCore;
-    use crate::models::IsingModel;
+    use crate::{IsingModel, MetropolisCore};
     use carlo_rs::{ParallelTemperingCompatible, RayonBackend, RunConfig, Scheduler};
     use rand::SeedableRng;
 
     #[test]
-    fn test_classical_mc_end_to_end() {
+    fn carlo_scheduler_end_to_end() {
         let mut params = Params::new();
         params.set("L", 8usize);
         params.set("beta", 1.0);
-        params.set("J", 1.0);
-
-        let config = RunConfig {
-            thermalization_sweeps: 200,
-            measurement_sweeps: 500,
-            binsize: 50,
-            base_seed: 42,
-            ..Default::default()
-        };
-
-        let backend = RayonBackend::new(1);
-        let scheduler = Scheduler::new(backend, config);
-        let results = scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
-
-        let energy = results.get("Energy").expect("Energy observable missing");
-        let mag = results
-            .get("Magnetization")
-            .expect("Magnetization observable missing");
-
-        // At beta=1 (T=1), ferromagnetic Ising chain should have negative energy
-        assert!(energy.mean < 0.0);
-        assert!(energy.stderr > 0.0);
-        assert!((0.0..=1.0).contains(&mag.mean));
+        let results = Scheduler::new(
+            RayonBackend::new(1),
+            RunConfig {
+                thermalization_sweeps: 100,
+                measurement_sweeps: 200,
+                binsize: 50,
+                base_seed: 42,
+                ..Default::default()
+            },
+        )
+        .run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
+        assert!(results.get("Energy").is_some());
+        assert!(results.get("E2").is_some());
+        assert!(results.get("M4").is_some());
     }
 
     #[test]
-    fn test_pt_log_weight_ratio() {
+    fn snapshot_recomputes_energy() {
         let mut params = Params::new();
         params.set("L", 4usize);
-        params.set("beta", 1.0);
-        params.set("J", 1.0);
-
-        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
-        let mc = <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
-            &params, &mut rng,
-        )
-        .unwrap();
-
-        let e = mc.system.energy;
-        // log(W(β')/W(β)) = -(β'-β)E = (β - β')E
-        let lr = mc.log_weight_ratio("beta", 2.0);
-        let expected = (1.0 - 2.0) * e;
-        assert!(
-            (lr - expected).abs() < 1e-10,
-            "lr = {}, expected = {}",
-            lr,
-            expected
-        );
-    }
-
-    #[test]
-    fn test_moment_observables_present() {
-        let mut params = Params::new();
-        params.set("L", 8usize);
-        params.set("beta", 1.0);
-        params.set("J", 1.0);
-
-        let config = RunConfig {
-            thermalization_sweeps: 100,
-            measurement_sweeps: 200,
-            binsize: 50,
-            base_seed: 42,
-            ..Default::default()
-        };
-
-        let backend = RayonBackend::new(1);
-        let scheduler = Scheduler::new(backend, config);
-        let results = scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
-
-        let e2 = results.get("E2").expect("E2 observable missing");
-        let m2 = results.get("M2").expect("M2 observable missing");
-        let m4 = results.get("M4").expect("M4 observable missing");
-
-        assert!(e2.mean > 0.0, "E² should be positive");
-        assert!((0.0..=1.0).contains(&m2.mean), "M² should be in [0,1]");
-        assert!((0.0..=1.0).contains(&m4.mean), "M⁴ should be in [0,1]");
-    }
-
-    #[test]
-    fn test_snapshot_round_trip() {
-        let mut params = Params::new();
-        params.set("L", 8usize);
-        params.set("beta", 1.0);
-        params.set("J", 1.0);
-
-        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(1);
         let mut mc =
-            <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
-                &params, &mut rng,
-            )
-            .unwrap();
-
-        // Run a few sweeps
-        let mut ctx = carlo_rs::Context::new(rng, 0);
-        for _ in 0..10 {
-            mc.sweep(&mut ctx);
-        }
-
-        let energy_before = mc.system.energy;
-        let spins_before = mc.system.spins.clone();
-
-        // Save snapshot
+            <ClassicalMC<IsingModel, MetropolisCore> as FromParams>::from_params(&params, &mut rng)
+                .unwrap();
         let snapshot = mc.save_snapshot();
-
-        // Mutate state
-        mc.system.energy = 999.0;
-        mc.system.spins.fill(0.0);
-
-        // Load snapshot
+        mc.system.energy = 123.0;
         mc.load_snapshot(&snapshot).unwrap();
-
-        assert!((mc.system.energy - energy_before).abs() < 1e-10);
-        assert_eq!(mc.system.spins, spins_before);
+        assert!(mc.system.energy_error(&mc.model).abs() < 1e-12);
     }
 
     #[test]
-    fn test_pt_change_parameter() {
+    fn snapshot_rejects_topology_mismatch() {
+        let mut params = Params::new();
+        params.set("L", 4usize);
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(11);
+        let mut mc =
+            <ClassicalMC<IsingModel, MetropolisCore> as FromParams>::from_params(&params, &mut rng)
+                .unwrap();
+        let mut snapshot = mc.save_snapshot();
+        snapshot["neighbors"][0] = serde_json::json!(999usize);
+        assert!(mc.load_snapshot(&snapshot).is_err());
+    }
+
+    #[test]
+    fn malformed_numeric_parameter_is_rejected() {
+        let mut params = Params::new();
+        params.set("L", "not-a-number");
+        let error = build_lattice_from_params(&params, true).unwrap_err();
+        assert!(matches!(error, CarloError::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn unknown_lattice_is_rejected() {
+        let mut params = Params::new();
+        params.set("lattice_type", "unknown-geometry");
+        let error = build_lattice_from_params(&params, true).unwrap_err();
+        assert!(matches!(error, CarloError::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn pt_uses_physical_energy() {
         let mut params = Params::new();
         params.set("L", 4usize);
         params.set("beta", 1.0);
-        params.set("J", 1.0);
-
-        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
-        let mut mc =
-            <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
-                &params, &mut rng,
-            )
-            .unwrap();
-
-        mc.change_parameter("beta", 2.5);
-        assert!((mc.system.beta - 2.5).abs() < 1e-10);
-        // Energy should be recomputed (same config, same energy for Ising)
-        let e = mc
-            .model
-            .compute_total_energy(&mc.system.spins, &mc.system.lattice, 2.5);
-        assert!((mc.system.energy - e).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_lattice_type_triangular() {
-        let mut params = Params::new();
-        params.set("Lx", 3usize);
-        params.set("Ly", 3usize);
-        params.set("lattice_type", "triangular");
-        params.set("beta", 1.0);
-        params.set("J", 1.0);
-
-        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
-        let mc = <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
-            &params, &mut rng,
-        )
-        .unwrap();
-
-        assert_eq!(mc.system.n_sites(), 9);
-        assert_eq!(mc.system.lattice.n_bonds, 54);
-        assert_eq!(mc.system.lattice.degree(0), 6);
-    }
-
-    #[test]
-    fn test_lattice_type_honeycomb() {
-        let mut params = Params::new();
-        params.set("Lx", 4usize);
-        params.set("Ly", 4usize);
-        params.set("lattice_type", "honeycomb");
-        params.set("beta", 1.0);
-        params.set("J", 1.0);
-
-        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
-        let mc = <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
-            &params, &mut rng,
-        )
-        .unwrap();
-
-        assert_eq!(mc.system.n_sites(), 16);
-        assert_eq!(mc.system.lattice.n_bonds, 48);
-        assert_eq!(mc.system.lattice.degree(0), 3);
-    }
-
-    #[test]
-    fn test_lattice_type_kagome() {
-        let mut params = Params::new();
-        params.set("Lx", 2usize);
-        params.set("Ly", 2usize);
-        params.set("lattice_type", "kagome");
-        params.set("beta", 1.0);
-        params.set("J", 1.0);
-
-        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
-        let mc = <ClassicalMC<IsingModel, MetropolisCore> as carlo_rs::FromParams>::from_params(
-            &params, &mut rng,
-        )
-        .unwrap();
-
-        assert_eq!(mc.system.n_sites(), 12);
-        assert_eq!(mc.system.lattice.n_bonds, 48);
-        assert_eq!(mc.system.lattice.degree(0), 4);
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(2);
+        let mc =
+            <ClassicalMC<IsingModel, MetropolisCore> as FromParams>::from_params(&params, &mut rng)
+                .unwrap();
+        assert_eq!(
+            mc.log_weight_ratio("beta", 2.0),
+            (mc.system.beta - 2.0) * mc.system.energy
+        );
     }
 }

@@ -1,36 +1,50 @@
-//! Proposal strategies for Metropolis algorithm.
-//!
-//! A [`ProposalStrategy`] defines how new spins are proposed and can adapt
-//! its parameters based on sweep history (e.g., OPSS sigma tuning).
+//! Metropolis-Hastings proposal policies.
 
-use crate::hamiltonian::{Hamiltonian, Proposable};
+use crate::hamiltonian::{Hamiltonian, Proposable, Spin};
 use crate::system::System;
-use rand::Rng;
-use smallvec::{smallvec, SmallVec};
+use rand::{Rng, RngExt};
 
-/// A proposal strategy for use with [`MetropolisCore`](crate::MetropolisCore).
+/// Complete proposal including the Hastings correction.
+#[derive(Debug, Clone)]
+pub struct ProposedSpin {
+    pub spin: Spin,
+    /// `ln q(old | new) - ln q(new | old)`.
+    pub log_reverse_over_forward: f64,
+}
+
+impl ProposedSpin {
+    pub fn symmetric(spin: Spin) -> Self {
+        Self {
+            spin,
+            log_reverse_over_forward: 0.0,
+        }
+    }
+}
+
+/// Proposal strategy for [`MetropolisCore`](crate::MetropolisCore).
 pub trait ProposalStrategy<H: Hamiltonian>: Send {
-    /// Propose a new spin at the given site.
     fn propose(
         &mut self,
         model: &H,
-        _system: &System,
-        _site: usize,
+        system: &System,
+        site: usize,
         rng: &mut impl Rng,
-    ) -> SmallVec<[f64; 3]>;
+    ) -> ProposedSpin;
 
-    /// Called after each sweep for strategies that need per-sweep adaptation.
-    fn adapt_after_sweep(&mut self, _model: &H) {}
+    /// Receives every accept/reject decision, enabling correct adaptation.
+    fn record_result(&mut self, _accepted: bool) {}
+
+    /// Called after a full sweep.  `adaptation_enabled` is true only during
+    /// Carlo.rs thermalization; the transition kernel is frozen afterwards.
+    fn finish_sweep(&mut self, _adaptation_enabled: bool) {}
 }
 
-// ── Standard ────────────────────────────────────────────────
-
-/// Standard proposal strategy — delegates entirely to `model.propose()`.
+/// Independent model proposal.  It is assumed symmetric.
 #[derive(Debug, Clone, Default)]
 pub struct StandardStrategy;
 
 impl StandardStrategy {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -39,47 +53,54 @@ impl<H: Hamiltonian + Proposable> ProposalStrategy<H> for StandardStrategy {
     fn propose(
         &mut self,
         model: &H,
-        _system: &System,
-        _site: usize,
+        system: &System,
+        site: usize,
         rng: &mut impl Rng,
-    ) -> SmallVec<[f64; 3]> {
-        model.propose(rng)
+    ) -> ProposedSpin {
+        ProposedSpin::symmetric(model.propose_from(system.spin_at(site, model.spin_dim()), rng))
     }
 }
 
-// ── OPSS (Over-relaxation) ──────────────────────────────────
-
-/// Over-relaxed pseudo-spin-flip strategy (Yunoki & Sorella).
+/// Backward-compatible adaptive local-rotation strategy.
 ///
-/// Mirrors the spin about the local mean-field direction. The reflection angle
-/// is controlled by `sigma`, which is auto-tuned to achieve a target acceptance rate.
-///
-/// Works for vector spins (XY, Heisenberg) and scalar spins (Ising) — for Ising,
-/// OPSS reduces to a deterministic sign flip when the local field is small.
+/// The old implementation used a non-involutive normalized reflection and did
+/// not receive acceptance results.  This version proposes an exactly symmetric
+/// random plane rotation for vector spins, records all decisions, and adapts
+/// only during Carlo.rs thermalization.  For scalar models it falls back to the
+/// model's standard proposal.
 #[derive(Debug, Clone)]
 pub struct OPSSStrategy {
-    /// Reflection strength (auto-adapted).
+    /// Maximum absolute rotation angle in radians.
     pub sigma: f64,
-    /// Target acceptance rate.
     pub target_acceptance: f64,
-    /// Running acceptance counter.
     accepted: u64,
     attempted: u64,
+    adaptation_rate: f64,
 }
 
 impl OPSSStrategy {
     pub fn new() -> Self {
         Self {
-            sigma: 1.0,
+            sigma: 0.5,
             target_acceptance: 0.5,
             accepted: 0,
             attempted: 0,
+            adaptation_rate: 0.08,
         }
     }
 
     pub fn with_target(mut self, target: f64) -> Self {
-        self.target_acceptance = target;
+        self.target_acceptance = target.clamp(0.05, 0.95);
         self
+    }
+
+    pub fn with_sigma(mut self, sigma: f64) -> Self {
+        self.sigma = sigma.clamp(1e-4, std::f64::consts::PI);
+        self
+    }
+
+    pub fn acceptance_counts(&self) -> (u64, u64) {
+        (self.accepted, self.attempted)
     }
 }
 
@@ -96,74 +117,81 @@ impl<H: Hamiltonian + Proposable> ProposalStrategy<H> for OPSSStrategy {
         system: &System,
         site: usize,
         rng: &mut impl Rng,
-    ) -> SmallVec<[f64; 3]> {
-        let sd = model.spin_dim();
-        let old = system.spin_at(site, sd);
+    ) -> ProposedSpin {
+        let dimension = model.spin_dim();
+        let old = system.spin_at(site, dimension);
+        if dimension < 2 {
+            return ProposedSpin::symmetric(model.propose_from(old, rng));
+        }
 
-        if sd == 1 {
-            // Scalar: reflect about local field
-            let local_field: f64 = system
-                .lattice
-                .neighbors(site)
-                .iter()
-                .map(|&nb| system.spins[nb])
-                .sum();
-            let proposed = -self.sigma * old[0] + (1.0 + self.sigma) * local_field.signum();
-            smallvec![proposed.signum()] // always ±1 for Ising
+        let mut spin = Spin::from_slice(old);
+        let first = rng.random_range(0..dimension);
+        let mut second = rng.random_range(0..dimension - 1);
+        if second >= first {
+            second += 1;
+        }
+        let sigma = if self.sigma.is_finite() {
+            self.sigma.abs().clamp(1e-4, std::f64::consts::PI)
         } else {
-            // Vector: reflect spin about local field direction
-            let mut h = vec![0.0; sd];
-            for &nb in system.lattice.neighbors(site) {
-                let base = nb * sd;
-                for (k, hk) in h.iter_mut().enumerate() {
-                    *hk += system.spins[base + k];
-                }
-            }
+            0.5
+        };
+        let angle = rng.random_range(-sigma..sigma);
+        let (sine, cosine) = angle.sin_cos();
+        let left = spin[first];
+        let right = spin[second];
+        spin[first] = cosine * left - sine * right;
+        spin[second] = sine * left + cosine * right;
+        model.normalize_spin(&mut spin);
+        ProposedSpin::symmetric(spin)
+    }
 
-            let h_norm: f64 = h.iter().map(|&x| x * x).sum::<f64>().sqrt();
-            if h_norm < 1e-12 {
-                // No local field → random unit vector
-                let mut v = model.propose(rng);
-                model.normalize_spin(&mut v);
-                return v;
-            }
-
-            let h_hat: SmallVec<[f64; 3]> = h.iter().map(|&x| x / h_norm).collect();
-
-            // s_new = 2 (s·ĥ) ĥ - σ s
-            let s_dot_h: f64 = old.iter().zip(&h_hat).map(|(&s, &h)| s * h).sum();
-            let mut new: SmallVec<[f64; 3]> = SmallVec::from_elem(0.0, sd);
-            for k in 0..sd {
-                new[k] = 2.0 * s_dot_h * h_hat[k] - self.sigma * old[k];
-            }
-
-            model.normalize_spin(&mut new);
-            new
+    fn record_result(&mut self, accepted: bool) {
+        self.attempted += 1;
+        if accepted {
+            self.accepted += 1;
         }
     }
 
-    fn adapt_after_sweep(&mut self, _model: &H) {
+    fn finish_sweep(&mut self, adaptation_enabled: bool) {
         if self.attempted == 0 {
             return;
         }
-        let rate = self.accepted as f64 / self.attempted as f64;
-        // Adjust sigma to approach target acceptance
-        if rate > self.target_acceptance + 0.05 {
-            self.sigma = (self.sigma * 1.05).min(2.0);
-        } else if rate < self.target_acceptance - 0.05 {
-            self.sigma = (self.sigma * 0.95).max(0.1);
+        if adaptation_enabled {
+            let rate = self.accepted as f64 / self.attempted as f64;
+            // Multiplicative Robbins-Monro style update keeps sigma positive.
+            let shift = self.adaptation_rate * (rate - self.target_acceptance);
+            self.sigma = (self.sigma * shift.exp()).clamp(1e-4, std::f64::consts::PI);
         }
         self.accepted = 0;
         self.attempted = 0;
     }
 }
 
-impl OPSSStrategy {
-    /// Called by MetropolisCore to track acceptance.
-    pub fn record_acceptance(&mut self, accepted: bool) {
-        self.attempted += 1;
-        if accepted {
-            self.accepted += 1;
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{build_chain, models::XYModel, System};
+    use rand::SeedableRng;
+
+    #[test]
+    fn standard_ising_proposal_is_never_a_noop() {
+        let model = crate::models::IsingModel::new(1.0);
+        let system = System::new(build_chain(2, false), 1, 1.0, 1.0);
+        let mut strategy = StandardStrategy::new();
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(4);
+        let proposal = strategy.propose(&model, &system, 0, &mut rng);
+        assert_eq!(proposal.spin.as_slice(), &[-1.0]);
+    }
+
+    #[test]
+    fn adaptive_strategy_receives_results() {
+        let model = XYModel::new(1.0);
+        let system = System::new(build_chain(2, false), 2, 0.0, 1.0);
+        let mut strategy = OPSSStrategy::new();
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(3);
+        let proposal = strategy.propose(&model, &system, 0, &mut rng);
+        assert_eq!(proposal.spin.len(), 2);
+        <OPSSStrategy as ProposalStrategy<XYModel>>::record_result(&mut strategy, true);
+        assert_eq!(strategy.acceptance_counts(), (1, 1));
     }
 }

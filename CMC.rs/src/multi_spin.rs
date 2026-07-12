@@ -8,8 +8,8 @@
 //! different replica. All 64 replicas share the same lattice and coupling
 //! but evolve independently with different random number sequences.
 
+use crate::classical_mc::{build_lattice_from_params, parse_bool, parse_param};
 use crate::hamiltonian::Hamiltonian;
-use crate::lattice::{build_hypercubic, BondType};
 use crate::models::IsingModel;
 use crate::system::System;
 use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible, Params};
@@ -36,6 +36,8 @@ pub struct MultiSpinIsing {
     pub system: System,
     /// Ising model parameters (coupling J).
     pub model: IsingModel,
+    /// Reused random-visit workspace.
+    order: Vec<usize>,
 }
 
 impl MultiSpinIsing {
@@ -45,6 +47,11 @@ impl MultiSpinIsing {
     /// The lattice must have uniform coordination (degree) for all sites.
     pub fn new(system: System, model: IsingModel) -> Self {
         let n = system.n_sites();
+        assert_eq!(
+            system.spins.len(),
+            n,
+            "multi-spin coding requires exactly one scalar spin per site"
+        );
 
         // Check uniform coordination
         let z = system.lattice.degree(0);
@@ -55,6 +62,15 @@ impl MultiSpinIsing {
                 "multi-spin coding requires uniform lattice degree"
             );
         }
+
+        assert!(
+            system
+                .lattice
+                .edges
+                .iter()
+                .all(|edge| { edge.source != edge.target && (edge.weight - 1.0).abs() < 1e-12 }),
+            "multi-spin coding currently requires unweighted, loop-free bonds"
+        );
 
         // Initialize all replicas from system.spins
         let packed: Vec<u64> = system
@@ -82,6 +98,7 @@ impl MultiSpinIsing {
             z,
             system,
             model,
+            order: Vec::new(),
         }
     }
 
@@ -93,14 +110,17 @@ impl MultiSpinIsing {
         let n = self.system.n_sites();
         let z = self.z;
 
-        // Random visit order
-        let mut order: Vec<usize> = (0..n).collect();
+        // Random visit order, reusing allocation across sweeps.
+        if self.order.len() != n {
+            self.order.clear();
+            self.order.extend(0..n);
+        }
         for i in (1..n).rev() {
             let j = rng.random_range(0..=i);
-            order.swap(i, j);
+            self.order.swap(i, j);
         }
 
-        for &site in &order {
+        for &site in &self.order {
             let site_word = self.packed_spins[site];
 
             // Count anti-aligned neighbors per replica
@@ -159,6 +179,25 @@ impl MultiSpinIsing {
         N_REPLICAS
     }
 
+    /// Joint physical energy of all packed replicas.
+    ///
+    /// Parallel tempering changes beta for all 64 replicas simultaneously, so
+    /// its weight ratio must use the sum of replica energies, not replica 0.
+    fn packed_total_energy(&self) -> f64 {
+        let coupling = self.model.coupling();
+        self.system
+            .lattice
+            .edges
+            .iter()
+            .map(|edge| {
+                let anti_aligned = (self.packed_spins[edge.source] ^ self.packed_spins[edge.target])
+                    .count_ones() as f64;
+                let signed_sum = N_REPLICAS as f64 - 2.0 * anti_aligned;
+                -coupling * edge.weight * signed_sum
+            })
+            .sum()
+    }
+
     /// Rebuild the acceptance LUT (call after changing beta).
     fn rebuild_accept_lut(&mut self) {
         let beta = self.system.beta;
@@ -185,10 +224,9 @@ impl MonteCarlo for MultiSpinIsing {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        // Measure all 64 replicas. They share β / visit order / acceptance
-        // random numbers (see `sweep`), so they are *not* statistically
-        // independent — the per-replica estimates are correlated. Treating
-        // them as 64 samples would overstate the statistics. We expose them
+        // Measure all 64 replicas. They share β and visit order, so they are
+        // best treated as a vector-valued ensemble rather than blindly folded
+        // into one scalar time series. We expose them
         // as array observables (Energy[k], Magnetization[k], … for replica k)
         // so callers can pick a single replica or average, and additionally
         // keep replica-0 as the scalar "Energy"/"Magnetization" for backward
@@ -204,28 +242,30 @@ impl MonteCarlo for MultiSpinIsing {
 
         for r in 0..N_REPLICAS {
             let mask = 1u64 << r;
-            // Energy: E = -J Σ_{⟨i,j⟩} σ_i σ_j over directed bonds, /2 for double count.
-            let mut e = 0.0;
             let mut spin_sum = 0.0f64;
-            for i in 0..n {
-                let si = if self.packed_spins[i] & mask != 0 {
-                    1.0
-                } else {
-                    -1.0
-                };
-                spin_sum += si;
-                let nbrs = self.system.lattice.neighbors(i);
-                for &jdx in nbrs {
-                    // Count each directed bond; divide by 2 below.
-                    let sj = if self.packed_spins[jdx] & mask != 0 {
+            for word in &self.packed_spins {
+                spin_sum += if word & mask != 0 { 1.0 } else { -1.0 };
+            }
+            // Physical edges are stored once, so no hidden divide-by-two.
+            let e: f64 = self
+                .system
+                .lattice
+                .edges
+                .iter()
+                .map(|edge| {
+                    let left = if self.packed_spins[edge.source] & mask != 0 {
                         1.0
                     } else {
                         -1.0
                     };
-                    e += -j * si * sj;
-                }
-            }
-            e *= 0.5;
+                    let right = if self.packed_spins[edge.target] & mask != 0 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    -j * edge.weight * left * right
+                })
+                .sum();
 
             let m = (spin_sum / n as f64).abs();
             e_arr[r] = e;
@@ -259,39 +299,53 @@ impl MonteCarlo for MultiSpinIsing {
 // ── FromParams impl ──────────────────────────────────────────
 
 impl FromParams for MultiSpinIsing {
-    fn from_params(params: &Params, rng: &mut Self::Rng) -> Result<Self, CarloError> {
-        let pbc: bool = params
-            .get::<String>("pbc")
-            .map(|s| s == "true" || s == "1")
-            .unwrap_or(true);
-
-        let (dims, bond_types) = if let Some(lx) = params.get::<usize>("Lx") {
-            let ly = params.get::<usize>("Ly").unwrap_or(lx);
-            if let Some(_lz) = params.get::<usize>("Lz") {
-                return Err(CarloError::InvalidConfig {
-                    field: "lattice".into(),
-                    reason: "MultiSpinIsing only supports 1D and 2D".into(),
-                });
-            }
-            (vec![lx, ly], vec![BondType::SquareX, BondType::SquareY])
-        } else {
-            let l = params.get::<usize>("L").unwrap_or(10);
-            (vec![l], vec![BondType::ChainX])
-        };
-
-        let lattice = build_hypercubic(&dims, &bond_types, pbc);
-        let beta = params.get::<f64>("beta").unwrap_or(1.0);
-        let j = params.get::<f64>("J").unwrap_or(1.0);
-        let model = IsingModel::new(j);
-
-        // Random initial spins
-        let mut system = System::new(lattice, 1, 0.0, beta);
-        for i in 0..system.n_sites() {
-            system.spins[i] = if rng.random::<bool>() { 1.0 } else { -1.0 };
+    fn validate_params(params: &Params) -> Result<(), CarloError> {
+        let beta = parse_param::<f64>(params, "beta")?.unwrap_or(1.0);
+        let coupling = parse_param::<f64>(params, "J")?.unwrap_or(1.0);
+        if !beta.is_finite() || beta < 0.0 {
+            return Err(CarloError::InvalidConfig {
+                field: "beta".into(),
+                reason: "must be finite and non-negative".into(),
+            });
         }
-        let energy = model.compute_total_energy(&system.spins, &system.lattice, beta);
-        system.energy = energy;
+        if !coupling.is_finite() {
+            return Err(CarloError::InvalidConfig {
+                field: "J".into(),
+                reason: "must be finite".into(),
+            });
+        }
+        Ok(())
+    }
 
+    fn from_params(params: &Params, rng: &mut Self::Rng) -> Result<Self, CarloError> {
+        Self::validate_params(params)?;
+        let pbc = parse_bool(params, "pbc", true)?;
+        let lattice = build_lattice_from_params(params, pbc)?;
+        let degree = lattice.degree(0);
+        if !(0..lattice.n_sites).all(|site| lattice.degree(site) == degree) {
+            return Err(CarloError::InvalidConfig {
+                field: "lattice".into(),
+                reason: "MultiSpinIsing requires uniform coordination".into(),
+            });
+        }
+        if !lattice
+            .edges
+            .iter()
+            .all(|edge| edge.source != edge.target && (edge.weight - 1.0).abs() < 1e-12)
+        {
+            return Err(CarloError::InvalidConfig {
+                field: "lattice".into(),
+                reason: "MultiSpinIsing requires unweighted, loop-free bonds".into(),
+            });
+        }
+
+        let beta = parse_param::<f64>(params, "beta")?.unwrap_or(1.0);
+        let model = IsingModel::new(parse_param::<f64>(params, "J")?.unwrap_or(1.0));
+        let mut system = System::new(lattice, 1, 0.0, beta);
+        for spin in &mut system.spins {
+            *spin = if rng.random::<bool>() { 1.0 } else { -1.0 };
+        }
+        system.recompute_energy(&model);
         Ok(Self::new(system, model))
     }
 }
@@ -301,7 +355,7 @@ impl FromParams for MultiSpinIsing {
 impl ParallelTemperingCompatible for MultiSpinIsing {
     fn log_weight_ratio(&self, param: &str, new_value: f64) -> f64 {
         match param {
-            "beta" => (self.system.beta - new_value) * self.system.energy,
+            "beta" => (self.system.beta - new_value) * self.packed_total_energy(),
             _ => panic!("unsupported PT param: {param}"),
         }
     }
@@ -309,7 +363,9 @@ impl ParallelTemperingCompatible for MultiSpinIsing {
     fn change_parameter(&mut self, param: &str, new_value: f64) {
         match param {
             "beta" => {
-                self.system.beta = new_value;
+                self.system
+                    .set_beta(new_value)
+                    .expect("parallel-tempering beta must be finite and non-negative");
                 self.rebuild_accept_lut();
                 self.system.energy = self.model.compute_total_energy(
                     &self.system.spins,
@@ -424,9 +480,9 @@ mod tests {
         let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
         let mc = MultiSpinIsing::from_params(&params, &mut rng).unwrap();
 
-        let e = mc.system.energy;
+        let joint_energy = mc.packed_total_energy();
         let lr = mc.log_weight_ratio("beta", 2.0);
-        let expected = (1.0 - 2.0) * e;
+        let expected = (1.0 - 2.0) * joint_energy;
         assert!((lr - expected).abs() < 1e-10);
 
         let mut mc = mc;

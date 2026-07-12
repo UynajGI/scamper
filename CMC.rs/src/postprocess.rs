@@ -9,6 +9,9 @@ use carlo_rs::Results;
 ///
 /// Requires "Magnetization", "M2" in results.
 pub fn susceptibility(results: &Results, beta: f64, n_sites: usize) -> Option<f64> {
+    if !beta.is_finite() || n_sites == 0 {
+        return None;
+    }
     let m = results.get("Magnetization")?;
     let m2 = results.get("M2")?;
     Some(beta * n_sites as f64 * (m2.mean - m.mean * m.mean))
@@ -18,6 +21,9 @@ pub fn susceptibility(results: &Results, beta: f64, n_sites: usize) -> Option<f6
 ///
 /// Requires "Energy", "E2" in results.
 pub fn specific_heat(results: &Results, beta: f64, n_sites: usize) -> Option<f64> {
+    if !beta.is_finite() || n_sites == 0 {
+        return None;
+    }
     let e = results.get("Energy")?;
     let e2 = results.get("E2")?;
     Some(beta * beta / n_sites as f64 * (e2.mean - e.mean * e.mean))
@@ -40,6 +46,14 @@ pub fn binder_cumulant(results: &Results) -> Option<f64> {
 /// `spins` is a flat slice with `spin_dim` components per site.
 /// For a chain of `n_sites` with PBC, returns G(r) for r = 0..=n_sites/2.
 pub fn compute_correlation_1d(spins: &[f64], spin_dim: usize, n_sites: usize) -> Vec<f64> {
+    if spin_dim == 0 || n_sites == 0 {
+        return Vec::new();
+    }
+    assert_eq!(
+        spins.len(),
+        spin_dim * n_sites,
+        "spin buffer length does not match spin_dim * n_sites"
+    );
     let max_r = n_sites / 2;
     let mut g = vec![0.0; max_r + 1];
     let mut counts = vec![0usize; max_r + 1];

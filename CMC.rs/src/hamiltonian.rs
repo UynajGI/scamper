@@ -1,33 +1,34 @@
-//! Trait definitions for classical Monte Carlo models.
+//! Model-side abstractions for classical lattice Monte Carlo.
 //!
-//! This module defines the core traits that separate concerns:
-//! - [`Hamiltonian`]: Energy computation and physical constants
-//! - [`ClusterModel`]: Cluster algorithm support (Wolff, Swendsen-Wang)
-//! - [`Proposable`]: Spin proposal for Metropolis
-//! - [`Measurable`]: Magnetization computation
+//! The core contract is deliberately temperature independent: a Hamiltonian
+//! returns physical energies, while algorithms/ensembles apply `beta` exactly
+//! once.  Physical bonds come from [`crate::lattice::CsrLattice::edges`], so
+//! weighted and parallel interactions are counted without hidden `/ 2` rules.
 
-use crate::lattice::CsrLattice;
+use crate::lattice::{Bond, CsrLattice};
 use rand::Rng;
 use smallvec::SmallVec;
 
-/// Core physics: energy computation and coupling constants.
+/// Small-vector representation used by the compatibility API.
 ///
-/// Implementations define the Hamiltonian H = -J Σ s_i · s_j and provide
-/// methods to compute local energy contributions. Models are stateless —
-/// temperature (β) lives in [`System`](crate::System).
-pub trait Hamiltonian: Send + Sync {
-    /// Number of spin components per site (1 = Ising/Potts, 2 = XY, 3 = Heisenberg).
-    fn spin_dim(&self) -> usize;
+/// Dimensions above three are supported and spill to the heap.  Built-in
+/// `ONModel<D>` therefore works for arbitrary `D`, while XY/Heisenberg remain
+/// allocation-free.
+pub type Spin = SmallVec<[f64; 3]>;
 
-    /// Coupling constant J.
+/// General physical-energy model.
+///
+/// Custom multi-site/factor models may implement this trait directly.  The
+/// common onsite + pair-interaction case should implement [`PairInteraction`]
+/// instead and receives an optimized, correct blanket implementation.
+pub trait Hamiltonian: Send + Sync {
+    fn spin_dim(&self) -> usize;
     fn coupling(&self) -> f64;
 
-    /// Energy contribution from site `i` interacting with its neighbors,
-    /// given a **proposed** new spin and inverse temperature β.
+    /// Energy terms affected by replacing `site` with `proposed`.
     ///
-    /// Returns the contribution to total energy from site `i`, summing over
-    /// all bonds connected to `i`. The returned value replaces the old
-    /// contribution directly (not a delta).
+    /// `beta` is retained for source compatibility.  The return value must be
+    /// a physical energy and must not contain a temperature factor.
     fn local_energy(
         &self,
         spins: &[f64],
@@ -37,110 +38,211 @@ pub trait Hamiltonian: Send + Sync {
         proposed: &[f64],
     ) -> f64;
 
-    /// Compute initial energy for the full system.
-    fn compute_total_energy(&self, spins: &[f64], lattice: &CsrLattice, beta: f64) -> f64 {
-        let mut total = 0.0;
-        let sd = self.spin_dim();
-        for site in 0..lattice.n_sites {
-            let proposed = spins[site * sd..(site + 1) * sd].to_vec();
-            total += self.local_energy(spins, lattice, site, beta, &proposed);
+    fn compute_total_energy(&self, spins: &[f64], lattice: &CsrLattice, beta: f64) -> f64;
+
+    fn delta_energy(
+        &self,
+        spins: &[f64],
+        lattice: &CsrLattice,
+        site: usize,
+        proposed: &[f64],
+    ) -> f64 {
+        let spin_dim = self.spin_dim();
+        let old = &spins[site * spin_dim..(site + 1) * spin_dim];
+        self.local_energy(spins, lattice, site, 1.0, proposed)
+            - self.local_energy(spins, lattice, site, 1.0, old)
+    }
+}
+
+/// Convenience interface for onsite plus physical pair-bond Hamiltonians.
+pub trait PairInteraction: Send + Sync {
+    fn spin_dim(&self) -> usize;
+    fn coupling(&self) -> f64;
+    fn bond_energy(&self, left: &[f64], right: &[f64], bond: &Bond) -> f64;
+
+    fn onsite_energy(&self, _site: usize, _spin: &[f64]) -> f64 {
+        0.0
+    }
+}
+
+impl<T: PairInteraction> Hamiltonian for T {
+    fn spin_dim(&self) -> usize {
+        PairInteraction::spin_dim(self)
+    }
+
+    fn coupling(&self) -> f64 {
+        PairInteraction::coupling(self)
+    }
+
+    fn local_energy(
+        &self,
+        spins: &[f64],
+        lattice: &CsrLattice,
+        site: usize,
+        _beta: f64,
+        proposed: &[f64],
+    ) -> f64 {
+        let spin_dim = PairInteraction::spin_dim(self);
+        debug_assert_eq!(proposed.len(), spin_dim);
+        let mut energy = self.onsite_energy(site, proposed);
+        let mut previous_self_loop = None;
+
+        for (_neighbor, edge_id) in lattice.incidences(site) {
+            let edge = lattice.edges[edge_id];
+            if edge.source == site && edge.target == site {
+                if previous_self_loop == Some(edge_id) {
+                    continue;
+                }
+                previous_self_loop = Some(edge_id);
+                energy += self.bond_energy(proposed, proposed, &edge);
+                continue;
+            }
+
+            let (left, right) = if edge.source == site {
+                let base = edge.target * spin_dim;
+                (proposed, &spins[base..base + spin_dim])
+            } else {
+                let base = edge.source * spin_dim;
+                (&spins[base..base + spin_dim], proposed)
+            };
+            energy += self.bond_energy(left, right, &edge);
         }
-        total / 2.0 // double-counted bonds
+        energy
+    }
+
+    fn compute_total_energy(&self, spins: &[f64], lattice: &CsrLattice, _beta: f64) -> f64 {
+        let spin_dim = PairInteraction::spin_dim(self);
+        assert_eq!(
+            spins.len(),
+            lattice.n_sites * spin_dim,
+            "spin buffer length does not match lattice and spin dimension"
+        );
+
+        let onsite: f64 = (0..lattice.n_sites)
+            .map(|site| {
+                let base = site * spin_dim;
+                self.onsite_energy(site, &spins[base..base + spin_dim])
+            })
+            .sum();
+
+        onsite
+            + lattice
+                .edges
+                .iter()
+                .map(|edge| {
+                    let left_base = edge.source * spin_dim;
+                    let right_base = edge.target * spin_dim;
+                    self.bond_energy(
+                        &spins[left_base..left_base + spin_dim],
+                        &spins[right_base..right_base + spin_dim],
+                        edge,
+                    )
+                })
+                .sum::<f64>()
     }
 }
 
-/// Cluster algorithm support for Wolff and Swendsen-Wang.
+/// Independent initialization capability.
 ///
-/// Scalar models (Ising, Potts) implement [`flip_in_place`](ClusterModel::flip_in_place)
-/// and [`opposite_spin`](ClusterModel::opposite_spin).
-///
-/// Vector models (XY, Heisenberg) implement [`reflect`](ClusterModel::reflect) and
-/// [`embedding_direction`](ClusterModel::embedding_direction).
-pub trait ClusterModel: Hamiltonian {
-    /// FK bond percolation probability.
-    /// Default: `1 - exp(-2βJ)` for Ising-like models.
-    fn fk_bond_probability(&self, beta: f64) -> f64 {
-        1.0 - (-2.0 * self.coupling() * beta).exp()
-    }
+/// This is intentionally separate from Metropolis proposals: a model may be
+/// initialized by Carlo.rs without pretending to support a particular update.
+pub trait Initializable: Hamiltonian {
+    fn random_spin(&self, rng: &mut impl Rng) -> Spin;
 
-    /// Flip spin in-place (scalar models: Ising, Potts).
-    fn flip_in_place(&self, _spin: &mut [f64], _rng: &mut impl Rng) {
-        panic!("flip_in_place not implemented for vector models");
-    }
-
-    /// Opposite spin for Wolff cluster flip (scalar models only).
-    fn opposite_spin(&self, _spin: f64, _rng: &mut impl Rng) -> f64 {
-        panic!("opposite_spin only for scalar models");
-    }
-
-    /// Reflect spin across plane perpendicular to direction (vector models: XY, Heisenberg).
-    fn reflect(&self, _spin: &mut [f64], _direction: &[f64]) {
-        panic!("reflect only for vector models");
-    }
-
-    /// Random direction for embedding (vector models only).
-    fn embedding_direction(&self, _rng: &mut impl Rng) -> SmallVec<[f64; 3]> {
-        panic!("embedding_direction only for vector models");
-    }
-
-    /// Random spin value for SW cluster assignment (scalar models only).
-    fn random_cluster_spin(&self, _rng: &mut impl Rng) -> f64 {
-        panic!("random_cluster_spin only for scalar models");
-    }
+    fn ordered_spin(&self) -> Spin;
 }
 
-/// Spin proposal for Metropolis algorithm.
+/// Symmetric model-level proposal used by [`StandardStrategy`](crate::StandardStrategy).
 pub trait Proposable: Hamiltonian {
-    /// Propose a random new spin (all components). Returns a SmallVec of length `spin_dim()`.
-    fn propose(&self, rng: &mut impl Rng) -> SmallVec<[f64; 3]>;
+    /// Compatibility proposal that does not inspect the current spin.
+    fn propose(&self, rng: &mut impl Rng) -> Spin;
 
-    /// Normalize a spin vector to unit length (for XY/Heisenberg). Ising/Potts skip this.
+    /// State-aware symmetric proposal.  Discrete models override this to
+    /// avoid no-op proposals; existing custom models inherit `propose`.
+    fn propose_from(&self, _current: &[f64], rng: &mut impl Rng) -> Spin {
+        self.propose(rng)
+    }
+
     fn normalize_spin(&self, _spin: &mut [f64]) {}
 }
 
-/// Magnetization computation for measurements.
+/// Magnetization or another model-native scalar order parameter.
 pub trait Measurable: Hamiltonian {
-    /// Total magnetization |M|/N from the current spin configuration.
     fn magnetization(&self, spins: &[f64]) -> f64;
 }
 
-/// Heat-bath (Glauber dynamics) support.
-///
-/// Models that implement this can be used with [`HeatBathCore`](crate::HeatBathCore),
-/// which directly samples each spin from its equilibrium distribution given
-/// the local neighbor field — no Metropolis rejection step needed.
-pub trait HeatBathable: Hamiltonian {
-    /// Number of discrete spin states (2 for Ising, q for Potts).
-    fn n_states(&self) -> usize;
-
-    /// Boltzmann weight of each state given the local neighbor field.
-    ///
-    /// `neighbors` contains the spin values of adjacent sites.
-    /// Returns a `Vec<f64>` of length `n_states()`, where `w[k]` is the
-    /// un-normalized probability of placing the site in state `k`.
-    fn boltzmann_weights(&self, neighbors: &[f64], beta: f64) -> Vec<f64>;
-
-    /// Sample a spin value from the given probability weights.
-    ///
-    /// `weights` has length `n_states()`. Returns the spin value (e.g. ±1 for Ising).
-    fn sample_spin(&self, weights: &[f64], rng: &mut impl Rng) -> f64;
+/// Auxiliary state shared by cluster construction and transformation.
+#[derive(Debug, Clone)]
+pub enum ClusterAuxiliary {
+    /// Discrete models do not need a global embedding variable for bonds.
+    None,
+    /// Assign every spin in a cluster to one discrete state.
+    DiscreteTarget(f64),
+    /// Reflection normal used by O(N) embedding clusters.
+    Reflection(Spin),
+    /// Leave this SW cluster unchanged.
+    Identity,
 }
 
-/// Continuous-spin heat-bath (Glauber dynamics) support.
+/// Cluster-update policy implemented by models that support Wolff/SW.
 ///
-/// For XY (S¹) and Heisenberg (S²) models, the conditional distribution
-/// P(s_i | neighbors) ∝ exp(βJ s_i · h_i) is von Mises / von Mises-Fisher.
-/// Sampling is dimension-agnostic — each model implements the appropriate
-/// algorithm (Best-Fisher rejection for XY, inverse-CDF for Heisenberg).
-pub trait ContinuousHeatBathable: Hamiltonian {
-    /// Sample a new spin from P(s_i | neighbors) ∝ exp(βJ s_i · h_i).
-    ///
-    /// `neighbors` is a flat slice of neighbor spin components (sd per neighbor).
-    /// Returns a unit vector of length `spin_dim()`.
-    fn heat_bath_sample(
+/// Unlike the previous trait, no method has a panic default and bond
+/// probabilities receive both endpoint spins, the physical bond and the
+/// embedding auxiliary.  This is required for correct O(N) clusters.
+pub trait ClusterModel: Hamiltonian {
+    /// Auxiliary/target for one Wolff cluster, sampled from its seed spin.
+    fn wolff_auxiliary(&self, seed_spin: &[f64], rng: &mut impl Rng) -> ClusterAuxiliary;
+
+    /// Global auxiliary used while forming SW bonds.
+    fn sw_bond_auxiliary(&self, rng: &mut impl Rng) -> ClusterAuxiliary;
+
+    /// Independent transformation for one completed SW cluster.
+    fn sw_cluster_auxiliary(
         &self,
-        neighbors: &[f64],
+        representative_spin: &[f64],
+        bond_auxiliary: &ClusterAuxiliary,
+        rng: &mut impl Rng,
+    ) -> ClusterAuxiliary;
+
+    /// Activation probability for one physical edge.
+    fn cluster_bond_probability(
+        &self,
+        left: &[f64],
+        right: &[f64],
+        bond: &Bond,
+        auxiliary: &ClusterAuxiliary,
+        beta: f64,
+    ) -> f64;
+
+    /// Apply a completed cluster transformation to one site spin.
+    fn transform_cluster_spin(&self, spin: &[f64], auxiliary: &ClusterAuxiliary) -> Spin;
+}
+
+/// Models with a linear local field, used by exact over-relaxation.
+pub trait LocalFieldModel: Hamiltonian {
+    fn local_field(&self, spins: &[f64], lattice: &CsrLattice, site: usize, output: &mut [f64]);
+}
+
+/// Exact discrete conditional sampler.
+pub trait HeatBathable: Hamiltonian {
+    fn heat_bath_sample_site(
+        &self,
+        spins: &[f64],
+        lattice: &CsrLattice,
+        site: usize,
         beta: f64,
         rng: &mut impl Rng,
-    ) -> SmallVec<[f64; 3]>;
+    ) -> Spin;
+}
+
+/// Exact continuous conditional sampler.
+pub trait ContinuousHeatBathable: Hamiltonian {
+    fn heat_bath_sample_site(
+        &self,
+        spins: &[f64],
+        lattice: &CsrLattice,
+        site: usize,
+        beta: f64,
+        rng: &mut impl Rng,
+    ) -> Spin;
 }

@@ -1,43 +1,32 @@
-//! CMC.rs — Classical Monte Carlo algorithm toolbox.
+//! CMC.rs — reusable classical lattice Monte Carlo kernels on top of Carlo.rs.
 //!
-//! Built on [Carlo.rs] for scheduling, measurement, and result analysis.
+//! Carlo.rs owns execution concerns (RNG contexts, thermalization/measurement
+//! scheduling, parallel backends, accumulation and parallel tempering). CMC.rs
+//! owns graph-based physical models, state transitions and observables.
 //!
-//! # Architecture
-//!
-//! ```text
-//! ClassicalMC<H, A>  ← impl MonteCarlo + FromParams (pre-built)
-//!   ├── System       ← mutable state: spins, energy, beta
-//!   ├── H: Hamiltonian ← stateless physics (Ising, Potts, XY, Heisenberg)
-//!   │   + ClusterModel  ← cluster algorithm support
-//!   │   + Proposable    ← spin proposal
-//!   │   + Measurable    ← magnetization
-//!   ├── A: Algorithm ← update strategy (Metropolis, Wolff, Swendsen-Wang)
-//!   └── observables  ← pluggable measurement system
-//! ```
-//!
-//! # Usage
+//! # Quick start
 //!
 //! ```ignore
+//! use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 //! use cmc_rs::{ClassicalMC, IsingModel, MetropolisCore};
-//! use carlo_rs::{Scheduler, RayonBackend, RunConfig, Params};
 //!
-//! type IsingMetro = ClassicalMC<IsingModel, MetropolisCore>;
-//!
+//! type Simulation = ClassicalMC<IsingModel, MetropolisCore>;
 //! let mut params = Params::new();
-//! params.set("L", 16);
-//! params.set("beta", 0.5);
-//!
-//! let config = RunConfig {
-//!     thermalization_sweeps: 1000,
-//!     measurement_sweeps: 10_000,
-//!     binsize: 100,
-//!     base_seed: 42,
-//!     ..Default::default()
-//! };
-//!
-//! let scheduler = Scheduler::new(RayonBackend::new(1), config);
-//! let results = scheduler.run_one::<IsingMetro>(&params);
+//! params.set("Lx", 16);
+//! params.set("Ly", 16);
+//! params.set("beta", 0.44);
+//! let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
+//!     .run_one::<Simulation>(&params);
 //! ```
+//!
+//! # Extensibility
+//!
+//! * [`CsrLattice`] is an arbitrary weighted undirected multigraph.
+//! * [`Hamiltonian`] defines physical onsite/bond energy.
+//! * Capability traits opt models into Metropolis, cluster, heat-bath or
+//!   over-relaxation kernels without a monolithic model interface.
+//! * [`ClassicalMC`] composes model + kernel + observable set into Carlo.rs's
+//!   [`carlo_rs::MonteCarlo`] trait.
 
 pub mod algorithm;
 pub mod classical_mc;
@@ -50,42 +39,25 @@ pub mod postprocess;
 pub mod proposal;
 pub mod system;
 
-// Re-export key types from hamiltonian (traits)
-pub use hamiltonian::{
-    ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable, Measurable, Proposable,
-};
-
-// Re-export models
-pub use models::{HeisenbergModel, IsingModel, PottsModel, XYModel};
-
-// Re-export algorithms
 pub use algorithm::{
-    Algorithm, ContinuousHeatBathCore, HeatBathCore, MetropolisCore, MicrocanonicalCore, SWCore,
-    WolffCore,
+    Algorithm, ContinuousHeatBathCore, HeatBathCore, HybridCore, MetropolisCore,
+    MicrocanonicalCore, SWCore, SimulationPhase, WolffCore,
 };
-
-// Re-export observables
-pub use observables::{
-    DefaultObservableSet, EnergyPerSite, Magnetization, Observable, TotalEnergy,
+pub use classical_mc::{build_lattice_from_params, ClassicalMC, FromHamiltonianParams};
+pub use hamiltonian::{
+    ClusterAuxiliary, ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable,
+    Initializable, LocalFieldModel, Measurable, PairInteraction, Proposable, Spin,
 };
-
-// Re-export classical_mc
-pub use classical_mc::{ClassicalMC, FromHamiltonianParams};
-
-// Re-export lattice
 pub use lattice::{
     build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
-    BondType, CsrLattice,
+    Bond, BondType, CsrLattice,
 };
-
-// Re-export multi-spin
+pub use models::{HeisenbergModel, IsingModel, ONModel, PottsModel, XYModel};
 pub use multi_spin::{MultiSpinIsing, N_REPLICAS};
-
-// Re-export proposal
-pub use proposal::{OPSSStrategy, ProposalStrategy, StandardStrategy};
-
-// Re-export system
-pub use system::System;
-
-// Re-export postprocess
+pub use observables::{
+    DefaultObservableSet, EmptyObservableSet, EnergyPerSite, Magnetization, MomentSpec, Observable,
+    ObservableSet, TotalEnergy,
+};
 pub use postprocess::{binder_cumulant, compute_correlation_1d, specific_heat, susceptibility};
+pub use proposal::{OPSSStrategy, ProposalStrategy, ProposedSpin, StandardStrategy};
+pub use system::{SiteChange, System};
