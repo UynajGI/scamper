@@ -1,9 +1,10 @@
 use cmc_rs::{
     compute_particle_energy, metropolis_hastings_step, GrandCanonical, InsertDeleteParticle,
-    IsothermalIsobaric, IsotropicVolumeChange, LennardJones, MetropolisHastingsAcceptance,
-    MoleculeTopology, PairPotential, ParticleBatchMove, ParticleBatchPatch, ParticleConfiguration,
-    ParticleDeletion, ParticleInsertion, ParticleSystem, ProposedMove, RigidMoleculeRotation,
-    SimulationCell, TorsionDefinition, TorsionRotation, TrialEvaluator, VolumeChangePatch,
+    IsothermalIsobaric, IsotropicVolumeChange, LennardJones, LogVolumeScale,
+    MetropolisHastingsAcceptance, MoleculeTopology, PairPotential, ParticleBatchMove,
+    ParticleBatchPatch, ParticleConfiguration, ParticleDeletion, ParticleInsertion, ParticleSystem,
+    ProposedMove, RigidMoleculeRotation, RigidMoleculeTranslation, SimulationCell,
+    TorsionDefinition, TorsionRotation, TrialEvaluator, VolumeChangePatch,
 };
 use rand::SeedableRng;
 
@@ -352,4 +353,170 @@ fn periodic_energy_audit_detects_cache_corruption_instead_of_masking_it() {
         );
     }));
     assert!(result.is_err());
+}
+
+#[test]
+fn rigid_translation_preserves_all_pairwise_bond_lengths() {
+    let cell = cmc_rs::OrthorhombicCell::new([10.0, 10.0]).unwrap();
+    let configuration =
+        ParticleConfiguration::new(vec![[9.8, 5.0], [0.2, 5.0], [0.0, 5.3]], vec![0; 3], cell)
+            .unwrap();
+    let topology = MoleculeTopology::new(3, vec![vec![0, 1, 2]]).unwrap();
+    let translation = RigidMoleculeTranslation::new(0.5).unwrap();
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(42);
+    let proposal = translation.propose(&configuration, &topology, 0, &mut rng);
+
+    // All pairwise distances must be preserved.
+    for left in 0..3 {
+        for right in left + 1..3 {
+            let before = configuration
+                .cell()
+                .distance_squared(configuration.position(left), configuration.position(right));
+            let after = configuration.cell().distance_squared(
+                &proposal.movement.positions()[left],
+                &proposal.movement.positions()[right],
+            );
+            assert!(
+                (before - after).abs() < 1e-12,
+                "bond {left}-{right} changed"
+            );
+        }
+    }
+}
+
+#[test]
+fn multi_species_insertion_probabilities_are_proportional_to_weights() {
+    let proposal = InsertDeleteParticle::from_species(vec![(0, 3.0), (1, 1.0)]).unwrap();
+    let cell = cmc_rs::OrthorhombicCell::new([5.0]).unwrap();
+    let configuration = ParticleConfiguration::new(vec![[2.5]], vec![0; 1], cell).unwrap();
+    let potential = ZeroPotential {
+        cutoff_squared: 0.25,
+    };
+    let system = ParticleSystem::new(configuration, &potential, 1.0).unwrap();
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(53);
+
+    let mut species_0 = 0usize;
+    let mut species_1 = 0usize;
+    for _ in 0..2000 {
+        let proposed = proposal.propose(&system, &mut rng);
+        match proposed.movement {
+            cmc_rs::GrandCanonicalMove::Insert(insertion) => {
+                if insertion.species == 0 {
+                    species_0 += 1;
+                } else if insertion.species == 1 {
+                    species_1 += 1;
+                }
+            }
+            cmc_rs::GrandCanonicalMove::Delete(_) => {}
+        }
+    }
+    // Species 0 weight 3 → ~75%, species 1 weight 1 → ~25%
+    let total = (species_0 + species_1) as f64;
+    let ratio_0 = species_0 as f64 / total;
+    assert!(
+        (0.70..0.80).contains(&ratio_0),
+        "species 0 ratio = {ratio_0:.3}"
+    );
+}
+
+#[test]
+fn particle_count_bounds_force_insertion_or_deletion_branch() {
+    let proposal = InsertDeleteParticle::new(0)
+        .with_particle_bounds(0, Some(2))
+        .unwrap();
+    let potential = ZeroPotential {
+        cutoff_squared: 0.25,
+    };
+    let cell = cmc_rs::OrthorhombicCell::new([5.0, 5.0]).unwrap();
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(67);
+
+    // At N=0, only insertions allowed.
+    let configuration = ParticleConfiguration::new(Vec::new(), Vec::new(), cell).unwrap();
+    let empty_system = ParticleSystem::new(configuration, &potential, 1.0).unwrap();
+    for _ in 0..100 {
+        let proposed = proposal.propose(&empty_system, &mut rng);
+        assert!(
+            matches!(proposed.movement, cmc_rs::GrandCanonicalMove::Insert(_)),
+            "only insertions allowed at minimum particles"
+        );
+    }
+
+    // At N=2, only deletions allowed.
+    let full_config =
+        ParticleConfiguration::new(vec![[0.5, 0.5], [2.5, 2.5]], vec![0; 2], cell).unwrap();
+    let full_system = ParticleSystem::new(full_config, &potential, 1.0).unwrap();
+    for _ in 0..100 {
+        let proposed = proposal.propose(&full_system, &mut rng);
+        assert!(
+            matches!(proposed.movement, cmc_rs::GrandCanonicalMove::Delete(_)),
+            "only deletions allowed at maximum particles"
+        );
+    }
+}
+
+#[test]
+fn log_volume_scale_adapts_toward_target_acceptance() {
+    let mut scale = LogVolumeScale::new(0.1).with_adaptation(0.5, 1, 1.0, 1e-6, 100.0);
+
+    // Feed many consecutive accepted trials — scale should increase.
+    for _ in 0..200 {
+        scale.record_result(true);
+        scale.finish_sweep(true);
+    }
+    let expanded = scale.max_log_volume_change();
+    assert!(
+        expanded > 0.1,
+        "scale should grow with high acceptance: {expanded}"
+    );
+
+    // Feed many consecutive rejected trials — scale should shrink back.
+    let mut scale = LogVolumeScale::new(0.1).with_adaptation(0.5, 1, 1.0, 1e-6, 100.0);
+    for _ in 0..200 {
+        scale.record_result(false);
+        scale.finish_sweep(true);
+    }
+    let shrunk = scale.max_log_volume_change();
+    assert!(
+        shrunk < 0.1,
+        "scale should shrink with low acceptance: {shrunk}"
+    );
+}
+
+#[test]
+fn volume_change_rejects_cutoff_exceeding_half_minimum_cell_length() {
+    let potential = ZeroPotential {
+        cutoff_squared: 4.0,
+    }; // cutoff = 2.0
+    let cell = cmc_rs::OrthorhombicCell::new([10.0, 10.0, 10.0]).unwrap(); // half-min = 5.0, cutoff OK
+    let configuration =
+        ParticleConfiguration::new(vec![[1.0; 3], [8.0; 3]], vec![0; 2], cell).unwrap();
+    let system = ParticleSystem::new(configuration, &potential, 1.0).unwrap();
+    let positions = system.configuration().positions().to_vec();
+    let energy = system.energy;
+
+    // Scale by 0.2 → scale per axis = 0.2^(1/3) ≈ 0.585
+    // New box ≈ 5.85, half minimum ≈ 2.925, cutoff 2.0 < 2.925 → OK
+    // Scale by 0.04 → scale per axis = 0.04^(1/3) ≈ 0.342
+    // New box ≈ 3.42, half minimum ≈ 1.71, cutoff 2.0 > 1.71 → reject.
+    let movement = IsotropicVolumeChange::new(0.04f64.ln());
+    let mut patch = VolumeChangePatch::default();
+    let delta = system.evaluate_trial(&potential, &movement, &mut patch);
+
+    assert_eq!(
+        delta.energy,
+        f64::INFINITY,
+        "cutoff violation must be rejected"
+    );
+    // State must be unchanged.
+    assert_eq!(system.configuration().positions(), positions);
+    assert_eq!(system.energy, energy);
+    assert_eq!(system.configuration().cell().volume(), 1000.0);
+}
+
+#[test]
+fn grand_canonical_from_chemical_potential_uses_dimension_and_thermal_wavelength() {
+    let ensemble = GrandCanonical::from_chemical_potential(2.0, -1.5, 3, 2.0);
+    let expected = 2.0 * (-1.5) - 3.0 * 2.0f64.ln();
+    assert!((ensemble.log_activity() - expected).abs() < 1e-12);
+    assert!((ensemble.beta() - 2.0).abs() < 1e-12);
 }
