@@ -126,6 +126,35 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
         })
     }
 
+    /// Create a configured run from an already constructed Monte Carlo value.
+    ///
+    /// This avoids forcing models with closures, shared datasets or other
+    /// non-`Params` construction paths to implement [`crate::FromParams`].
+    pub fn from_parts(
+        mut context: Context<R>,
+        mut mc: MC,
+        task_id: TaskId,
+        run_id: RunId,
+        config: RunConfig,
+    ) -> Self {
+        let initial_phase = if config.thermalization_sweeps == 0 {
+            RunPhase::Measurement
+        } else {
+            RunPhase::Thermalization
+        };
+        context.enter_phase(initial_phase);
+        mc.on_phase_start(initial_phase, &mut context);
+        Self {
+            context,
+            mc,
+            task_id,
+            run_id,
+            target_sweeps: config.measurement_sweeps,
+            sweeps_done: 0,
+            config,
+        }
+    }
+
     /// Create run from existing context and MC (backward compatibility).
     pub fn from_context(context: Context<R>, mc: MC) -> Self {
         Self {
@@ -279,7 +308,15 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
     }
 
     /// Finalize run and return results.
-    pub fn finalize(mut self, base_seed: u64) -> Results {
+    pub fn finalize(self, base_seed: u64) -> Results {
+        self.finalize_with_mc(base_seed).0
+    }
+
+    /// Finalize a run while returning ownership of the Monte Carlo value.
+    ///
+    /// Statistical samplers use this to recover posterior traces that are
+    /// intentionally not flattened into Carlo.rs scalar measurements.
+    pub fn finalize_with_mc(mut self, base_seed: u64) -> (Results, MC) {
         let previous = self.context.phase();
         self.mc.on_phase_end(previous, &mut self.context);
         self.context.enter_phase(RunPhase::Finished);
@@ -295,7 +332,7 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
             measurement_sweeps: self.sweeps_done,
             n_tasks: 1,
         });
-        results
+        (results, self.mc)
     }
 }
 

@@ -848,6 +848,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcmc-rs"
+version = "0.1.0"
+dependencies = [
+ "carlo-rs",
+ "hdf5",
+ "rand",
+ "rand_core",
+ "rand_xoshiro",
+ "rayon",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

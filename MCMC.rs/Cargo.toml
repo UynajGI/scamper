@@ -1,0 +1,26 @@
+[package]
+name = "mcmc-rs"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Statistical MCMC kernels, traces, and multi-chain diagnostics for Scuttle"
+
+[dependencies]
+carlo-rs = { path = "../Carlo.rs" }
+rand = { workspace = true }
+rand_core = { workspace = true }
+rand_xoshiro = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+hdf5 = { workspace = true, optional = true }
+
+[features]
+default = []
+hdf5 = ["dep:hdf5"]
+
+[dev-dependencies]
+
+[lints]
+workspace = true
