@@ -1,8 +1,8 @@
-//! CMC.rs — reusable classical lattice Monte Carlo kernels on top of Carlo.rs.
+//! CMC.rs — reusable classical lattice and particle Monte Carlo kernels on top of Carlo.rs.
 //!
 //! Carlo.rs owns execution concerns (RNG contexts, thermalization/measurement
 //! scheduling, parallel backends, accumulation and parallel tempering). CMC.rs
-//! owns graph-based physical models, state transitions and observables.
+//! owns graph/particle physical models, state transitions and observables.
 //!
 //! # Quick start
 //!
@@ -26,7 +26,8 @@
 //! | [`core`] | Move types, trial evaluation, ensemble, acceptance rules, visit schedules |
 //! | [`lattice`] | Graph topology, physical state, Hamiltonian traits, models, proposals |
 //! | [`algorithms`] | Update kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
-//! | [`observables`] | Measurement traits and built-in observables (energy, magnetization, correlation) |
+//! | [`observables`] | Measurement traits and built-in lattice observables |
+//! | [`particle`] | Periodic particle states, Lennard-Jones potentials, cell lists and NVT translation kernels |
 //!
 //! # Extensibility
 //!
@@ -50,6 +51,7 @@ pub mod algorithms;
 pub mod core;
 pub mod lattice;
 pub mod observables;
+pub mod particle;
 
 // ── Flat public re-exports (backward-compatible) ─────────────
 
@@ -79,5 +81,11 @@ pub use multi_spin::{MultiSpinIsing, N_REPLICAS};
 pub use observables::{
     compute_correlation_1d, DefaultObservableSet, EmptyObservableSet, EnergyPerSite, Magnetization,
     MomentSpec, Observable, ObservableSet, TotalEnergy,
+};
+pub use particle::{
+    compute_total_energy as compute_particle_energy, CellList, CutoffTreatment, LennardJones,
+    LennardJonesNvt, LennardJonesSpecies, OrthorhombicCell, PairPotential, ParticleAlgorithm,
+    ParticleConfiguration, ParticleEnergyPatch, ParticleError, ParticleMC, ParticleMetropolisCore,
+    ParticleSystem, ParticleTranslation, SimulationCell, TranslateParticle,
 };
 pub use postprocess::{binder_cumulant, specific_heat, susceptibility};

@@ -6,9 +6,9 @@
 
 /// Changes in thermodynamic extensive variables caused by one trial move.
 ///
-/// Current lattice-spin kernels only modify `energy`.  The remaining fields
-/// are intentionally present in the stable core so future particle/NPT/grand
-/// canonical backends can reuse the same Metropolis-Hastings driver.
+/// Lattice-spin kernels modify only `energy`. Particle kernels also use
+/// `log_jacobian`. `particle_count` and `volume` are reserved for NPT/grand
+/// canonical extensions.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ThermodynamicDelta {
     pub energy: f64,
@@ -64,7 +64,14 @@ impl CanonicalEnsemble {
 impl Ensemble<ThermodynamicDelta> for CanonicalEnsemble {
     #[inline]
     fn log_weight_ratio(&self, delta: &ThermodynamicDelta) -> f64 {
-        -self.beta * delta.energy + delta.log_jacobian
+        let energy_term = if delta.energy == f64::INFINITY {
+            f64::NEG_INFINITY
+        } else if delta.energy == f64::NEG_INFINITY {
+            f64::INFINITY
+        } else {
+            -self.beta * delta.energy
+        };
+        energy_term + delta.log_jacobian
     }
 }
 
@@ -77,5 +84,12 @@ mod tests {
         let ensemble = CanonicalEnsemble::new(2.5);
         let delta = ThermodynamicDelta::energy(1.2);
         assert!((ensemble.log_weight_ratio(&delta) + 3.0).abs() < 1e-14);
+    }
+
+    #[test]
+    fn canonical_rejects_an_infinite_energy_barrier_even_at_zero_beta() {
+        let ensemble = CanonicalEnsemble::new(0.0);
+        let delta = ThermodynamicDelta::energy(f64::INFINITY);
+        assert_eq!(ensemble.log_weight_ratio(&delta), f64::NEG_INFINITY);
     }
 }

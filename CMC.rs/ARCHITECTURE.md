@@ -2,7 +2,7 @@
 
 ## Scope of this revision
 
-This revision changes infrastructure, not the modeled domains. The existing lattice-spin models and algorithms are rebuilt on a reusable trial/ensemble/cache foundation. No particle backend, density-of-states sampler, Wang-Landau controller or worm configuration is added in this package.
+This revision extends the reusable trial/ensemble/cache foundation from lattice spins to the first continuous domain: periodic Lennard-Jones NVT particles with single-particle translations. Density-of-states samplers, NPT/μVT moves, Wang-Landau controllers and worm configurations are not part of this stage.
 
 ## Layering
 
@@ -11,22 +11,23 @@ Carlo.rs
   Context / RunPhase / Scheduler / Run / Backend / Measurements / PT
       |
       v
-ClassicalMC<H, A, O>
-  H: Hamiltonian
-  A: Algorithm<H>
-  O: ObservableSet<H>
-      |
-      +-- System: accepted lattice-spin configuration + energy cache + beta
-      +-- CsrLattice: physical edges + CSR incidences
-      +-- sampling core:
-            ProposedMove
-            TrialEvaluator
-            ThermodynamicDelta
-            Ensemble
-            reusable Patch
+ClassicalMC<H, A, O>                         ParticleMC<D, P, A>
+  H: Hamiltonian                               P: PairPotential
+  A: Algorithm<H>                              A: ParticleAlgorithm<D, P>
+  O: ObservableSet<H>                              |
+      |                                            +-- ParticleSystem: accepted coordinates
+      +-- System: accepted lattice state           |   + physical energy + beta + CellList
+      +-- CsrLattice: physical graph                +-- OrthorhombicCell / ParticleConfiguration
+      |                                            +-- LennardJones / TranslateParticle
+      +------------------- sampling core -------------------+
+                          ProposedMove
+                          TrialEvaluator
+                          ThermodynamicDelta
+                          Ensemble
+                          reusable Patch
 ```
 
-`ClassicalMC` remains the adapter implementing Carlo.rs `MonteCarlo`, `FromParams`, and `ParallelTemperingCompatible`.
+`ClassicalMC` remains the lattice adapter implementing Carlo.rs `MonteCarlo`, `FromParams`, and `ParallelTemperingCompatible`. `ParticleMC` provides the equivalent continuous-particle composition, with `LennardJonesNvt<D>` as the scheduler-ready monatomic alias.
 
 ## Carlo.rs lifecycle extension
 
@@ -94,6 +95,20 @@ O(number of changed sites + number of incident physical edges)
 
 Each physical edge is counted once, including parallel bonds and self-loops. Wolff therefore avoids the previous unconditional full-graph energy recomputation. SW changes all sites in the usual case, but still uses the same atomic cache contract.
 
+## Continuous-particle backend
+
+`ParticleSystem<D>` implements the same `TrialEvaluator` transaction for `ParticleTranslation<D>`:
+
+- `ParticleConfiguration<D>` stores AoS coordinates, species labels and an `OrthorhombicCell<D>`;
+- `LennardJones` implements `PairPotential` with Lorentz-Berthelot mixing and three cutoff treatments;
+- `CellList<D>` stores packed buckets, reverse particle indices and unique periodic neighbor-cell stencils;
+- `ParticleEnergyPatch` reuses candidate scratch and carries the local physical-energy delta plus old/new cell indices;
+- evaluation reads accepted state only; commit wraps the position, patches packed membership and adds the cached energy delta once;
+- `TranslateParticle<D>` uses symmetric uniform-box displacements, adapts only in thermalization and freezes in measurement;
+- `LennardJonesNvt<D>` composes the backend into Carlo.rs scheduling and parallel-tempering beta changes.
+
+The first implementation deliberately uses a cell list rather than a Verlet list. Trial queries are local and accepted moves update membership without rebuilding the spatial cache.
+
 ## Graph representation
 
 `CsrLattice` contains:
@@ -106,7 +121,7 @@ Each physical edge is counted once, including parallel bonds and self-loops. Wol
 
 It supports irregular graphs, arbitrary dimension, weighted/disordered interactions, parallel bonds and self-loops without an implicit divide-by-two convention.
 
-## Source module layout (Phase 1)
+## Source module layout (Phases 1-2)
 
 | Directory | Contents |
 |-----------|----------|
@@ -114,6 +129,7 @@ It supports irregular graphs, arbitrary dimension, weighted/disordered interacti
 | `lattice/` | `graph.rs`, `state.rs`, `interaction.rs`, `models.rs`, `proposal.rs` |
 | `algorithms/` | `common.rs` (trait + phase), 6 kernel files |
 | `observables/` | `energy.rs`, `magnetization.rs`, `correlation.rs`, `common.rs` |
+| `particle/` | cell geometry, configuration, potential, cell list, move, state, kernel and Carlo adapter |
 | Top-level | `classical_mc.rs`, `multi_spin.rs`, `postprocess.rs` |
 
 All public types are re-exported flat from `lib.rs`.

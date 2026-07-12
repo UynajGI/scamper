@@ -325,6 +325,7 @@ version = "0.1.0-dev1"
 dependencies = [
  "approx",
  "carlo-rs",
+ "criterion",
  "rand",
  "rand_xoshiro",
  "serde_json",

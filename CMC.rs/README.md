@@ -5,7 +5,7 @@ CMC.rs is Scuttle's classical Monte Carlo sampling layer. It is intentionally bu
 - **Carlo.rs** owns RNG contexts, explicit run phases, scheduling, backends, accumulation/results, checkpoint orchestration and parallel tempering.
 - **CMC.rs** owns classical configurations, physical energy models, transactional trial moves, target ensembles, update kernels and observables.
 
-This revision is a foundation refactor. It keeps the existing lattice-spin functionality and public `ClassicalMC<Model, Algorithm>` composition, but moves its updates onto reusable sampling primitives. Particle systems, Wang-Landau and worm sectors are deliberately not included yet.
+This revision keeps the existing lattice-spin functionality and public `ClassicalMC<Model, Algorithm>` composition, while adding the first continuous-system backend: periodic Lennard-Jones NVT particles with transactional single-particle translations and packed cell lists. NPT, μVT, Wang-Landau and worm sectors remain deliberately outside this stage.
 
 ## Existing user entry point
 
@@ -28,9 +28,9 @@ let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
 
 The same wrapper continues to support `WolffCore`, `SWCore`, `HeatBathCore`, `ContinuousHeatBathCore`, `MicrocanonicalCore`, and statically composed `HybridCore` updates when the model implements the required capability trait.
 
-## Module organisation (Phase 1)
+## Module organisation (Phases 1–2)
 
-Source code is organised into four subdirectories plus three top-level adapter modules:
+Source code is organised into five subdirectories plus three top-level adapter modules:
 
 | Directory | Purpose |
 |-----------|---------|
@@ -38,6 +38,7 @@ Source code is organised into four subdirectories plus three top-level adapter m
 | `lattice/` | `CsrLattice` graph, `System` state, `Hamiltonian` traits, built-in models, `ProposalStrategy` |
 | `algorithms/` | `Algorithm<H>` trait, 6 kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
 | `observables/` | `Observable<H>`, `DefaultObservableSet`, energy, magnetisation, correlation |
+| `particle/` | Periodic cells, AoS coordinates, pair potentials, packed cell lists, translations and NVT adapter |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
 The public API is re-exported flat from `lib.rs` — user code sees no change.
@@ -81,6 +82,41 @@ let outcome = cmc_rs::metropolis_hastings_step(
 ```
 
 Evaluation is transactional: a rejected move never mutates the accepted configuration or its cache. An accepted move commits configuration and cache changes once.
+
+
+## Continuous Lennard-Jones NVT
+
+The continuous path reuses exactly the same sampling transaction as the lattice path:
+
+```text
+TranslateParticle
+    -> ProposedMove<ParticleTranslation<D>>
+    -> ParticleSystem::evaluate_trial (read-only accepted state)
+    -> CanonicalEnsemble
+    -> MetropolisHastingsAcceptance
+    -> ParticleSystem::commit_trial (accepted only)
+```
+
+A scheduler-ready monatomic simulation is available as `LennardJonesNvt<D>`:
+
+```rust,ignore
+use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
+use cmc_rs::LennardJonesNvt;
+
+let mut params = Params::new();
+params.set("n_particles", 108usize);
+params.set("density", 0.8);
+params.set("beta", 1.0);
+params.set("cutoff", 2.5);
+params.set("max_displacement", 0.1);
+
+let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
+    .run_one::<LennardJonesNvt<3>>(&params);
+```
+
+`OrthorhombicCell<D>` supports periodic minimum-image geometry in two, three, or other const-generic dimensions. `LennardJones` supports truncated, shifted-potential and shifted-force cutoffs plus Lorentz-Berthelot species mixing. `CellList<D>` stores packed particle buckets and applies accepted membership changes in O(1), without rebuilding on each trial. Translation scale adaptation is restricted to thermalization and frozen before production measurements.
+
+See [`PARTICLE_CORE.md`](PARTICLE_CORE.md) for the transaction and parameter contract.
 
 ## Batch updates and energy caches
 

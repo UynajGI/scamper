@@ -2,6 +2,39 @@
 
 Date: 2026-07-12
 
+## Phase 2 implementation status
+
+Phase 2 adds the first continuous-system backend without changing the lattice public API:
+
+- const-generic periodic `OrthorhombicCell<D>` geometry and minimum-image displacement;
+- AoS `ParticleConfiguration<D>` with `u16` species labels;
+- species-aware `PairPotential` and Lennard-Jones 12-6 with truncated, shifted-potential and shifted-force cutoffs;
+- packed `CellList<D>` buckets, precomputed periodic neighbor-cell stencils and O(1) accepted membership patches;
+- transactional `ParticleTranslation<D>` evaluation using reusable `ParticleEnergyPatch` scratch;
+- warmup-only adaptive `TranslateParticle<D>` proposal and frozen production kernel;
+- scheduler-ready `LennardJonesNvt<D>` adapter with energy, energy-per-particle and density measurements;
+- Criterion benchmarks for cell-list translation attempts and the O(N²) reference energy.
+
+New particle tests cover analytic pair energy, periodic minimum image, boundary-crossing commits, rejection immutability, cell-list candidate completeness, repeated cache patches, cutoff limits, deterministic trajectories, adaptation freeze, scheduler integration, and a two-particle canonical energy distribution checked against deterministic midpoint quadrature.
+
+Validation completed for this handoff:
+
+```text
+cargo fmt --all --check                                      PASS
+cargo check --workspace --all-targets                        PASS
+cargo test -p cmc-rs                                         PASS: 95 passed, 1 ignored
+cargo clippy -p cmc-rs --lib --no-deps -- -D warnings        PASS
+cargo clippy (particle integration tests and benchmark)       PASS
+```
+
+The Criterion benchmark target is type-checked and linted. Run measurements locally with:
+
+```bash
+cargo bench -p cmc-rs --bench particle_bench
+```
+
+A full `cargo clippy --workspace --all-targets -- -D warnings` under Rust 1.88 also reports pre-existing `uninlined_format_args` warnings in Phase 0/1 Carlo.rs and CMC.rs test code; no Stage-2 target emits a Clippy warning.
+
 ## Phase 1 completion status
 
 Phase 1 (CMC.rs module reorganization) is complete. The 15 flat source files have been
