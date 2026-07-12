@@ -416,7 +416,7 @@ mod tests {
 
         let replica0 = msi.extract_replica(0);
         let mag: f64 = replica0.iter().copied().sum::<f64>().abs() / replica0.len() as f64;
-        assert!(mag > 0.5, "magnetization = {}", mag);
+        assert!(mag > 0.5, "magnetization = {mag}");
     }
 
     #[test]

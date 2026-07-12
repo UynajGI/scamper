@@ -83,4 +83,28 @@ impl<const D: usize> ParticleConfiguration<D> {
     pub(crate) fn set_position(&mut self, particle: usize, position: [f64; D]) {
         self.positions[particle] = position;
     }
+
+    pub(crate) fn set_positions_and_cell(
+        &mut self,
+        positions: Vec<[f64; D]>,
+        cell: OrthorhombicCell<D>,
+    ) {
+        assert_eq!(positions.len(), self.species.len());
+        self.positions = positions;
+        self.cell = cell;
+    }
+
+    pub(crate) fn push_particle(&mut self, mut position: [f64; D], species: u16) -> usize {
+        self.cell.wrap(&mut position);
+        let particle = self.positions.len();
+        self.positions.push(position);
+        self.species.push(species);
+        particle
+    }
+
+    pub(crate) fn swap_remove_particle(&mut self, particle: usize) -> ([f64; D], u16) {
+        let position = self.positions.swap_remove(particle);
+        let species = self.species.swap_remove(particle);
+        (position, species)
+    }
 }

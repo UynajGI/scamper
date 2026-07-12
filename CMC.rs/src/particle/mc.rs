@@ -1,9 +1,11 @@
-//! Carlo.rs adapter for Lennard-Jones NVT particle simulations.
+//! Carlo.rs adapters for Lennard-Jones NVT, NPT and μVT simulations.
 
 use crate::algorithms::SimulationPhase;
 use crate::particle::{
-    CutoffTreatment, LennardJones, OrthorhombicCell, ParticleAlgorithm, ParticleConfiguration,
-    ParticleError, ParticleMetropolisCore, ParticleSystem, SimulationCell, TranslateParticle,
+    CanonicalParticleKernel, CutoffTreatment, InsertDeleteParticle, LennardJones, LogVolumeScale,
+    OrthorhombicCell, ParticleAlgorithm, ParticleConfiguration, ParticleError,
+    ParticleGrandCanonicalCore, ParticleMetropolisCore, ParticleNptMetropolisCore, ParticleSystem,
+    SimulationCell, TranslateParticle,
 };
 use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible, Params};
 use std::{fmt::Display, str::FromStr};
@@ -52,7 +54,10 @@ where
 
     fn measure(&mut self, context: &mut Context<Self::Rng>) {
         let particles = self.system.len() as f64;
+        let volume = self.system.configuration().cell().volume();
         context.measure("Energy", self.system.energy);
+        context.measure("ParticleNumber", particles);
+        context.measure("Volume", volume);
         context.measure(
             "EnergyPerParticle",
             if particles == 0.0 {
@@ -61,10 +66,7 @@ where
                 self.system.energy / particles
             },
         );
-        context.measure(
-            "Density",
-            particles / self.system.configuration().cell().volume(),
-        );
+        context.measure("Density", particles / volume);
     }
 
     fn name(&self) -> &'static str {
@@ -75,7 +77,7 @@ where
 impl<const D: usize, P, A> ParallelTemperingCompatible for ParticleMC<D, P, A>
 where
     P: crate::particle::PairPotential,
-    A: ParticleAlgorithm<D, P>,
+    A: ParticleAlgorithm<D, P> + CanonicalParticleKernel,
 {
     fn log_weight_ratio(&self, parameter: &str, new_value: f64) -> f64 {
         match parameter {
@@ -98,6 +100,14 @@ where
 /// Ready-to-schedule monatomic Lennard-Jones NVT simulation.
 pub type LennardJonesNvt<const D: usize> = ParticleMC<D, LennardJones, ParticleMetropolisCore<D>>;
 
+/// Ready-to-schedule monatomic Lennard-Jones NPT simulation.
+pub type LennardJonesNpt<const D: usize> =
+    ParticleMC<D, LennardJones, ParticleNptMetropolisCore<D>>;
+
+/// Ready-to-schedule monatomic Lennard-Jones grand-canonical simulation.
+pub type LennardJonesMuVt<const D: usize> =
+    ParticleMC<D, LennardJones, ParticleGrandCanonicalCore<D>>;
+
 impl<const D: usize> FromParams for LennardJonesNvt<D> {
     fn validate_params(params: &Params) -> Result<(), CarloError> {
         parse_lj_params::<D>(params).map(|_| ())
@@ -105,32 +115,93 @@ impl<const D: usize> FromParams for LennardJonesNvt<D> {
 
     fn from_params(params: &Params, _rng: &mut Self::Rng) -> Result<Self, CarloError> {
         let parsed = parse_lj_params::<D>(params)?;
-        let cell = OrthorhombicCell::new(parsed.lengths).map_err(particle_config_error)?;
-        let positions = regular_grid_positions(parsed.n_particles, &cell);
-        let configuration =
-            ParticleConfiguration::new(positions, vec![0; parsed.n_particles], cell)
-                .map_err(particle_config_error)?;
-        let potential = LennardJones::with_treatment(
-            parsed.sigma,
-            parsed.epsilon,
-            parsed.cutoff,
-            parsed.treatment,
-        )
-        .map_err(particle_config_error)?;
-        let system = ParticleSystem::new(configuration, &potential, parsed.beta)
-            .map_err(particle_config_error)?;
-        let translation = TranslateParticle::new(parsed.max_displacement).with_adaptation(
-            parsed.target_acceptance,
-            parsed.adaptation_interval,
-            parsed.adaptation_gain,
-            parsed.minimum_displacement,
-            parsed.maximum_displacement,
-        );
+        let (system, potential) = build_lj_system(&parsed)?;
+        let translation = build_translation(&parsed);
         let algorithm = ParticleMetropolisCore::new(parsed.max_displacement)
             .with_translation(translation)
             .with_energy_check_interval(parsed.energy_check_interval);
         Ok(Self::new(system, potential, algorithm))
     }
+}
+
+impl<const D: usize> FromParams for LennardJonesNpt<D> {
+    fn validate_params(params: &Params) -> Result<(), CarloError> {
+        let parsed = parse_lj_params::<D>(params)?;
+        parse_npt_params(params, &parsed).map(|_| ())
+    }
+
+    fn from_params(params: &Params, _rng: &mut Self::Rng) -> Result<Self, CarloError> {
+        let parsed = parse_lj_params::<D>(params)?;
+        let npt = parse_npt_params(params, &parsed)?;
+        let (system, potential) = build_lj_system(&parsed)?;
+        let volume = LogVolumeScale::new(npt.max_log_volume_change).with_adaptation(
+            npt.target_acceptance,
+            npt.adaptation_interval,
+            npt.adaptation_gain,
+            npt.minimum_log_volume_change,
+            npt.maximum_log_volume_change,
+        );
+        let algorithm = ParticleNptMetropolisCore::new(
+            parsed.max_displacement,
+            npt.max_log_volume_change,
+            npt.pressure,
+        )
+        .with_translation(build_translation(&parsed))
+        .with_volume_proposal(volume)
+        .with_volume_attempts(npt.volume_attempts)
+        .with_energy_check_interval(parsed.energy_check_interval);
+        Ok(Self::new(system, potential, algorithm))
+    }
+}
+
+impl<const D: usize> FromParams for LennardJonesMuVt<D> {
+    fn validate_params(params: &Params) -> Result<(), CarloError> {
+        let parsed = parse_lj_params_allow_empty::<D>(params)?;
+        let grand = parse_grand_canonical_params::<D>(params, &parsed)?;
+        let (system, _) = build_lj_system(&parsed)?;
+        grand
+            .exchange
+            .validate_state(&system)
+            .map_err(particle_config_error)
+    }
+
+    fn from_params(params: &Params, _rng: &mut Self::Rng) -> Result<Self, CarloError> {
+        let parsed = parse_lj_params_allow_empty::<D>(params)?;
+        let grand = parse_grand_canonical_params::<D>(params, &parsed)?;
+        let (system, potential) = build_lj_system(&parsed)?;
+        grand
+            .exchange
+            .validate_state(&system)
+            .map_err(particle_config_error)?;
+        let algorithm = ParticleGrandCanonicalCore::new(
+            parsed.max_displacement,
+            grand.exchange,
+            grand.log_activity,
+        )
+        .with_translation(build_translation(&parsed))
+        .with_exchange_attempts(grand.exchange_attempts)
+        .with_energy_check_interval(parsed.energy_check_interval);
+        Ok(Self::new(system, potential, algorithm))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ParsedNpt {
+    pressure: f64,
+    max_log_volume_change: f64,
+    volume_attempts: u64,
+    target_acceptance: f64,
+    adaptation_interval: u64,
+    adaptation_gain: f64,
+    minimum_log_volume_change: f64,
+    maximum_log_volume_change: f64,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedGrandCanonical {
+    log_activity: f64,
+    exchange_attempts: u64,
+    exchange: InsertDeleteParticle,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -152,16 +223,33 @@ struct ParsedLennardJones<const D: usize> {
 }
 
 fn parse_lj_params<const D: usize>(params: &Params) -> Result<ParsedLennardJones<D>, CarloError> {
+    parse_lj_params_impl(params, false)
+}
+
+fn parse_lj_params_allow_empty<const D: usize>(
+    params: &Params,
+) -> Result<ParsedLennardJones<D>, CarloError> {
+    parse_lj_params_impl(params, true)
+}
+
+fn parse_lj_params_impl<const D: usize>(
+    params: &Params,
+    allow_empty: bool,
+) -> Result<ParsedLennardJones<D>, CarloError> {
     if D == 0 {
         return Err(invalid("dimension", "must be positive"));
     }
     let default_particles = if D >= 3 { 108usize } else { 64usize };
-    let n_particles = required_positive(params, "n_particles", default_particles)?;
+    let n_particles = parse_param(params, "n_particles")?.unwrap_or(default_particles);
+    if !allow_empty && n_particles == 0 {
+        return Err(invalid("n_particles", "must be positive"));
+    }
     let beta = finite_non_negative(params, "beta", 1.0)?;
     let sigma = finite_positive(params, "sigma", 1.0)?;
     let epsilon = finite_non_negative(params, "epsilon", 1.0)?;
     let density = finite_positive(params, "density", 0.7)?;
-    let inferred_length = (n_particles as f64 / density).powf(1.0 / D as f64);
+    let reference_particles = n_particles.max(default_particles);
+    let inferred_length = (reference_particles as f64 / density).powf(1.0 / D as f64);
     let mut lengths = [0.0; D];
     for (axis, length) in lengths.iter_mut().enumerate() {
         let key = axis_key(axis);
@@ -233,6 +321,99 @@ fn parse_lj_params<const D: usize>(params: &Params) -> Result<ParsedLennardJones
     })
 }
 
+fn build_lj_system<const D: usize>(
+    parsed: &ParsedLennardJones<D>,
+) -> Result<(ParticleSystem<D>, LennardJones), CarloError> {
+    let cell = OrthorhombicCell::new(parsed.lengths).map_err(particle_config_error)?;
+    let positions = regular_grid_positions(parsed.n_particles, &cell);
+    let configuration = ParticleConfiguration::new(positions, vec![0; parsed.n_particles], cell)
+        .map_err(particle_config_error)?;
+    let potential = LennardJones::with_treatment(
+        parsed.sigma,
+        parsed.epsilon,
+        parsed.cutoff,
+        parsed.treatment,
+    )
+    .map_err(particle_config_error)?;
+    let system = ParticleSystem::new(configuration, &potential, parsed.beta)
+        .map_err(particle_config_error)?;
+    Ok((system, potential))
+}
+
+fn build_translation<const D: usize>(parsed: &ParsedLennardJones<D>) -> TranslateParticle<D> {
+    TranslateParticle::new(parsed.max_displacement).with_adaptation(
+        parsed.target_acceptance,
+        parsed.adaptation_interval,
+        parsed.adaptation_gain,
+        parsed.minimum_displacement,
+        parsed.maximum_displacement,
+    )
+}
+
+fn parse_npt_params<const D: usize>(
+    params: &Params,
+    _parsed: &ParsedLennardJones<D>,
+) -> Result<ParsedNpt, CarloError> {
+    let pressure = finite(params, "pressure", 1.0)?;
+    let max_log_volume_change = finite_positive(params, "max_log_volume_change", 0.01)?;
+    let volume_attempts = parse_param(params, "volume_attempts")?.unwrap_or(1u64);
+    let target_acceptance = finite_open_unit(params, "volume_target_acceptance", 0.3)?;
+    let adaptation_interval = required_positive(params, "volume_adaptation_interval", 20u64)?;
+    let adaptation_gain = finite_positive(params, "volume_adaptation_gain", 0.5)?;
+    let minimum_log_volume_change = finite_positive(
+        params,
+        "minimum_log_volume_change",
+        max_log_volume_change * 1e-6,
+    )?;
+    let maximum_log_volume_change = finite_positive(
+        params,
+        "maximum_log_volume_change",
+        (max_log_volume_change * 1e6).min(100.0),
+    )?;
+    if maximum_log_volume_change < minimum_log_volume_change {
+        return Err(invalid(
+            "maximum_log_volume_change",
+            "must be greater than or equal to minimum_log_volume_change",
+        ));
+    }
+    Ok(ParsedNpt {
+        pressure,
+        max_log_volume_change,
+        volume_attempts,
+        target_acceptance,
+        adaptation_interval,
+        adaptation_gain,
+        minimum_log_volume_change,
+        maximum_log_volume_change,
+    })
+}
+
+fn parse_grand_canonical_params<const D: usize>(
+    params: &Params,
+    parsed: &ParsedLennardJones<D>,
+) -> Result<ParsedGrandCanonical, CarloError> {
+    let log_activity = if params.contains("log_activity") {
+        finite(params, "log_activity", 0.0)?
+    } else {
+        let chemical_potential = finite(params, "chemical_potential", 0.0)?;
+        let thermal_wavelength = finite_positive(params, "thermal_wavelength", 1.0)?;
+        parsed.beta * chemical_potential - D as f64 * thermal_wavelength.ln()
+    };
+    let exchange_attempts = parse_param(params, "exchange_attempts")?.unwrap_or(1u64);
+    let insertion_probability = finite_open_unit(params, "insertion_probability", 0.5)?;
+    let minimum_particles = parse_param(params, "minimum_particles")?.unwrap_or(0usize);
+    let maximum_particles = parse_param(params, "maximum_particles")?;
+    let exchange = InsertDeleteParticle::new(0)
+        .with_insertion_probability(insertion_probability)
+        .with_particle_bounds(minimum_particles, maximum_particles)
+        .map_err(particle_config_error)?;
+    Ok(ParsedGrandCanonical {
+        log_activity,
+        exchange_attempts,
+        exchange,
+    })
+}
+
 fn regular_grid_positions<const D: usize>(
     n_particles: usize,
     cell: &OrthorhombicCell<D>,
@@ -282,6 +463,15 @@ where
         Ok(value)
     } else {
         Err(invalid(key, "must be positive"))
+    }
+}
+
+fn finite(params: &Params, key: &str, default: f64) -> Result<f64, CarloError> {
+    let value = parse_param(params, key)?.unwrap_or(default);
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(invalid(key, "must be finite"))
     }
 }
 
@@ -359,5 +549,68 @@ mod tests {
         params.set("box_length", 4.0);
         params.set("cutoff", 2.1);
         assert!(LennardJonesNvt::<3>::validate_params(&params).is_err());
+    }
+
+    #[test]
+    fn scheduler_runs_two_dimensional_lj_npt() {
+        let mut params = Params::new();
+        params.set("n_particles", 16usize);
+        params.set("density", 0.2);
+        params.set("cutoff", 1.5);
+        params.set("pressure", 0.1);
+        params.set("max_log_volume_change", 0.002);
+        let results = Scheduler::new(
+            RayonBackend::new(1),
+            RunConfig {
+                thermalization_sweeps: 10,
+                measurement_sweeps: 20,
+                binsize: 5,
+                base_seed: 73,
+                ..Default::default()
+            },
+        )
+        .run_one::<LennardJonesNpt<2>>(&params);
+        assert!(results.get("Volume").is_some());
+        assert!(results.get("Density").is_some());
+    }
+
+    #[test]
+    fn scheduler_runs_two_dimensional_lj_grand_canonical() {
+        let mut params = Params::new();
+        params.set("n_particles", 0usize);
+        params.set("box_length", 8.0);
+        params.set("cutoff", 1.0);
+        params.set("beta", 0.5);
+        params.set("log_activity", -2.0);
+        params.set("maximum_particles", 12usize);
+        params.set("exchange_attempts", 2u64);
+        let results = Scheduler::new(
+            RayonBackend::new(1),
+            RunConfig {
+                thermalization_sweeps: 10,
+                measurement_sweeps: 20,
+                binsize: 5,
+                base_seed: 79,
+                ..Default::default()
+            },
+        )
+        .run_one::<LennardJonesMuVt<2>>(&params);
+        assert!(results.get("ParticleNumber").is_some());
+        assert!(results.get("Density").is_some());
+    }
+
+    #[test]
+    fn chemical_potential_activity_uses_dimension_and_thermal_wavelength() {
+        let mut params = Params::new();
+        params.set("n_particles", 4usize);
+        params.set("box_length", 10.0);
+        params.set("cutoff", 1.0);
+        params.set("beta", 2.0);
+        params.set("chemical_potential", -1.5);
+        params.set("thermal_wavelength", 2.0);
+        let parsed = parse_lj_params::<3>(&params).unwrap();
+        let grand = parse_grand_canonical_params::<3>(&params, &parsed).unwrap();
+        let expected = -3.0 - 3.0 * 2.0f64.ln();
+        assert!((grand.log_activity - expected).abs() < 1e-12);
     }
 }

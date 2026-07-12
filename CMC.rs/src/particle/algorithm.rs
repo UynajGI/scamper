@@ -7,6 +7,12 @@ use crate::core::visit::{SiteOrder, VisitSchedule};
 use crate::particle::{PairPotential, ParticleEnergyPatch, ParticleSystem, TranslateParticle};
 use rand::Rng;
 
+/// Marker for fixed-N, fixed-V kernels whose β-tempering weight is `-βE`.
+///
+/// NPT and μVT kernels deliberately do not implement this marker because their
+/// replica-exchange weights require pressure-volume or activity terms.
+pub trait CanonicalParticleKernel {}
+
 /// Update policy for a continuous particle state.
 pub trait ParticleAlgorithm<const D: usize, P: PairPotential>: Send {
     /// Execute one particle sweep in the supplied lifecycle phase.
@@ -92,6 +98,8 @@ impl<const D: usize> Default for ParticleMetropolisCore<D> {
     }
 }
 
+impl<const D: usize> CanonicalParticleKernel for ParticleMetropolisCore<D> {}
+
 impl<const D: usize, P: PairPotential> ParticleAlgorithm<D, P> for ParticleMetropolisCore<D> {
     fn sweep_with_phase(
         &mut self,
@@ -130,11 +138,9 @@ impl<const D: usize, P: PairPotential> ParticleAlgorithm<D, P> for ParticleMetro
         self.sweeps = self.sweeps.wrapping_add(1);
         if self.energy_check_interval > 0 && self.sweeps.is_multiple_of(self.energy_check_interval)
         {
-            system.recompute_energy(potential);
             system
-                .cell_list()
-                .validate(system.configuration())
-                .expect("particle cell-list audit failed");
+                .validate(potential)
+                .expect("particle energy/cell-list audit failed");
         }
     }
 

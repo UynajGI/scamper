@@ -19,8 +19,8 @@ pub struct ParticleEnergyPatch {
 /// Accepted NVT particle state with packed cell-list acceleration.
 #[derive(Debug, Clone)]
 pub struct ParticleSystem<const D: usize> {
-    configuration: ParticleConfiguration<D>,
-    cell_list: CellList<D>,
+    pub(crate) configuration: ParticleConfiguration<D>,
+    pub(crate) cell_list: CellList<D>,
     /// Cached physical potential energy, never multiplied by β.
     pub energy: f64,
     /// Canonical inverse temperature.

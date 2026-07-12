@@ -93,7 +93,7 @@ mod tests {
         let spins = vec![1.0; 16];
         let g = compute_correlation_1d(&spins, 1, 16);
         for (r, &val) in g.iter().enumerate() {
-            assert!((val - 1.0).abs() < 1e-10, "G({}) = {}", r, val);
+            assert!((val - 1.0).abs() < 1e-10, "G({r}) = {val}");
         }
     }
 
@@ -129,7 +129,7 @@ mod tests {
         let results = scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
 
         let chi = susceptibility(&results, 1.0, 64).expect("susceptibility failed");
-        assert!(chi > 0.0, "Susceptibility should be positive, got {}", chi);
+        assert!(chi > 0.0, "Susceptibility should be positive, got {chi}");
     }
 
     #[test]
@@ -152,7 +152,7 @@ mod tests {
         let results = scheduler.run_one::<ClassicalMC<IsingModel, MetropolisCore>>(&params);
 
         let cv = specific_heat(&results, 1.0, 64).expect("specific_heat failed");
-        assert!(cv > 0.0, "Specific heat should be positive, got {}", cv);
+        assert!(cv > 0.0, "Specific heat should be positive, got {cv}");
     }
 
     #[test]
@@ -187,9 +187,7 @@ mod tests {
         let g1_exact = (0.5f64).tanh();
         assert!(
             (g1_est - g1_exact).abs() < 0.1,
-            "G(1) estimate {:.4} should be near exact {:.4}",
-            g1_est,
-            g1_exact
+            "G(1) estimate {g1_est:.4} should be near exact {g1_exact:.4}"
         );
     }
 
@@ -216,8 +214,7 @@ mod tests {
         // In ordered phase, M ≈ const, so ⟨M⁴⟩ ≈ ⟨M²⟩², U₄ ≈ 1 - 1/3 = 2/3
         assert!(
             (0.5..=1.0).contains(&u4),
-            "Binder cumulant in ordered phase should be ~0.67, got {}",
-            u4
+            "Binder cumulant in ordered phase should be ~0.67, got {u4}"
         );
     }
 }

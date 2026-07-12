@@ -27,6 +27,12 @@ pub enum ParticleError {
     EnergyCacheMismatch { cached: f64, exact: f64 },
     /// The packed cell-list cache is inconsistent with the configuration.
     InvalidCellList(String),
+    /// A particle or molecule move was malformed.
+    InvalidMove(String),
+    /// Molecular topology data was inconsistent.
+    InvalidTopology(String),
+    /// A weighted move mixture was invalid.
+    InvalidMoveMixture(String),
 }
 
 impl Display for ParticleError {
@@ -63,6 +69,9 @@ impl Display for ParticleError {
                 "particle energy cache mismatch: cached {cached}, exact {exact}"
             ),
             Self::InvalidCellList(reason) => write!(formatter, "invalid cell list: {reason}"),
+            Self::InvalidMove(reason) => write!(formatter, "invalid particle move: {reason}"),
+            Self::InvalidTopology(reason) => write!(formatter, "invalid molecular topology: {reason}"),
+            Self::InvalidMoveMixture(reason) => write!(formatter, "invalid move mixture: {reason}"),
         }
     }
 }

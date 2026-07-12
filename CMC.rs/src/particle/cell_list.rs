@@ -107,7 +107,7 @@ impl<const D: usize> CellList<D> {
     }
 
     /// Rebuild all packed memberships from the accepted configuration.
-    fn rebuild(&mut self, configuration: &ParticleConfiguration<D>) {
+    pub(crate) fn rebuild(&mut self, configuration: &ParticleConfiguration<D>) {
         for bucket in &mut self.buckets {
             bucket.clear();
         }
@@ -121,6 +121,42 @@ impl<const D: usize> CellList<D> {
             self.particle_cell[particle] = cell_index;
             self.particle_slot[particle] = slot;
         }
+    }
+
+    /// Append one accepted particle to a known spatial cell.
+    pub(crate) fn insert_particle(&mut self, particle: usize, new_cell: usize) {
+        assert_eq!(particle, self.particle_cell.len());
+        assert!(new_cell < self.buckets.len());
+        let slot = self.buckets[new_cell].len();
+        self.buckets[new_cell].push(particle);
+        self.particle_cell.push(new_cell);
+        self.particle_slot.push(slot);
+    }
+
+    /// Remove a particle while matching configuration `swap_remove` indexing.
+    pub(crate) fn remove_particle_swap(&mut self, particle: usize) {
+        let old_len = self.particle_cell.len();
+        assert!(particle < old_len);
+        let last_particle = old_len - 1;
+        let old_cell = self.particle_cell[particle];
+        let old_slot = self.particle_slot[particle];
+        let removed = self.buckets[old_cell].swap_remove(old_slot);
+        debug_assert_eq!(removed, particle);
+        if old_slot < self.buckets[old_cell].len() {
+            let swapped_particle = self.buckets[old_cell][old_slot];
+            self.particle_slot[swapped_particle] = old_slot;
+        }
+
+        if particle != last_particle {
+            let last_cell = self.particle_cell[last_particle];
+            let last_slot = self.particle_slot[last_particle];
+            debug_assert_eq!(self.buckets[last_cell][last_slot], last_particle);
+            self.buckets[last_cell][last_slot] = particle;
+            self.particle_cell[particle] = last_cell;
+            self.particle_slot[particle] = last_slot;
+        }
+        self.particle_cell.pop();
+        self.particle_slot.pop();
     }
 
     /// Apply one accepted particle's membership change without rebuilding.

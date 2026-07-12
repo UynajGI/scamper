@@ -27,7 +27,7 @@
 //! | [`lattice`] | Graph topology, physical state, Hamiltonian traits, models, proposals |
 //! | [`algorithms`] | Update kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
 //! | [`observables`] | Measurement traits and built-in lattice observables |
-//! | [`particle`] | Periodic particle states, Lennard-Jones potentials, cell lists and NVT translation kernels |
+//! | [`particle`] | Periodic particles, Lennard-Jones potentials, molecular moves and NVT/NPT/μVT kernels |
 //!
 //! # Extensibility
 //!
@@ -62,7 +62,9 @@ pub use algorithms::{
 pub use classical_mc::{build_lattice_from_params, ClassicalMC, FromHamiltonianParams};
 pub use core::acceptance::{AcceptanceRule, MetropolisHastingsAcceptance};
 pub use core::cache::{BatchEnergyPatch, BatchEnergyWorkspace, EnergyPatch};
-pub use core::ensemble::{CanonicalEnsemble, Ensemble, ThermodynamicDelta};
+pub use core::ensemble::{
+    CanonicalEnsemble, Ensemble, GrandCanonical, IsothermalIsobaric, ThermodynamicDelta,
+};
 pub use core::r#move::{BatchSpinMove, SiteSpinMove, Spin};
 pub use core::trial::{metropolis_hastings_step, ProposedMove, TrialEvaluator, TrialOutcome};
 pub use core::visit::{SiteOrder, VisitSchedule};
@@ -83,9 +85,15 @@ pub use observables::{
     MomentSpec, Observable, ObservableSet, TotalEnergy,
 };
 pub use particle::{
-    compute_total_energy as compute_particle_energy, CellList, CutoffTreatment, LennardJones,
-    LennardJonesNvt, LennardJonesSpecies, OrthorhombicCell, PairPotential, ParticleAlgorithm,
-    ParticleConfiguration, ParticleEnergyPatch, ParticleError, ParticleMC, ParticleMetropolisCore,
-    ParticleSystem, ParticleTranslation, SimulationCell, TranslateParticle,
+    compute_total_energy as compute_particle_energy, CanonicalParticleKernel, CellList,
+    CutoffTreatment, GrandCanonicalMove, GrandCanonicalPatch, InsertDeleteParticle,
+    IsotropicVolumeChange, LennardJones, LennardJonesMuVt, LennardJonesNpt, LennardJonesNvt,
+    LennardJonesSpecies, LogVolumeScale, MolecularMetropolisCore, MolecularMoveKind,
+    MoleculeTopology, MoveMixture, OrthorhombicCell, PairPotential, ParticleAlgorithm,
+    ParticleBatchMove, ParticleBatchPatch, ParticleConfiguration, ParticleDeletion,
+    ParticleEnergyPatch, ParticleError, ParticleGrandCanonicalCore, ParticleInsertion, ParticleMC,
+    ParticleMetropolisCore, ParticleNptMetropolisCore, ParticleSystem, ParticleTranslation,
+    RigidMoleculeRotation, RigidMoleculeTranslation, SimulationCell, TorsionDefinition,
+    TorsionRotation, TranslateParticle, VolumeChangePatch, WeightedMove,
 };
 pub use postprocess::{binder_cumulant, specific_heat, susceptibility};

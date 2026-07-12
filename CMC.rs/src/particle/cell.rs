@@ -61,6 +61,21 @@ impl<const D: usize> OrthorhombicCell<D> {
         self.lengths.iter().copied().fold(f64::INFINITY, f64::min)
     }
 
+    /// Return a uniformly scaled cell.
+    pub fn scaled(&self, scale: f64) -> Result<Self, ParticleError> {
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(ParticleError::InvalidCellLength {
+                axis: 0,
+                length: scale,
+            });
+        }
+        let mut lengths = self.lengths;
+        for length in &mut lengths {
+            *length *= scale;
+        }
+        Self::new(lengths)
+    }
+
     /// Squared norm of a minimum-image displacement.
     #[inline]
     pub fn distance_squared(&self, left: &[f64; D], right: &[f64; D]) -> f64 {

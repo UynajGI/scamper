@@ -53,10 +53,7 @@ fn test_2d_ising_at_tc_energy() {
     let tol = 0.15;
     assert!(
         (e_per_site - expected).abs() < tol + 3.0 * e_err,
-        "Energy per site at Tc: got {:.4} ± {:.4}, expected {:.4}",
-        e_per_site,
-        e_err,
-        expected
+        "Energy per site at Tc: got {e_per_site:.4} ± {e_err:.4}, expected {expected:.4}"
     );
 }
 
@@ -70,9 +67,7 @@ fn test_2d_ising_high_t_magnetization_vanish() {
 
     assert!(
         m < 0.3 + 3.0 * m_err,
-        "Magnetization at high T should vanish: got {:.4} ± {:.4}",
-        m,
-        m_err
+        "Magnetization at high T should vanish: got {m:.4} ± {m_err:.4}"
     );
 }
 
@@ -86,9 +81,7 @@ fn test_2d_ising_low_t_magnetization_appears() {
 
     assert!(
         m > 0.5 - 3.0 * m_err,
-        "Magnetization at low T should be non-zero: got {:.4} ± {:.4}",
-        m,
-        m_err
+        "Magnetization at low T should be non-zero: got {m:.4} ± {m_err:.4}"
     );
 }
 
@@ -105,8 +98,6 @@ fn test_2d_ising_energy_decreases_with_cooling() {
     // Energy at low T should be more negative (more ordered)
     assert!(
         e_low < e_high,
-        "Energy at low T ({:.4}) should be lower than at high T ({:.4})",
-        e_low,
-        e_high
+        "Energy at low T ({e_low:.4}) should be lower than at high T ({e_high:.4})"
     );
 }
