@@ -28,6 +28,49 @@ pub enum BondType {
     Kagome,
 }
 
+impl BondType {
+    /// Stable serialization label (NOT derived from Debug).
+    pub fn as_label(self) -> &'static str {
+        match self {
+            BondType::Generic => "generic",
+            BondType::ChainX => "chain_x",
+            BondType::SquareX => "square_x",
+            BondType::SquareY => "square_y",
+            BondType::SquareZ => "square_z",
+            BondType::CubicX => "cubic_x",
+            BondType::CubicY => "cubic_y",
+            BondType::CubicZ => "cubic_z",
+            BondType::TriX => "tri_x",
+            BondType::TriY => "tri_y",
+            BondType::TriDiag => "tri_diag",
+            BondType::HoneyX => "honey_x",
+            BondType::HoneyY => "honey_y",
+            BondType::Kagome => "kagome",
+        }
+    }
+
+    /// Inverse of `as_label`.
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "generic" => Some(Self::Generic),
+            "chain_x" => Some(Self::ChainX),
+            "square_x" => Some(Self::SquareX),
+            "square_y" => Some(Self::SquareY),
+            "square_z" => Some(Self::SquareZ),
+            "cubic_x" => Some(Self::CubicX),
+            "cubic_y" => Some(Self::CubicY),
+            "cubic_z" => Some(Self::CubicZ),
+            "tri_x" => Some(Self::TriX),
+            "tri_y" => Some(Self::TriY),
+            "tri_diag" => Some(Self::TriDiag),
+            "honey_x" => Some(Self::HoneyX),
+            "honey_y" => Some(Self::HoneyY),
+            "kagome" => Some(Self::Kagome),
+            _ => None,
+        }
+    }
+}
+
 /// One physical undirected bond.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bond {

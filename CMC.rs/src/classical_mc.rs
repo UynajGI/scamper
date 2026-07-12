@@ -71,7 +71,7 @@ where
                 serde_json::json!({
                     "source": edge.source,
                     "target": edge.target,
-                    "kind": format!("{:?}", edge.kind),
+                    "kind": edge.kind.as_label(),
                     "weight": edge.weight,
                 })
             })
@@ -79,7 +79,6 @@ where
         serde_json::json!({
             "format": "cmc-rs-snapshot-v2",
             "spins": &self.system.spins,
-            "energy": self.system.energy,
             "beta": self.system.beta,
             "spin_dim": self.model.spin_dim(),
             "n_sites": self.system.n_sites(),
@@ -94,22 +93,34 @@ where
     /// Restore a snapshot and verify it against the current model/lattice.
     /// Cached energy is recomputed rather than blindly trusted.
     pub fn load_snapshot(&mut self, snapshot: &Json) -> Result<(), CarloError> {
+        let format = snapshot["format"].as_str().unwrap_or("");
+        if format != "cmc-rs-snapshot-v2" {
+            return Err(CarloError::CheckpointCorrupted {
+                detail: format!(
+                    "unknown snapshot format: expected 'cmc-rs-snapshot-v2', got '{format}'"
+                ),
+            });
+        }
+
         let values = snapshot["spins"]
             .as_array()
-            .ok_or_else(|| invalid("snapshot.spins", "missing or invalid array"))?;
+            .ok_or_else(|| invalid_checkpoint("snapshot.spins", "missing or invalid array"))?;
         let mut spins = Vec::with_capacity(values.len());
         for value in values {
             let spin = value
                 .as_f64()
-                .ok_or_else(|| invalid("snapshot.spins", "contains a non-number"))?;
+                .ok_or_else(|| invalid_checkpoint("snapshot.spins", "contains a non-number"))?;
             if !spin.is_finite() {
-                return Err(invalid("snapshot.spins", "contains a non-finite value"));
+                return Err(invalid_checkpoint(
+                    "snapshot.spins",
+                    "contains a non-finite value",
+                ));
             }
             spins.push(spin);
         }
 
         if spins.len() != self.system.spins.len() {
-            return Err(invalid(
+            return Err(invalid_checkpoint(
                 "snapshot.spins",
                 format!(
                     "length mismatch: expected {}, got {}",
@@ -120,17 +131,17 @@ where
         }
         if let Some(n_sites) = snapshot["n_sites"].as_u64() {
             if n_sites as usize != self.system.n_sites() {
-                return Err(invalid("snapshot.n_sites", "topology mismatch"));
+                return Err(invalid_checkpoint("snapshot.n_sites", "topology mismatch"));
             }
         }
         if let Some(spin_dim) = snapshot["spin_dim"].as_u64() {
             if spin_dim as usize != self.model.spin_dim() {
-                return Err(invalid("snapshot.spin_dim", "model mismatch"));
+                return Err(invalid_checkpoint("snapshot.spin_dim", "model mismatch"));
             }
         }
         if let Some(n_edges) = snapshot["n_edges"].as_u64() {
             if n_edges as usize != self.system.lattice.n_edges() {
-                return Err(invalid("snapshot.n_edges", "topology mismatch"));
+                return Err(invalid_checkpoint("snapshot.n_edges", "topology mismatch"));
             }
         }
         validate_snapshot_usize_array(snapshot, "offsets", &self.system.lattice.offsets)?;
@@ -140,10 +151,10 @@ where
 
         let beta = snapshot["beta"]
             .as_f64()
-            .ok_or_else(|| invalid("snapshot.beta", "missing or invalid"))?;
+            .ok_or_else(|| invalid_checkpoint("snapshot.beta", "missing or invalid"))?;
         self.system
             .set_beta(beta)
-            .map_err(|reason| invalid("snapshot.beta", reason))?;
+            .map_err(|reason| invalid_checkpoint("snapshot.beta", reason))?;
         self.system.spins.copy_from_slice(&spins);
         self.system.recompute_energy(&self.model);
         Ok(())
@@ -212,14 +223,14 @@ fn validate_snapshot_usize_array(
         return Ok(());
     };
     if values.len() != expected.len() {
-        return Err(invalid(
+        return Err(invalid_checkpoint(
             format!("snapshot.{name}"),
             "topology length mismatch",
         ));
     }
     for (index, (value, expected_value)) in values.iter().zip(expected).enumerate() {
         if value.as_u64().map(|number| number as usize) != Some(*expected_value) {
-            return Err(invalid(
+            return Err(invalid_checkpoint(
                 format!("snapshot.{name}[{index}]"),
                 "topology mismatch",
             ));
@@ -233,26 +244,34 @@ fn validate_snapshot_edges(snapshot: &Json, lattice: &CsrLattice) -> Result<(), 
         return Ok(());
     };
     if values.len() != lattice.edges.len() {
-        return Err(invalid("snapshot.edges", "topology length mismatch"));
+        return Err(invalid_checkpoint(
+            "snapshot.edges",
+            "topology length mismatch",
+        ));
     }
     for (index, (value, expected)) in values.iter().zip(&lattice.edges).enumerate() {
         let source = value["source"].as_u64().map(|number| number as usize);
         let target = value["target"].as_u64().map(|number| number as usize);
-        let kind = value["kind"].as_str();
-        let expected_kind = format!("{:?}", expected.kind);
+        let kind = value["kind"].as_str().and_then(BondType::from_label);
         let weight = value["weight"].as_f64();
         if source != Some(expected.source)
             || target != Some(expected.target)
-            || kind != Some(expected_kind.as_str())
+            || kind != Some(expected.kind)
             || weight.map(f64::to_bits) != Some(expected.weight.to_bits())
         {
-            return Err(invalid(
+            return Err(invalid_checkpoint(
                 format!("snapshot.edges[{index}]"),
                 "physical edge mismatch",
             ));
         }
     }
     Ok(())
+}
+
+fn invalid_checkpoint(field: impl Into<String>, reason: impl Into<String>) -> CarloError {
+    CarloError::CheckpointCorrupted {
+        detail: format!("{}: {}", field.into(), reason.into()),
+    }
 }
 
 fn invalid(field: impl Into<String>, reason: impl Into<String>) -> CarloError {

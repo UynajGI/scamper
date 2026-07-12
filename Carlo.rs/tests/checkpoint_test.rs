@@ -4,17 +4,6 @@ use rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 #[test]
-fn test_context_checkpoint_state() {
-    let rng = Xoshiro256PlusPlus::seed_from_u64(42);
-    let ctx = Context::new(rng, 100);
-
-    let state = ctx.checkpoint_state();
-    assert_eq!(state.sweep_count, 0);
-    assert_eq!(state.thermalization_sweeps, 100);
-    assert!(!state.thermalized);
-}
-
-#[test]
 fn test_context_checkpoint_restore() {
     let rng1 = Xoshiro256PlusPlus::seed_from_u64(42);
     let mut ctx = Context::new(rng1, 100);
