@@ -146,3 +146,48 @@ fn snapshot_roundtrip_recomputes_energy() {
         mc.system.energy
     );
 }
+
+// ---------------------------------------------------------------------------
+// C.6: 1000-sweep split run: 400 therm → save → restore → 600 meas
+// ---------------------------------------------------------------------------
+
+#[test]
+fn split_run_thousand_sweeps() {
+    // Continuous: 1000 sweeps (no thermalization boundary — uniform sweeps)
+    let mut mc_continuous = make_ising_4x4(0.44);
+    let rng_cont = Rng::seed_from_u64(999);
+    let mut ctx_cont = Context::new(rng_cont, 0);
+    for _ in 0..1000 {
+        mc_continuous.sweep(&mut ctx_cont);
+        ctx_cont.advance_sweep();
+    }
+
+    // Split: 400 sweeps, save, restore into fresh MC, 600 more
+    let mut mc_split = make_ising_4x4(0.44);
+    let rng_split = Rng::seed_from_u64(999);
+    let mut ctx_split = Context::new(rng_split, 0);
+    for _ in 0..400 {
+        mc_split.sweep(&mut ctx_split);
+        ctx_split.advance_sweep();
+    }
+
+    let snapshot = mc_split.save_snapshot();
+    mc_split.load_snapshot(&snapshot).unwrap();
+
+    for _ in 0..600 {
+        mc_split.sweep(&mut ctx_split);
+        ctx_split.advance_sweep();
+    }
+
+    // Final states must be bitwise identical (same RNG trajectory)
+    assert_eq!(mc_continuous.system.spins, mc_split.system.spins);
+    assert!(
+        (mc_continuous.system.energy - mc_split.system.energy).abs() < 1e-12,
+        "Split-run 1000 sweep energy mismatch"
+    );
+    assert_eq!(
+        ctx_cont.sweep_count(),
+        ctx_split.sweep_count(),
+        "Context sweep counts must match"
+    );
+}

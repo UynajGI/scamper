@@ -273,3 +273,42 @@ fn fixed_seed_reproducibility() {
         "Reproducibility failed: {se1} vs {se2}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A.4: PT energy consistency under beta changes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pt_energy_consistency_under_parameter_change() {
+    use carlo_rs::{FromParams, ParallelTemperingCompatible};
+    use rand::SeedableRng;
+
+    let mut params = Params::new();
+    params.set("L", 4usize);
+    params.set("J", 1.0);
+    params.set("beta", 1.0);
+
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(12);
+    let mc =
+        <ClassicalMC<IsingModel, MetropolisCore> as FromParams>::from_params(&params, &mut rng)
+            .unwrap();
+
+    // log_weight_ratio for "beta" uses physical energy (not beta*E):
+    // log_weight_ratio("beta", new_beta) = (beta_old - beta_new) * energy
+    let beta_old = mc.system.beta;
+    let beta_new = 2.0;
+    let ratio = mc.log_weight_ratio("beta", beta_new);
+    assert_eq!(ratio, (beta_old - beta_new) * mc.system.energy);
+
+    // After change_parameter("beta", new_beta), energy must be recomputed
+    // (physical energy is beta-independent, but cache is refreshed)
+    let mut mc = mc;
+    let energy_before = mc.system.energy;
+    mc.change_parameter("beta", 2.0);
+    assert_eq!(mc.system.beta, 2.0);
+    // Physical energy should be unchanged (or recomputed to same value)
+    assert!(
+        (mc.system.energy - energy_before).abs() < 1e-12,
+        "physical energy must be invariant under beta change"
+    );
+}

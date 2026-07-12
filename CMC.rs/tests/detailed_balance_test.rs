@@ -368,3 +368,156 @@ fn wolff_detailed_balance_n3() {
     }
     assert!(max_violation < tolerance);
 }
+
+// ---------------------------------------------------------------------------
+// B.2: Batch move detailed balance on N=3
+// ---------------------------------------------------------------------------
+
+#[test]
+fn batch_move_detailed_balance_n3() {
+    let n = 3;
+    let beta = 0.5;
+    let model = IsingModel::new(1.0);
+    let lattice = build_chain(n, true);
+    let states = enumerate_ising_states(n);
+    let n_states = states.len();
+    let samples_per_state = 20_000;
+    let tolerance = 0.04;
+
+    let mut counts = vec![vec![0u64; n_states]; n_states];
+
+    for (x_idx, x_spins) in states.iter().enumerate() {
+        let mut system = build_system(x_spins, lattice.clone(), beta);
+        let mut rng = RngType::seed_from_u64(400 + x_idx as u64);
+
+        for _ in 0..samples_per_state {
+            let do_batch = rng.random_range(0.0..1.0_f64) < 0.3;
+            if do_batch {
+                let mut movement = cmc_rs::BatchSpinMove::new(1);
+                for site in 0..n {
+                    let flipped = -system.spin_at(site, 1)[0];
+                    movement.push(site, &[flipped]);
+                }
+                let mut patch = cmc_rs::BatchEnergyPatch::default();
+                system.evaluate_trial(&model, &movement, &mut patch);
+                <System as TrialEvaluator<IsingModel, cmc_rs::BatchSpinMove>>::commit_trial(
+                    &mut system,
+                    &movement,
+                    &patch,
+                );
+            }
+
+            let y_idx = state_index(&system.spins, &states).unwrap_or(x_idx);
+            counts[x_idx][y_idx] += 1;
+
+            system.spins.copy_from_slice(x_spins);
+            system.recompute_energy(&model);
+        }
+    }
+
+    let pi: Vec<f64> = states
+        .iter()
+        .map(|s| boltzmann(s, &model, &lattice, beta))
+        .collect();
+    let z: f64 = pi.iter().sum();
+    let pi_norm: Vec<f64> = pi.iter().map(|p| p / z).collect();
+
+    let mut max_violation = 0.0_f64;
+    for x in 0..n_states {
+        for y in x + 1..n_states {
+            let p_xy = counts[x][y] as f64 / samples_per_state as f64;
+            let p_yx = counts[y][x] as f64 / samples_per_state as f64;
+            let forward = pi_norm[x] * p_xy;
+            let reverse = pi_norm[y] * p_yx;
+            let violation = (forward - reverse).abs();
+            max_violation = max_violation.max(violation);
+            assert!(
+                violation < tolerance,
+                "Batch move DB: π({x})P({x}→{y})={forward:.6} vs π({y})P({y}→{x})={reverse:.6}"
+            );
+        }
+    }
+    assert!(max_violation < tolerance);
+}
+
+// ---------------------------------------------------------------------------
+// B.3b: Self-loop detailed balance on N=2
+// ---------------------------------------------------------------------------
+
+#[test]
+fn self_loop_detailed_balance_n2() {
+    let n = 2;
+    let beta = 0.5;
+    let bonds = vec![
+        Bond::new(0, 1, BondType::Generic, 1.0),
+        Bond::new(0, 0, BondType::Generic, 0.5),
+    ];
+    let lattice = CsrLattice::from_edges(n, bonds);
+    let model = IsingModel::new(1.0);
+    let ensemble = CanonicalEnsemble::new(beta);
+    let states = enumerate_ising_states(n);
+    let n_states = states.len();
+    let samples_per_state = 30_000;
+    let tolerance = 0.03;
+
+    let mut counts = vec![vec![0u64; n_states]; n_states];
+
+    for (x_idx, x_spins) in states.iter().enumerate() {
+        let mut system = build_system(x_spins, lattice.clone(), beta);
+        let mut rng = RngType::seed_from_u64(500 + x_idx as u64);
+
+        for _ in 0..samples_per_state {
+            let site = rng.random_range(0..n);
+            let current = system.spin_at(site, 1)[0];
+            let proposed = Spin::from_slice(&[-current]);
+
+            let movement = SiteSpinMove::new(site, proposed);
+            let proposal = cmc_rs::ProposedMove::symmetric(movement);
+            let mut patch = EnergyPatch::default();
+            let outcome = cmc_rs::metropolis_hastings_step(
+                &mut system,
+                &model,
+                &proposal,
+                &ensemble,
+                &mut patch,
+                &mut rng,
+            );
+
+            let y_idx = if outcome.accepted {
+                state_index(&system.spins, &states).unwrap_or(x_idx)
+            } else {
+                x_idx
+            };
+            counts[x_idx][y_idx] += 1;
+
+            if outcome.accepted {
+                system.spins.copy_from_slice(x_spins);
+                system.recompute_energy(&model);
+            }
+        }
+    }
+
+    let pi: Vec<f64> = states
+        .iter()
+        .map(|s| boltzmann(s, &model, &lattice, beta))
+        .collect();
+    let z: f64 = pi.iter().sum();
+    let pi_norm: Vec<f64> = pi.iter().map(|p| p / z).collect();
+
+    let mut max_violation = 0.0_f64;
+    for x in 0..n_states {
+        for y in x + 1..n_states {
+            let p_xy = counts[x][y] as f64 / samples_per_state as f64;
+            let p_yx = counts[y][x] as f64 / samples_per_state as f64;
+            let forward = pi_norm[x] * p_xy;
+            let reverse = pi_norm[y] * p_yx;
+            let violation = (forward - reverse).abs();
+            max_violation = max_violation.max(violation);
+            assert!(
+                violation < tolerance,
+                "Self-loop DB: forward={forward:.6} reverse={reverse:.6}"
+            );
+        }
+    }
+    assert!(max_violation < tolerance);
+}
