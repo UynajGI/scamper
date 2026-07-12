@@ -5,7 +5,7 @@ CMC.rs is Scuttle's classical Monte Carlo sampling layer. It is intentionally bu
 - **Carlo.rs** owns RNG contexts, explicit run phases, scheduling, backends, accumulation/results, checkpoint orchestration and parallel tempering.
 - **CMC.rs** owns classical configurations, physical energy models, transactional trial moves, target ensembles, update kernels and observables.
 
-This revision keeps the existing lattice-spin functionality and public `ClassicalMC<Model, Algorithm>` composition, while adding the first continuous-system backend: periodic Lennard-Jones NVT particles with transactional single-particle translations and packed cell lists. NPT, μVT, Wang-Landau and worm sectors remain deliberately outside this stage.
+This revision keeps the existing lattice-spin functionality and public `ClassicalMC<Model, Algorithm>` composition, while adding continuous-system backends (periodic Lennard-Jones NVT/NPT/μVT particles, rigid molecules) and generalized-ensemble methods (Wang-Landau DOS estimation, multicanonical, umbrella sampling with canonical reweighting).
 
 ## Existing user entry point
 
@@ -148,7 +148,7 @@ Initialization -> Thermalization -> Measurement -> Finished
 
 Schedulers and `Run` call `MonteCarlo::on_phase_start` / `on_phase_end` at boundaries. CMC receives the mapped phase and permits proposal adaptation only during `Thermalization`; production kernels are frozen before the first measurement sweep. Legacy checkpoint phase is inferred from stored counters when needed.
 
-For future convergence-driven samplers, Carlo.rs also provides `AdaptiveRunControl` and `Scheduler::run_controlled`. This revision only supplies the lifecycle/control protocol; CMC does not yet add Wang-Landau or another adaptive ensemble.
+For convergence-driven samplers, Carlo.rs provides `AdaptiveRunControl`, `Scheduler::run_controlled` and `Scheduler::run_controlled_with_state`. CMC.rs adds `WangLandauRunControl` and `IsingWangLandau` as adaptive ensemble implementations, with `WangLandauCore` for user-supplied axes and `EnergyBiasCore` for frozen umbrella/multicanonical production.
 
 ## Arbitrary weighted graph
 

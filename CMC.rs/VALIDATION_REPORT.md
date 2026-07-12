@@ -2,6 +2,34 @@
 
 Date: 2026-07-12
 
+## Stage 4 implementation status (generalized ensembles)
+
+Stage 4 adds one-dimensional generalized-ensemble methods on top of the existing lattice trial path:
+
+- `MacrostateAxis` trait + `BinnedAxis` (continuous) + `DiscreteAxis` (exact levels)
+- `LogDensityOfStates` (gauge-invariant additive shift) + `Histogram` (coverage-aware flatness)
+- `LogBias` trait + `FixedBias` + `HarmonicUmbrellaBias` + `MulticanonicalBias`
+- `EnergyBiasCore<A, B>`: frozen umbrella/multicanonical Metropolis-Hastings lattice kernel
+- `WangLandauState`: adaptive DOS estimator (Discovery → Adaptation → FrozenProduction → Finished), flat-histogram + optional 1/t refinement, max-sweep guard, JSON checkpoint
+- `WangLandauCore<A>`: local lattice Wang-Landau kernel with transactional out-of-axis rejection
+- `IsingWangLandau`: scheduler-ready exact-axis reference (≤24 sites)
+- `WangLandauRunControl`: `AdaptiveRunControl` for `Scheduler::run_controlled_with_state`
+- `canonical_reweight`: log-sum-exp stable canonical reconstruction
+- `ExactIsingDensityOfStates`: brute-force enumeration for validation
+- `CanonicalLatticeKernel` marker trait: gates beta-PT to canonical kernels only
+- `Algorithm::finish_run()` lifecycle hook for adaptive cleanup
+- `Scheduler::run_controlled_with_state()` returns `(MC, Results)` for DOS recovery
+- `InsertDeleteParticle::validate_potential()`: upfront species/potential compatibility check
+
+```text
+cargo fmt --all --check                                      PASS
+cargo check --workspace --all-targets                        PASS
+cargo test -p cmc-rs                                         PASS: 135 passed, 1 ignored
+cargo clippy -p cmc-rs -- -D warnings                        PASS
+```
+
+18 stage4 tests in `generalized_stage4_test.rs`: axis boundaries, histogram coverage, exact 4-site Ising DOS, canonical reweighting vs direct sum, WL refinement/freeze/max-sweep/convergence, DOS gauge invariance, out-of-axis transactional rejection, checkpoint round-trip + lifecycle validation + axis validation, 1/t convergence, discovery delay, Carlo scheduler integration, species validation.
+
 ## Phase 3 implementation status (NPT, grand-canonical, rigid molecules)
 
 Phase 3 extends the particle backend with three new ensembles and their kernels:

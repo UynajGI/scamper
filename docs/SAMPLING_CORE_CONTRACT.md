@@ -86,11 +86,12 @@ Initialization → Thermalization → Measurement → Finished
 | Measurement | **Frozen** | Accumulated | Yes |
 | Finished | N/A | No | None |
 
-### 3.3 Two execution paths
+### 3.3 Three execution paths
 
 - `run_one`: fixed sweep counts (RunConfig), scheduler owns phase transitions.
-- `run_controlled`: `AdaptiveRunControl` trait decides when to transition.
-  Both paths emit the same hook call sequence.
+- `run_controlled`: `AdaptiveRunControl` trait decides when to transition; returns `Results` only.
+- `run_controlled_with_state`: like `run_controlled` but returns `(MC, Results)`, preserving the finalized model state for DOS recovery and other stateful estimators.
+  All paths emit the same hook call sequence.
 
 ---
 
@@ -168,8 +169,12 @@ pub trait AcceptanceRule<D> {
 | Ensemble | Formula |
 |----------|---------|
 | `CanonicalEnsemble` | `-β·ΔE + Δlog_jacobian` |
+| `GrandCanonical` | `-β·ΔE + log_activity·ΔN` |
+| `IsothermalIsobaric` | `-β·(ΔE + P·ΔV) + Δlog_jacobian` |
 
-- Future: grand canonical would add `μ·ΔN`.
+### 6.3 Generalized ensembles
+
+Generalized-ensemble kernels (`WangLandauCore`, `EnergyBiasCore`) do not use the `Ensemble<Delta>` trait directly. Instead they compute log acceptance from the macrostate-dependent total log weight: `ln g(E_old) - ln g(E_new)` (Wang-Landau) or `bias.log_weight_ratio(old_bin, new_bin)` (frozen bias), both added to the standard Hastings proposal correction. `CanonicalLatticeKernel` and `CanonicalParticleKernel` marker traits gate parallel-tempering eligibility: generalized-ensemble kernels never implement these markers, since changing β alone does not describe their target distribution.
 
 ---
 

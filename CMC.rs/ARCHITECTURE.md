@@ -2,7 +2,7 @@
 
 ## Scope of this revision
 
-This revision extends the reusable trial/ensemble/cache foundation from lattice spins to continuous particle systems: NVT, NPT, grand-canonical (μVT), and rigid-molecule ensembles. Density-of-states samplers and Wang-Landau controllers are not part of this stage.
+This revision extends the reusable trial/ensemble/cache foundation from lattice spins to continuous particle systems (NVT, NPT, grand-canonical μVT, rigid molecules) and generalized-ensemble methods (Wang-Landau DOS estimation, multicanonical, umbrella sampling with canonical reweighting).
 
 ## Layering
 
@@ -146,6 +146,7 @@ It supports irregular graphs, arbitrary dimension, weighted/disordered interacti
 | `algorithms/` | `common.rs` (trait + phase), 6 kernel files |
 | `observables/` | `energy.rs`, `magnetization.rs`, `correlation.rs`, `common.rs` |
 | `particle/` | cell geometry, configuration, potential, cell list, move, state, kernel, Carlo adapter, batch moves, grand-canonical, move mixture, rigid molecules, volume changes |
+| `generalized/` | axes, biases, histogram, DOS storage, macrostates, multicanonical kernel, Wang-Landau estimator + kernel, exact Ising enumeration, canonical reweighting |
 | Top-level | `classical_mc.rs`, `multi_spin.rs`, `postprocess.rs` |
 
 All public types are re-exported flat from `lib.rs`.
