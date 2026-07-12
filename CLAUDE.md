@@ -19,17 +19,19 @@ MonteCarlo trait → Scheduler.run_one() → Results flow:
 
 | Module              | File                    | Purpose                                                            |
 | ------------------- | ----------------------- | ------------------------------------------------------------------ |
-| `MonteCarlo` trait  | `monte_carlo.rs`        | Core: `sweep(ctx)`, `measure(ctx)`, `Rng` type                     |
+| `MonteCarlo` trait  | `monte_carlo.rs`        | Core: `sweep(ctx)`, `measure(ctx)`, `Rng` type, lifecycle hooks    |
 | `FromParams` trait  | `monte_carlo.rs`        | Construct model from `Params` dict                                 |
-| `Context`           | `context.rs`            | RNG, measurements, sweep counter, `ctx.measure(name, val)`         |
+| `Context`           | `context.rs`            | RNG, measurements, sweep counter, `RunPhase`, checkpoint state     |
 | `Run`               | `run.rs`                | Single run lifecycle, `step()`, checkpoint/restart                 |
-| `Scheduler`         | `scheduler.rs`          | Thermalization → measurement loop, `run_one` / `run_parallel`      |
+| `Scheduler`         | `scheduler.rs`          | Thermalization → measurement loop, `run_one`/`run_parallel`/`run_controlled` |
 | `Backend`           | `backend/`              | `RayonBackend` (threads), `MpiBackend` (MPI)                       |
 | `Measurements`      | `measurements.rs`       | Binned `Accumulator`, complex observables                          |
 | `Merge`             | `merge.rs`              | Rebinning, autocorr time, `merge_results`, `merge_task_results`    |
 | `Evaluable`         | `evaluable.rs`          | Jackknife resampling, `Evaluator`, `MultiplexEvaluator`            |
 | `ResultTools`       | `output/resulttools.rs` | `dataframe()`, `measurement_from_obs()` — read-back `results.json` |
 | `ParallelTempering` | `parallel_tempering.rs` | PT MC with chain scheduling                                        |
+| `RunPhase`          | `phase.rs`              | Explicit lifecycle: Initialization→Thermalization→Measurement→Finished |
+| `AdaptiveRunControl`| `run_control.rs`        | Algorithm-driven phase transitions, `RunDecision`                  |
 | `CLI`               | `cli.rs`                | `carlo run/status/merge/delete`                                    |
 | `Job`               | `job/`                  | `JobInfo`, `TaskInfo`, `TaskMaker`, progress tracking              |
 
@@ -39,13 +41,17 @@ Orthogonal traits instead of a monolithic trait — each concern is a separate t
 
 | Layer | File | Purpose |
 |-------|------|---------|
-| Lattice | `lattice.rs` | `CsrLattice` — flat CSR arrays (offsets + neighbors), `BondType`, builders (chain, square, hypercubic, triangular, honeycomb, kagome) |
-| System | `system.rs` | `System { lattice, spins, energy, beta }` — pub fields, β moved here from model structs |
-| Traits | `hamiltonian.rs` | `Hamiltonian`, `ClusterModel`, `Proposable`, `Measurable`, `HeatBathable`, `ContinuousHeatBathable` — orthogonal model traits |
-| Models | `models.rs` | `IsingModel`, `PottsModel`, `XYModel`, `HeisenbergModel` — implement traits above |
-| Algorithm | `algorithm.rs` | `Algorithm<H>` trait — `MetropolisCore`, `WolffCore`, `SWCore`, `HeatBathCore`, `MicrocanonicalCore`, `ContinuousHeatBathCore` |
-| Proposal | `proposal.rs` | `ProposalStrategy<H>` — Standard, OPSS (adaptive over-relaxation) |
-| Wrapper | `classical_mc.rs` | `ClassicalMC<H, A>` — `MonteCarlo`, `FromParams`, `ParallelTemperingCompatible`, JSON checkpoint |
+| Lattice | `lattice.rs` | `CsrLattice` — flat CSR arrays (offsets + neighbors), `Bond`, `BondType` (stable labels), builders |
+| System | `system.rs` | `System { lattice, spins, energy, beta }` — pub fields, impl `TrialEvaluator` for `SiteSpinMove`/`BatchSpinMove` |
+| Traits | `hamiltonian.rs` | `Hamiltonian`, `PairInteraction` (blanket impl), `ClusterModel`, `Proposable`, `Measurable`, `HeatBathable`, `ContinuousHeatBathable` |
+| Models | `models.rs` | `IsingModel`, `PottsModel`, `ONModel<D>` (XY=O(2), Heisenberg=O(3)) — impl `PairInteraction` |
+| Move types | `moves.rs` | `Spin`, `SiteSpinMove`, `BatchSpinMove`, `EnergyPatch`, `BatchEnergyWorkspace`, `BatchEnergyPatch` |
+| Trial eval | `trial.rs` | `TrialEvaluator<Model,M>`, `ProposedMove<M>`, `metropolis_hastings_step()`, `TrialOutcome` |
+| Ensemble | `ensemble.rs` | `Ensemble<D>` trait, `CanonicalEnsemble`, `ThermodynamicDelta` |
+| Visit order | `visit.rs` | `VisitSchedule` (Sequential/RandomPermutation), `SiteOrder` workspace |
+| Algorithm | `algorithm.rs` | `Algorithm<H>` trait — `MetropolisCore`, `WolffCore`, `SWCore`, `HeatBathCore`, `MicrocanonicalCore`, `ContinuousHeatBathCore`, `HybridCore` |
+| Proposal | `proposal.rs` | `ProposalStrategy<H>` — `StandardStrategy`, `OPSSStrategy` (adaptive rotation) |
+| Wrapper | `classical_mc.rs` | `ClassicalMC<H, A, O>` — `MonteCarlo`, `FromParams`, `ParallelTemperingCompatible`, JSON snapshot v2 |
 | Multi-spin | `multi_spin.rs` | `MultiSpinIsing` — bit-parallel Ising with 64 replicas, impl `MonteCarlo` + `FromParams` + PT |
 | Observables | `observables.rs` | Pluggable `Observable<H>` + `DefaultObservableSet` (Energy, Magnetization) |
 | Postprocess | `postprocess.rs` | Derived observables: `susceptibility()`, `specific_heat()`, `binder_cumulant()`, `compute_correlation_1d()` |
