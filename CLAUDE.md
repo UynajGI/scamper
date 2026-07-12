@@ -12,7 +12,7 @@ Hooks via **lefthook** (`lefthook.yml` + `.lefthook/` scripts). pre-commit runs 
 | Carlo.rs | Core framework | `MonteCarlo` trait, `Scheduler`, `Context`, `Measurements`, `Merge`, `Backend` |
 | QMC.rs | Quantum MC | General continuous-time lattice QMC (`LatticeSpinQmc` implements `MonteCarlo` + `FromParams`), spin-boson wormhole QMC
 | CMC.rs | Classical MC | Lattice: `core/` → `lattice/` → `algorithms/` → `observables/` + `ClassicalMC` wrapper. Particle: `particle/` — NVT/NPT/μVT ensembles, Lennard-Jones, cell lists, rigid molecules, volume changes, grand-canonical insertion/deletion. Generalized: `generalized/` — Wang-Landau DOS estimation, multicanonical, umbrella sampling, canonical reweighting |
-| MCMC.rs | Statistical MC | Euclidean-state transition kernels (RW-Metropolis, component-wise, slice), adaptation, multi-chain diagnostics, Carlo.rs adapter |
+| MCMC.rs | Statistical MC | Euclidean-state transition kernels (RW-Metropolis, component-wise, slice, Gibbs, composed), dense covariance adaptation, constrained transforms, replica exchange, multi-chain diagnostics, Carlo.rs adapter |
 
 ## Carlo.rs Architecture
 
@@ -126,22 +126,31 @@ Statistical inference layer with Euclidean-state kernels:
 | Module | Directory | Purpose |
 |--------|-----------|---------|
 | `LogDensity` trait | `target.rs` | `log_density(&mut self, &[f64]) -> f64` — closures via `FnLogDensity` |
-| `ChainState` | `state/` | Position + cached log-density + optional gradient cache |
-| `TransitionKernel` | `kernel/` | `transition()` + `on_phase_start`/`on_phase_end` — 3 kernels |
-| `adaptation` | `adaptation/` | `RobbinsMonroScale` (global), `DiagonalCovarianceAdaptation` |
-| `MemoryTrace` | `trace/` | Contiguous row-major posterior storage with thinning |
+| `ChainState` | `state/` | Position + cached log-density + gradient cache + `exchange_position_with` for PT |
+| `TransitionKernel<T>` | `kernel/` | Target-typed trait (T on trait) — 3 built-in + `Then`/`Repeat`/`Mixture` composition + `GibbsKernel` for exact conditionals |
+| `GibbsUpdate<T>` | `kernel/gibbs.rs` | Target-specific exact conditional/block update with atomic workspace commit |
+| `adaptation` | `adaptation/` | `RobbinsMonroScale` (global), `DiagonalCovarianceAdaptation`, `DenseCovarianceAdaptation` (matrix Welford + regularized Cholesky) |
+| `GaussianScale::Dense` | `proposal/gaussian.rs` | Row-major lower Cholesky factor, `fill_displacement()` for correlated proposals |
+| `Bijector` trait | `transform/` | `forward`/`inverse` with log-Jacobian — `Identity`, `Positive`, `Interval`, `Ordered`, `Simplex`, `Product` |
+| `TransformedTarget` | `transform/target.rs` | Wraps constrained target + bijector, auto Jacobian correction in unconstrained space |
+| `tempering` | `tempering.rs` | `run_parallel_tempering` — Rayon local transitions + alternating neighbor exchange, generic cross-target ratio |
+| `MemoryTrace` | `trace/` | Contiguous row-major posterior storage with thinning, HDF5 via hdf5 0.8 dataset-builder API |
 | `diagnostics` | `diagnostics/` | Rank-normalized R-hat, bulk/tail ESS, MCSE |
 | `ChainCheckpoint` | `checkpoint.rs` | JSON serde envelope for kernel+RNG+state+trace |
 | `McmcSampler` | `carlo_adapter.rs` | Implements `MonteCarlo` — drop-in for `Scheduler.run_one()` |
 
 Key patterns:
 - `McmcSampler<T, K, Tr>` implements `MonteCarlo`; use `Run::from_parts()` to avoid `FromParams`
-- `TransitionKernel` is object-safe (no type parameter on trait — `T` is on `transition()`)
+- `TransitionKernel<T>` is target-typed (T on trait, not just on method) — enables model-specific Gibbs/block kernels
+- `TransitionReport.subtransitions` counts elementary transitions in composed kernels; `merge()` aggregates across children
 - Adaptation freezes on phase transition to `Sampling`; `on_phase_end(Warmup)` also freezes
 - Traces never mix chain IDs; multi-chain uses Rayon with deterministic per-chain seeds
-- Component-wise and slice kernels use private workspace (`#[serde(default)]`) for atomic commit: copy position once (O(d)), work on workspace, `swap_position` at end (single iteration per transition). Old checkpoints without workspace fields deserialize via `serde(default)` and lazily initialize
-- `EuclideanState::validate()` checks finite position/density and gradient cache consistency; called by `MemoryTrace::record()` and `ChainCheckpoint::validate_format()`
-- Known issue: hdf5 feature broken workspace-wide (hdf5 0.8.1 lacks `create_dataset_simple`)
+- Component-wise and slice kernels use private workspace (`#[serde(default)]`) for atomic commit: copy position once (O(d)), work on workspace, `swap_position` at end (single iteration per transition)
+- `EuclideanState::validate()` checks finite position/density and gradient cache consistency
+- Gibbs updaters write to private proposal workspace; error or invalid state → accepted state unchanged
+- Replica exchange: targets/kernels/RNGs/traces fixed to ladder slots; only states swap. Generic cross-target log-ratio, no β convention hard-coded
+- Dense and diagonal covariance adaptation are mutually exclusive on one kernel
+- Known issue: hdf5 feature broken workspace-wide (hdf5 0.8.1 API — Carlo.rs still uses `create_dataset_simple`)
 - Known issue: `json_checkpoint_preserves_exact_future_trajectory` pre-existing failure (f64 serde round-trip ULP differences in MemoryTrace)
 
 
