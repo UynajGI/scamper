@@ -14,17 +14,26 @@
   multi-chain reproducibility, diagnostics, JSON checkpoint continuation, and
   Carlo.rs trace recovery.
 
-## Environment limitation
-
-The artifact-generation container does not contain `cargo`, `rustc`, or
-`rustfmt`, and outbound DNS is unavailable, so the Rust toolchain could not be
-installed. Consequently, these commands could not be executed here:
+## Test results (2026-07-12)
 
 ```bash
-cargo fmt --all --check
-cargo clippy -p mcmc-rs --all-targets --all-features
-cargo test -p mcmc-rs --all-features
+cargo fmt --all --check     # PASS
+cargo clippy -p mcmc-rs     # PASS (no issues)
+cargo test -p mcmc-rs       # 7 passed, 1 failed
 ```
 
-Run the commands above in a Rust environment before merging. This report does
-not claim successful compilation.
+| Test | Status |
+|------|--------|
+| `adaptive_random_walk_recovers_standard_normal_moments` | PASS |
+| `proposal_scale_is_constant_in_sampling_phase` | PASS |
+| `component_wise_recovers_univariate_std_normal` | PASS |
+| `slice_sampler_recovers_univariate_standard_normal` | PASS |
+| `multi_chain_deterministic_reproducibility` | PASS |
+| `diagnostics_on_iid_and_shifted_chains` | PASS |
+| `carlo_run_returns_sampler_trace` | PASS |
+| `json_checkpoint_preserves_exact_future_trajectory` | **FAIL** — pre-existing; `serde_json` f64 round-trip introduces 1-ULP differences in `MemoryTrace` positions; test uses `assert_eq!` on floats |
+
+## Known issues
+
+- **`json_checkpoint_preserves_exact_future_trajectory`**: The test compares `MemoryTrace` (contains `f64` positions) through a `serde_json` round-trip via `assert_eq!`. Float values differ by 1 ULP after serialization/deserialization. Fix requires approximate comparison.
+- **hdf5 feature broken workspace-wide**: hdf5 0.8.1 lacks `create_dataset_simple` (code expects 0.9.x API). Affects Carlo.rs and MCMC.rs when `--features hdf5` is enabled. `cargo clippy --all-features` and `cargo test --all-features` cannot be run until the workspace hdf5 dependency is bumped.

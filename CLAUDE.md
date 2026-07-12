@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Scuttle — Monte Carlo framework with three Rust crates: Carlo.rs (core), QMC.rs (quantum), CMC.rs (classical).
+Scuttle — Monte Carlo framework with four Rust crates: Carlo.rs (core), QMC.rs (quantum), CMC.rs (classical), MCMC.rs (statistical).
 
 
 Hooks via **lefthook** (`lefthook.yml` + `.lefthook/` scripts). pre-commit runs `fmt --check` → `cargo check` → `clippy` → `typos` on staged `.rs` (affected crates only); commit-msg enforces Conventional Commits; post-commit runs `codegraph sync` (non-blocking); pre-push runs `cargo deny` only (test moved to CI for fast pushes — run `just test` manually before pushing). Install: `lefthook install` or `just hooks`. Skip: `LEFTHOOK=0 git commit`. Lint policy (incl. `unsafe_code = "deny"`) is codified in `[workspace.lints]` (`Cargo.toml`) — no `RUSTFLAGS` needed; the sole exception is `Carlo.rs/src/backend/mpi.rs` (`#![allow(unsafe_code)]` for MPI FFI). CI (`.github/workflows/ci.yml`) runs fmt + clippy + test + deny (`--all-features`) as parallel jobs.
@@ -12,6 +12,7 @@ Hooks via **lefthook** (`lefthook.yml` + `.lefthook/` scripts). pre-commit runs 
 | Carlo.rs | Core framework | `MonteCarlo` trait, `Scheduler`, `Context`, `Measurements`, `Merge`, `Backend` |
 | QMC.rs | Quantum MC | General continuous-time lattice QMC (`LatticeSpinQmc` implements `MonteCarlo` + `FromParams`), spin-boson wormhole QMC
 | CMC.rs | Classical MC | Layered: `Lattice` → `System` → `Model` → `Algorithm` → `ClassicalMC` wrapper |
+| MCMC.rs | Statistical MC | Euclidean-state transition kernels (RW-Metropolis, component-wise, slice), adaptation, multi-chain diagnostics, Carlo.rs adapter |
 
 ## Carlo.rs Architecture
 
@@ -22,7 +23,7 @@ MonteCarlo trait → Scheduler.run_one() → Results flow:
 | `MonteCarlo` trait  | `monte_carlo.rs`        | Core: `sweep(ctx)`, `measure(ctx)`, `Rng` type, lifecycle hooks    |
 | `FromParams` trait  | `monte_carlo.rs`        | Construct model from `Params` dict                                 |
 | `Context`           | `context.rs`            | RNG, measurements, sweep counter, `RunPhase`, checkpoint state     |
-| `Run`               | `run.rs`                | Single run lifecycle, `step()`, checkpoint/restart                 |
+| `Run`               | `run.rs`                | Single run lifecycle, `step()`, `from_parts()` (no-`FromParams` path), `finalize_with_mc()` (recover MC after run), checkpoint/restart |
 | `Scheduler`         | `scheduler.rs`          | Thermalization → measurement loop, `run_one`/`run_parallel`/`run_controlled` |
 | `Backend`           | `backend/`              | `RayonBackend` (threads), `MpiBackend` (MPI)                       |
 | `Measurements`      | `measurements.rs`       | Binned `Accumulator`, complex observables                          |
@@ -110,9 +111,31 @@ Key patterns:
 
 1. Define struct with config state
 2. `impl MonteCarlo` — `type Rng`, `fn sweep()`, optional `fn measure()`
-3. `impl FromParams` — construct from `Params`
+3. `impl FromParams` — construct from `Params` (or use `Run::from_parts()` for closure/sampler-based models that can't implement `FromParams`)
 4. Call `ctx.measure("Name", value)` in `sweep()` or `measure()`
 5. Optional: `impl MonteCarloCheckpoint` for HDF5 save/load
+
+### MCMC.rs Architecture
+
+Statistical inference layer with Euclidean-state kernels:
+
+| Module | Directory | Purpose |
+|--------|-----------|---------|
+| `LogDensity` trait | `target/` | `log_density(&mut self, &[f64]) -> f64` — closures via `FnLogDensity` |
+| `ChainState` | `state/` | Position + cached log-density + optional gradient cache |
+| `TransitionKernel` | `kernel/` | `transition()` + `on_phase_start`/`on_phase_end` — 3 kernels |
+| `adaptation` | `adaptation/` | `RobbinsMonroScale` (global), `DiagonalCovarianceAdaptation` |
+| `MemoryTrace` | `trace/` | Contiguous row-major posterior storage with thinning |
+| `diagnostics` | `diagnostics/` | Rank-normalized R-hat, bulk/tail ESS, MCSE |
+| `ChainCheckpoint` | `checkpoint.rs` | JSON serde envelope for kernel+RNG+state+trace |
+| `McmcSampler` | `carlo_adapter.rs` | Implements `MonteCarlo` — drop-in for `Scheduler.run_one()` |
+
+Key patterns:
+- `McmcSampler<T, K, Tr>` implements `MonteCarlo`; use `Run::from_parts()` to avoid `FromParams`
+- `TransitionKernel` is object-safe (no type parameter on trait — `T` is on `transition()`)
+- Adaptation freezes on phase transition to `Sampling`; `on_phase_end(Warmup)` also freezes
+- Traces never mix chain IDs; multi-chain uses Rayon with deterministic per-chain seeds
+- Known issue: hdf5 feature broken workspace-wide (hdf5 0.8.1 lacks `create_dataset_simple`)
 
 
 ## Behavioral Guidelines
