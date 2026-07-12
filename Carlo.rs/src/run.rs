@@ -24,7 +24,9 @@ use mpi::topology::SimpleCommunicator;
 #[cfg(feature = "hdf5")]
 use std::path::Path;
 
-use crate::{CarloError, Context, FromParams, Metadata, MonteCarlo, Params, Results, RunConfig};
+use crate::{
+    CarloError, Context, FromParams, Metadata, MonteCarlo, Params, Results, RunConfig, RunPhase,
+};
 
 #[cfg(feature = "hdf5")]
 use hdf5::File as Hdf5File;
@@ -104,7 +106,14 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
         let rng = R::seed_from_u64(seed);
         let mut context =
             Context::new_with_binsize(rng, config.thermalization_sweeps, config.binsize);
-        let mc = MC::from_params(params, &mut context.rng)?;
+        let mut mc = MC::from_params(params, &mut context.rng)?;
+        let initial_phase = if config.thermalization_sweeps == 0 {
+            RunPhase::Measurement
+        } else {
+            RunPhase::Thermalization
+        };
+        context.enter_phase(initial_phase);
+        mc.on_phase_start(initial_phase, &mut context);
 
         Ok(Self {
             context,
@@ -136,13 +145,25 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
     /// Automatically records sweep_time and measure_time as observables
     /// (prefixed with `_ll_` matching Carlo.jl convention).
     pub fn step(&mut self) -> u64 {
+        let desired_phase = if self.context.sweep_count() < self.config.thermalization_sweeps {
+            RunPhase::Thermalization
+        } else {
+            RunPhase::Measurement
+        };
+        if self.context.phase() != desired_phase {
+            let previous = self.context.phase();
+            self.mc.on_phase_end(previous, &mut self.context);
+            self.context.enter_phase(desired_phase);
+            self.mc.on_phase_start(desired_phase, &mut self.context);
+        }
+
         let sweep_start = Instant::now();
         self.mc.sweep(&mut self.context);
         let sweep_time = sweep_start.elapsed().as_secs_f64();
-
+        let collect = self.context.phase().collects_measurements();
         self.context.advance_sweep();
 
-        if self.context.is_thermalized() {
+        if collect {
             let measure_start = Instant::now();
             self.mc.measure(&mut self.context);
             let measure_time = measure_start.elapsed().as_secs_f64();
@@ -162,13 +183,25 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
     /// Default behavior (via MonteCarlo::sweep_with_comm) delegates to regular sweep.
     #[cfg(feature = "mpi")]
     pub fn step_with_comm(&mut self, comm: &SimpleCommunicator) -> u64 {
+        let desired_phase = if self.context.sweep_count() < self.config.thermalization_sweeps {
+            RunPhase::Thermalization
+        } else {
+            RunPhase::Measurement
+        };
+        if self.context.phase() != desired_phase {
+            let previous = self.context.phase();
+            self.mc.on_phase_end(previous, &mut self.context);
+            self.context.enter_phase(desired_phase);
+            self.mc.on_phase_start(desired_phase, &mut self.context);
+        }
+
         let sweep_start = Instant::now();
         self.mc.sweep_with_comm(&mut self.context, comm);
         let sweep_time = sweep_start.elapsed().as_secs_f64();
-
+        let collect = self.context.phase().collects_measurements();
         self.context.advance_sweep();
 
-        if self.context.is_thermalized() {
+        if collect {
             let measure_start = Instant::now();
             self.mc.measure_with_comm(&mut self.context, comm);
             let measure_time = measure_start.elapsed().as_secs_f64();
@@ -246,7 +279,12 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
     }
 
     /// Finalize run and return results.
-    pub fn finalize(self, base_seed: u64) -> Results {
+    pub fn finalize(mut self, base_seed: u64) -> Results {
+        let previous = self.context.phase();
+        self.mc.on_phase_end(previous, &mut self.context);
+        self.context.enter_phase(RunPhase::Finished);
+        self.mc
+            .on_phase_start(RunPhase::Finished, &mut self.context);
         let estimates = self.context.finalize_measurements();
         let mut results = Results::from_measurements(&estimates);
         results.set_metadata(Metadata {
@@ -468,9 +506,11 @@ where
                 reason: format!("Cannot open simulation group: {}", e),
             })?;
 
-        // Create MC from params then restore state
+        // Create MC from params then restore state. Re-entering the restored
+        // phase lets lifecycle-aware kernels rebuild/freeze phase-local state.
         let mut mc = MC::from_params(params, &mut context.rng)?;
         mc.read_checkpoint(&mc_group)?;
+        mc.on_phase_start(context.phase(), &mut context);
 
         // Record checkpoint read time
         let checkpoint_time = checkpoint_start.elapsed().as_secs_f64();

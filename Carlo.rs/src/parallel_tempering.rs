@@ -30,7 +30,7 @@ use rand::SeedableRng;
 use rand::RngExt;
 
 #[cfg(feature = "mpi")]
-use crate::{CarloError, FromParams, Metadata, Params, Results};
+use crate::{CarloError, FromParams, Metadata, Params, Results, RunPhase};
 
 #[cfg(feature = "mpi")]
 use mpi::topology::{Communicator, SimpleCommunicator};
@@ -279,11 +279,25 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
 
     /// Execute one PT step (sweep + optional exchange).
     pub fn step(&mut self) {
+        let desired_phase = if self.ctx.sweep_count() < self.ctx.thermalization_sweeps() {
+            RunPhase::Thermalization
+        } else {
+            RunPhase::Measurement
+        };
+        if self.ctx.phase() != desired_phase {
+            let previous = self.ctx.phase();
+            self.mc.child_mc.on_phase_end(previous, &mut self.ctx);
+            self.ctx.enter_phase(desired_phase);
+            self.mc
+                .child_mc
+                .on_phase_start(desired_phase, &mut self.ctx);
+        }
+
         self.mc.child_mc.sweep(&mut self.ctx);
+        let collect = self.ctx.phase().collects_measurements();
         self.ctx.advance_sweep();
 
-        // Collect measurements if thermalized
-        if self.ctx.is_thermalized() {
+        if collect {
             self.mc.child_mc.measure(&mut self.ctx);
         }
 
@@ -459,6 +473,13 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
 
     /// Finalize and return results.
     pub fn finalize(mut self) -> Results {
+        let previous = self.ctx.phase();
+        self.mc.child_mc.on_phase_end(previous, &mut self.ctx);
+        self.ctx.enter_phase(RunPhase::Finished);
+        self.mc
+            .child_mc
+            .on_phase_start(RunPhase::Finished, &mut self.ctx);
+
         // Flush any remaining PT measurements
         self.mc.finalize_pt_measurements(&mut self.ctx);
 
@@ -571,6 +592,16 @@ where
 
     let mut exchange = exchange;
     exchange.ctx = Context::new_with_binsize(exchange.ctx.rng, thermalization_sweeps, binsize);
+    let initial_phase = if thermalization_sweeps == 0 {
+        RunPhase::Measurement
+    } else {
+        RunPhase::Thermalization
+    };
+    exchange.ctx.enter_phase(initial_phase);
+    exchange
+        .mc
+        .child_mc
+        .on_phase_start(initial_phase, &mut exchange.ctx);
 
     while !exchange.is_complete() {
         exchange.step();

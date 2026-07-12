@@ -6,15 +6,10 @@
 //! weighted and parallel interactions are counted without hidden `/ 2` rules.
 
 use crate::lattice::{Bond, CsrLattice};
+use crate::moves::{BatchEnergyWorkspace, BatchSpinMove};
 use rand::Rng;
-use smallvec::SmallVec;
 
-/// Small-vector representation used by the compatibility API.
-///
-/// Dimensions above three are supported and spill to the heap.  Built-in
-/// `ONModel<D>` therefore works for arbitrary `D`, while XY/Heisenberg remain
-/// allocation-free.
-pub type Spin = SmallVec<[f64; 3]>;
+pub use crate::moves::Spin;
 
 /// General physical-energy model.
 ///
@@ -51,6 +46,29 @@ pub trait Hamiltonian: Send + Sync {
         let old = &spins[site * spin_dim..(site + 1) * spin_dim];
         self.local_energy(spins, lattice, site, 1.0, proposed)
             - self.local_energy(spins, lattice, site, 1.0, old)
+    }
+
+    /// Exact energy change for an atomic multi-site replacement.
+    ///
+    /// The default path supports arbitrary multi-body Hamiltonians by applying
+    /// the move in a reusable scratch configuration and recomputing once. Pair
+    /// interactions override this with an affected-edge incremental path.
+    fn batch_delta_energy(
+        &self,
+        spins: &[f64],
+        lattice: &CsrLattice,
+        current_energy: f64,
+        movement: &BatchSpinMove,
+        workspace: &mut BatchEnergyWorkspace,
+    ) -> f64 {
+        assert_eq!(
+            movement.spin_dim(),
+            self.spin_dim(),
+            "batch spin dimension mismatch"
+        );
+        workspace.prepare(lattice.n_sites, lattice.n_edges(), movement);
+        let proposed = workspace.scratch_configuration(spins, movement);
+        self.compute_total_energy(proposed, lattice, 1.0) - current_energy
     }
 }
 
@@ -139,6 +157,51 @@ impl<T: PairInteraction> Hamiltonian for T {
                     )
                 })
                 .sum::<f64>()
+    }
+
+    fn batch_delta_energy(
+        &self,
+        spins: &[f64],
+        lattice: &CsrLattice,
+        _current_energy: f64,
+        movement: &BatchSpinMove,
+        workspace: &mut BatchEnergyWorkspace,
+    ) -> f64 {
+        let spin_dim = PairInteraction::spin_dim(self);
+        assert_eq!(
+            movement.spin_dim(),
+            spin_dim,
+            "batch spin dimension mismatch"
+        );
+        workspace.prepare(lattice.n_sites, lattice.n_edges(), movement);
+
+        let mut delta = 0.0;
+        for (change_index, &site) in movement.sites().iter().enumerate() {
+            let base = site * spin_dim;
+            let old = &spins[base..base + spin_dim];
+            let proposed = movement.spin(change_index);
+            delta += self.onsite_energy(site, proposed) - self.onsite_energy(site, old);
+
+            for (_neighbor, edge_id) in lattice.incidences(site) {
+                if !workspace.mark_edge_once(edge_id) {
+                    continue;
+                }
+                let edge = &lattice.edges[edge_id];
+                let left_base = edge.source * spin_dim;
+                let right_base = edge.target * spin_dim;
+                let old_left = &spins[left_base..left_base + spin_dim];
+                let old_right = &spins[right_base..right_base + spin_dim];
+                let new_left = workspace
+                    .change_index(edge.source)
+                    .map_or(old_left, |index| movement.spin(index));
+                let new_right = workspace
+                    .change_index(edge.target)
+                    .map_or(old_right, |index| movement.spin(index));
+                delta += self.bond_energy(new_left, new_right, edge)
+                    - self.bond_energy(old_left, old_right, edge);
+            }
+        }
+        delta
     }
 }
 

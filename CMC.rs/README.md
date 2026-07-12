@@ -1,11 +1,13 @@
 # CMC.rs
 
-CMC.rs is the classical lattice Monte Carlo toolbox in the Scuttle workspace. It is intentionally built **on Carlo.rs**:
+CMC.rs is Scuttle's classical Monte Carlo sampling layer. It is intentionally built **on Carlo.rs** rather than duplicating execution infrastructure:
 
-- Carlo.rs owns RNG contexts, scheduling, thermalization/measurement phases, backends, binning/results and parallel tempering.
-- CMC.rs owns graph topology, physical models, update kernels and classical observables.
+- **Carlo.rs** owns RNG contexts, explicit run phases, scheduling, backends, accumulation/results, checkpoint orchestration and parallel tempering.
+- **CMC.rs** owns classical configurations, physical energy models, transactional trial moves, target ensembles, update kernels and observables.
 
-## Built-in composition
+This revision is a foundation refactor. It keeps the existing lattice-spin functionality and public `ClassicalMC<Model, Algorithm>` composition, but moves its updates onto reusable sampling primitives. Particle systems, Wang-Landau and worm sectors are deliberately not included yet.
+
+## Existing user entry point
 
 ```rust
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
@@ -24,11 +26,80 @@ let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
     .run_one::<IsingMC>(&params);
 ```
 
-The same wrapper works with `WolffCore`, `SWCore`, `HeatBathCore`, `ContinuousHeatBathCore`, `MicrocanonicalCore`, and statically composed `HybridCore` updates when the model implements the corresponding capability trait.
+The same wrapper continues to support `WolffCore`, `SWCore`, `HeatBathCore`, `ContinuousHeatBathCore`, `MicrocanonicalCore`, and statically composed `HybridCore` updates when the model implements the required capability trait.
+
+## Sampling foundation
+
+The local Metropolis path now has four independent parts:
+
+```text
+ProposalStrategy
+    -> ProposedMove<M>
+    -> TrialEvaluator<Model, M>::evaluate_trial (no accepted-state mutation)
+    -> Ensemble<Delta>::log_weight_ratio
+    -> commit_trial only when accepted
+```
+
+Important public building blocks are:
+
+- `ProposedMove<M>`: move payload plus the Hastings proposal-density correction;
+- `TrialEvaluator<Model, Movement>`: state-specific trial evaluation and atomic cache commit;
+- `ThermodynamicDelta`: physical extensive-variable changes;
+- `Ensemble<Delta>` and `CanonicalEnsemble`: target-weight policy;
+- `EnergyPatch` / `BatchEnergyPatch`: reusable cache workspaces;
+- `SiteSpinMove` / `BatchSpinMove`: the current lattice-spin move backend;
+- `VisitSchedule` / `SiteOrder`: reusable site traversal without per-sweep allocation.
+
+A custom move can use the generic Metropolis-Hastings driver directly:
+
+```rust,ignore
+let outcome = cmc_rs::metropolis_hastings_step(
+    &mut state,
+    &model,
+    &proposal,
+    &ensemble,
+    &mut patch,
+    &mut rng,
+);
+```
+
+Evaluation is transactional: a rejected move never mutates the accepted configuration or its cache. An accepted move commits configuration and cache changes once.
+
+## Batch updates and energy caches
+
+`Hamiltonian::batch_delta_energy` is the general multi-site path. Its default implementation uses a reusable scratch configuration and one exact energy evaluation, so direct multi-body Hamiltonians remain correct.
+
+`PairInteraction` overrides this with an affected-edge implementation:
+
+- changed onsite terms are visited once;
+- each affected physical edge is visited once using generation stamps;
+- parallel edges and self-loops are handled explicitly;
+- no full graph recomputation is needed for Wolff clusters;
+- Swendsen-Wang uses the same atomic batch contract.
+
+An optional exact audit remains available on Metropolis:
+
+```rust
+use cmc_rs::MetropolisCore;
+
+let algorithm = MetropolisCore::new().with_energy_check_interval(1_000);
+```
+
+## Explicit Carlo.rs lifecycle
+
+`carlo_rs::Context` now carries a `RunPhase`:
+
+```text
+Initialization -> Thermalization -> Measurement -> Finished
+```
+
+Schedulers and `Run` call `MonteCarlo::on_phase_start` / `on_phase_end` at boundaries. CMC receives the mapped phase and permits proposal adaptation only during `Thermalization`; production kernels are frozen before the first measurement sweep. Legacy checkpoint phase is inferred from stored counters when needed.
+
+For future convergence-driven samplers, Carlo.rs also provides `AdaptiveRunControl` and `Scheduler::run_controlled`. This revision only supplies the lifecycle/control protocol; CMC does not yet add Wang-Landau or another adaptive ensemble.
 
 ## Arbitrary weighted graph
 
-`CsrLattice` is not restricted to square lattices. It stores each physical undirected edge exactly once and keeps CSR incidences for fast local access:
+`CsrLattice` stores each physical undirected edge exactly once and keeps CSR incidences for local access:
 
 ```rust
 use cmc_rs::{Bond, BondType, CsrLattice};
@@ -43,20 +114,27 @@ let graph = CsrLattice::from_edges(
 );
 ```
 
-Parallel edges and self-loops are represented explicitly. `neighbors`, `offsets`, and the historical directed-incidence `n_bonds` field remain available for compatibility; `n_edges()` is the physical bond count.
+Parallel edges and self-loops are represented explicitly. Historical `neighbors`, `offsets`, and directed-incidence `n_bonds` fields remain available; `n_edges()` is the physical bond count.
 
-## Implementing a model
+## Implementing a pair model
 
-Most pair models only implement `PairInteraction`, then opt into the algorithms they support:
+Most onsite/pair models only implement `PairInteraction`, then opt into the algorithms they support:
 
 ```rust
 use cmc_rs::{Bond, PairInteraction};
 
-struct MyModel { j: f64 }
+struct MyModel {
+    j: f64,
+}
 
 impl PairInteraction for MyModel {
-    fn spin_dim(&self) -> usize { 1 }
-    fn coupling(&self) -> f64 { self.j }
+    fn spin_dim(&self) -> usize {
+        1
+    }
+
+    fn coupling(&self) -> f64 {
+        self.j
+    }
 
     fn bond_energy(&self, left: &[f64], right: &[f64], bond: &Bond) -> f64 {
         -self.j * bond.weight * left[0] * right[0]
@@ -64,16 +142,6 @@ impl PairInteraction for MyModel {
 }
 ```
 
-Models with genuine multi-site/factor interactions can implement `Hamiltonian` directly, including exact `local_energy`, `delta_energy` and `compute_total_energy` behavior.
+Models with genuine multi-site/factor interactions can implement `Hamiltonian` directly and inherit the correct scratch-backed batch path.
 
-## Correctness changes in this refactor
-
-- O(N) Wolff/SW activation probabilities depend on both endpoint projections: `1-exp(-2 beta J w (s_i·r)(s_j·r))` for equal projected signs.
-- Every Swendsen-Wang cluster receives an independent state/reflection decision.
-- Cluster updates recompute physical energy after the batch transformation, removing order-dependent cache drift.
-- Metropolis uses the full Hastings correction and log-domain acceptance.
-- Adaptive proposals receive every accept/reject result and adapt only while Carlo.rs is thermalizing.
-- Hamiltonians return physical energy only; beta is applied once by the canonical algorithm.
-- Unknown lattice names and invalid dimensions are configuration errors rather than silent fallbacks.
-
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`MIGRATION.md`](MIGRATION.md).
+See [`ARCHITECTURE.md`](ARCHITECTURE.md), [`MIGRATION.md`](MIGRATION.md), and [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md).

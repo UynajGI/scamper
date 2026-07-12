@@ -20,7 +20,7 @@ use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::{ComplexEstimate, Estimate, Measurements};
+use crate::{ComplexEstimate, Estimate, Measurements, RunPhase};
 
 /// Checkpoint state for serialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +28,8 @@ pub struct ContextCheckpoint {
     pub sweep_count: u64,
     pub thermalization_sweeps: u64,
     pub thermalized: bool,
+    #[serde(default)]
+    pub phase: RunPhase,
 }
 
 /// Runtime context for Monte Carlo simulation.
@@ -44,8 +46,11 @@ pub struct Context<R: Rng + SeedableRng> {
     /// Thermalization sweeps threshold.
     thermalization_sweeps: u64,
 
-    /// Whether thermalized.
+    /// Whether the warmup boundary has been crossed.
     thermalized: bool,
+
+    /// Explicit scheduler-owned lifecycle phase.
+    phase: RunPhase,
 }
 
 impl<R: Rng + SeedableRng> Context<R> {
@@ -57,6 +62,7 @@ impl<R: Rng + SeedableRng> Context<R> {
             sweep_count: 0,
             thermalization_sweeps,
             thermalized: false,
+            phase: RunPhase::Initialization,
         }
     }
 
@@ -68,6 +74,7 @@ impl<R: Rng + SeedableRng> Context<R> {
             sweep_count: 0,
             thermalization_sweeps,
             thermalized: false,
+            phase: RunPhase::Initialization,
         }
     }
 
@@ -110,7 +117,28 @@ impl<R: Rng + SeedableRng> Context<R> {
 
     /// Check if thermalized.
     pub fn is_thermalized(&self) -> bool {
-        self.thermalized
+        match self.phase {
+            RunPhase::Thermalization => false,
+            RunPhase::Measurement | RunPhase::Finished => true,
+            RunPhase::Initialization => self.thermalized,
+        }
+    }
+
+    /// Current explicit run phase.
+    #[inline]
+    pub const fn phase(&self) -> RunPhase {
+        self.phase
+    }
+
+    /// Enter a scheduler phase.
+    ///
+    /// This is public so custom schedulers and [`crate::Run`] can preserve the
+    /// same lifecycle semantics as [`crate::Scheduler`].
+    pub fn enter_phase(&mut self, phase: RunPhase) {
+        self.phase = phase;
+        if matches!(phase, RunPhase::Measurement | RunPhase::Finished) {
+            self.thermalized = true;
+        }
     }
 
     /// Get sweep count.
@@ -121,7 +149,7 @@ impl<R: Rng + SeedableRng> Context<R> {
     /// Advance sweep counter.
     pub fn advance_sweep(&mut self) {
         self.sweep_count += 1;
-        if self.sweep_count > self.thermalization_sweeps {
+        if self.sweep_count >= self.thermalization_sweeps {
             self.thermalized = true;
         }
     }
@@ -131,16 +159,34 @@ impl<R: Rng + SeedableRng> Context<R> {
             sweep_count: self.sweep_count,
             thermalization_sweeps: self.thermalization_sweeps,
             thermalized: self.thermalized,
+            phase: self.phase,
         }
     }
 
     pub fn restore_from_checkpoint(checkpoint: ContextCheckpoint, rng: R, binsize: usize) -> Self {
+        // Old serialized checkpoints do not contain `phase` and deserialize it
+        // as `Initialization`. Infer the active phase from their counters while
+        // preserving a genuine pre-run initialization checkpoint.
+        let phase = if checkpoint.phase == RunPhase::Initialization {
+            if checkpoint.thermalized || checkpoint.sweep_count >= checkpoint.thermalization_sweeps
+            {
+                RunPhase::Measurement
+            } else if checkpoint.sweep_count > 0 {
+                RunPhase::Thermalization
+            } else {
+                RunPhase::Initialization
+            }
+        } else {
+            checkpoint.phase
+        };
         Self {
             rng,
             measurements: Measurements::new(binsize),
             sweep_count: checkpoint.sweep_count,
             thermalization_sweeps: checkpoint.thermalization_sweeps,
-            thermalized: checkpoint.thermalized,
+            thermalized: checkpoint.thermalized
+                || matches!(phase, RunPhase::Measurement | RunPhase::Finished),
+            phase,
         }
     }
 
@@ -254,7 +300,12 @@ impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
             measurements,
             sweep_count,
             thermalization_sweeps,
-            thermalized: sweep_count > thermalization_sweeps,
+            thermalized: sweep_count >= thermalization_sweeps,
+            phase: if sweep_count >= thermalization_sweeps {
+                RunPhase::Measurement
+            } else {
+                RunPhase::Thermalization
+            },
         })
     }
 }

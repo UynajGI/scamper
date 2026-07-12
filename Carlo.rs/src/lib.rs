@@ -167,10 +167,12 @@ mod monte_carlo;
 pub mod output;
 pub mod parallel_tempering;
 mod params;
+mod phase;
 pub mod progress;
 mod results;
 mod rng_checkpoint;
 pub mod run;
+mod run_control;
 mod scheduler;
 mod version;
 
@@ -210,5 +212,7 @@ pub use parallel_tempering::{
     ParallelTemperingCompatible, ParallelTemperingConfig, ParallelTemperingMC,
 };
 pub use params::Params;
+pub use phase::RunPhase;
 pub use results::{ComplexResult, Metadata, Results};
+pub use run_control::{AdaptiveRunControl, RunDecision};
 pub use scheduler::{RunConfig, Scheduler};

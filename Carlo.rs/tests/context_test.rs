@@ -1,4 +1,4 @@
-use carlo_rs::Context;
+use carlo_rs::{Context, ContextCheckpoint, RunPhase};
 use rand::SeedableRng;
 use rand_core::Rng;
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -17,11 +17,7 @@ fn test_context_thermalization() {
         ctx.advance_sweep();
     }
 
-    // Still not thermalized (sweeps > thermalization_sweeps)
-    assert!(!ctx.is_thermalized());
-
-    // One more sweep
-    ctx.advance_sweep();
+    // The warmup boundary is reached exactly after the configured count.
     assert!(ctx.is_thermalized());
 }
 
@@ -146,4 +142,68 @@ fn test_context_register_with_shape() {
     ctx.register_observable_with_shape("ArrayObs", 10, &[3, 3]);
 
     ctx.measure("ArrayObs", 1.0);
+}
+
+#[test]
+fn test_context_explicit_phase() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(7);
+    let mut ctx = Context::new(rng, 100);
+    assert_eq!(ctx.phase(), RunPhase::Initialization);
+    ctx.enter_phase(RunPhase::Thermalization);
+    assert!(ctx.phase().allows_adaptation());
+    assert!(!ctx.is_thermalized());
+    ctx.enter_phase(RunPhase::Measurement);
+    assert!(ctx.phase().collects_measurements());
+    assert!(ctx.is_thermalized());
+}
+
+#[test]
+fn legacy_checkpoint_phase_is_inferred_from_counters() {
+    let checkpoint = ContextCheckpoint {
+        sweep_count: 7,
+        thermalization_sweeps: 10,
+        thermalized: false,
+        phase: RunPhase::Initialization,
+    };
+    let rng = Xoshiro256PlusPlus::seed_from_u64(8);
+    let context = Context::restore_from_checkpoint(checkpoint, rng, 10);
+    assert_eq!(context.phase(), RunPhase::Thermalization);
+
+    let checkpoint = ContextCheckpoint {
+        sweep_count: 10,
+        thermalization_sweeps: 10,
+        thermalized: true,
+        phase: RunPhase::Initialization,
+    };
+    let rng = Xoshiro256PlusPlus::seed_from_u64(9);
+    let context = Context::restore_from_checkpoint(checkpoint, rng, 10);
+    assert_eq!(context.phase(), RunPhase::Measurement);
+}
+
+#[test]
+fn explicit_thermalization_phase_overrides_fixed_counter_boundary() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(10);
+    let mut context = Context::new(rng, 1);
+    context.enter_phase(RunPhase::Thermalization);
+    for _ in 0..3 {
+        context.advance_sweep();
+    }
+    assert!(!context.is_thermalized());
+    context.enter_phase(RunPhase::Measurement);
+    assert!(context.is_thermalized());
+}
+
+#[test]
+fn checkpoint_preserves_explicit_adaptation_phase() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(11);
+    let mut context = Context::new(rng, 1);
+    context.enter_phase(RunPhase::Thermalization);
+    context.advance_sweep();
+    context.advance_sweep();
+    let checkpoint = context.checkpoint_state();
+
+    let rng = Xoshiro256PlusPlus::seed_from_u64(12);
+    let restored = Context::restore_from_checkpoint(checkpoint, rng, 10);
+    assert_eq!(restored.phase(), RunPhase::Thermalization);
+    assert!(!restored.is_thermalized());
 }

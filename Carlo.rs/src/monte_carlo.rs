@@ -24,6 +24,7 @@ use mpi::topology::SimpleCommunicator;
 use crate::CarloError;
 use crate::Context;
 use crate::Params;
+use crate::RunPhase;
 
 /// Core trait for Monte Carlo algorithms.
 /// Users implement `sweep()` and optionally override other methods.
@@ -37,6 +38,15 @@ pub trait MonteCarlo: Sized {
 
     /// Optional: measure observables (default: empty).
     fn measure(&mut self, _ctx: &mut Context<Self::Rng>) {}
+
+    /// Lifecycle hook called after the context enters a new run phase.
+    ///
+    /// Adaptive algorithms can use this to reset warmup statistics or freeze
+    /// transition-kernel parameters at the start of production.
+    fn on_phase_start(&mut self, _phase: RunPhase, _ctx: &mut Context<Self::Rng>) {}
+
+    /// Lifecycle hook called immediately before leaving a run phase.
+    fn on_phase_end(&mut self, _phase: RunPhase, _ctx: &mut Context<Self::Rng>) {}
 
     /// Optional: sweep with MPI communicator for multi-rank coordination.
     /// Default: delegate to [`sweep`](MonteCarlo::sweep).

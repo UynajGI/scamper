@@ -159,14 +159,7 @@ where
     type Rng = rand_xoshiro::Xoshiro256PlusPlus;
 
     fn sweep(&mut self, context: &mut Context<Self::Rng>) {
-        // Use Carlo.rs's explicit counters rather than `is_thermalized()`: the
-        // latter turns true after the first measurement sweep in the current
-        // scheduler because of its strict `>` transition.
-        let phase = if context.sweep_count() < context.thermalization_sweeps() {
-            SimulationPhase::Thermalization
-        } else {
-            SimulationPhase::Measurement
-        };
+        let phase = SimulationPhase::from_run_phase(context.phase());
         self.algorithm
             .sweep_with_phase(&mut self.system, &self.model, &mut context.rng, phase);
     }

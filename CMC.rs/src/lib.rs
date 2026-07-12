@@ -30,29 +30,37 @@
 
 pub mod algorithm;
 pub mod classical_mc;
+pub mod ensemble;
 pub mod hamiltonian;
 pub mod lattice;
 pub mod models;
+pub mod moves;
 pub mod multi_spin;
 pub mod observables;
 pub mod postprocess;
 pub mod proposal;
 pub mod system;
+pub mod trial;
+pub mod visit;
 
 pub use algorithm::{
     Algorithm, ContinuousHeatBathCore, HeatBathCore, HybridCore, MetropolisCore,
     MicrocanonicalCore, SWCore, SimulationPhase, WolffCore,
 };
 pub use classical_mc::{build_lattice_from_params, ClassicalMC, FromHamiltonianParams};
+pub use ensemble::{CanonicalEnsemble, Ensemble, ThermodynamicDelta};
 pub use hamiltonian::{
     ClusterAuxiliary, ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable,
-    Initializable, LocalFieldModel, Measurable, PairInteraction, Proposable, Spin,
+    Initializable, LocalFieldModel, Measurable, PairInteraction, Proposable,
 };
 pub use lattice::{
     build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
     Bond, BondType, CsrLattice,
 };
 pub use models::{HeisenbergModel, IsingModel, ONModel, PottsModel, XYModel};
+pub use moves::{
+    BatchEnergyPatch, BatchEnergyWorkspace, BatchSpinMove, EnergyPatch, SiteSpinMove, Spin,
+};
 pub use multi_spin::{MultiSpinIsing, N_REPLICAS};
 pub use observables::{
     DefaultObservableSet, EmptyObservableSet, EnergyPerSite, Magnetization, MomentSpec, Observable,
@@ -61,3 +69,5 @@ pub use observables::{
 pub use postprocess::{binder_cumulant, compute_correlation_1d, specific_heat, susceptibility};
 pub use proposal::{OPSSStrategy, ProposalStrategy, ProposedSpin, StandardStrategy};
 pub use system::{SiteChange, System};
+pub use trial::{metropolis_hastings_step, ProposedMove, TrialEvaluator, TrialOutcome};
+pub use visit::{SiteOrder, VisitSchedule};

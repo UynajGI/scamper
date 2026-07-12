@@ -194,4 +194,17 @@ mod tests {
         <OPSSStrategy as ProposalStrategy<XYModel>>::record_result(&mut strategy, true);
         assert_eq!(strategy.acceptance_counts(), (1, 1));
     }
+
+    #[test]
+    fn adaptive_strategy_freezes_outside_thermalization() {
+        let mut strategy = OPSSStrategy::new().with_sigma(0.4);
+        let initial = strategy.sigma;
+        <OPSSStrategy as ProposalStrategy<XYModel>>::record_result(&mut strategy, true);
+        <OPSSStrategy as ProposalStrategy<XYModel>>::finish_sweep(&mut strategy, false);
+        assert_eq!(strategy.sigma, initial);
+
+        <OPSSStrategy as ProposalStrategy<XYModel>>::record_result(&mut strategy, true);
+        <OPSSStrategy as ProposalStrategy<XYModel>>::finish_sweep(&mut strategy, true);
+        assert!(strategy.sigma > initial);
+    }
 }

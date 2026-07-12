@@ -40,7 +40,10 @@ use std::time::Instant;
 
 use rand_core::{Rng, SeedableRng};
 
-use crate::{Backend, Context, FromParams, Metadata, Params, Results};
+use crate::{
+    AdaptiveRunControl, Backend, CarloError, Context, FromParams, Metadata, Params, Results,
+    RunDecision, RunPhase,
+};
 
 /// Configuration for a Monte Carlo run.
 #[derive(Debug, Clone)]
@@ -102,13 +105,21 @@ impl<B: Backend> Scheduler<B> {
         let mut mc =
             MC::from_params(params, &mut ctx.rng).expect("Failed to create model from params");
 
-        // Thermalization phase
-        for _ in 0..self.config.thermalization_sweeps {
-            mc.sweep(&mut ctx);
-            ctx.advance_sweep();
+        // Thermalization phase. Zero-warmup runs enter production directly.
+        if self.config.thermalization_sweeps > 0 {
+            ctx.enter_phase(RunPhase::Thermalization);
+            mc.on_phase_start(RunPhase::Thermalization, &mut ctx);
+            for _ in 0..self.config.thermalization_sweeps {
+                mc.sweep(&mut ctx);
+                ctx.advance_sweep();
+            }
+            mc.on_phase_end(RunPhase::Thermalization, &mut ctx);
         }
 
-        // Measurement phase
+        // Measurement phase. Entering it explicitly freezes adaptive kernels
+        // before the first production sweep, including zero-warmup runs.
+        ctx.enter_phase(RunPhase::Measurement);
+        mc.on_phase_start(RunPhase::Measurement, &mut ctx);
         for sweep in 0..self.config.measurement_sweeps {
             mc.sweep(&mut ctx);
             mc.measure(&mut ctx);
@@ -119,6 +130,9 @@ impl<B: Backend> Scheduler<B> {
                 // Could emit tracing event here
             }
         }
+        mc.on_phase_end(RunPhase::Measurement, &mut ctx);
+        ctx.enter_phase(RunPhase::Finished);
+        mc.on_phase_start(RunPhase::Finished, &mut ctx);
 
         // Finalize measurements
         let estimates = ctx.finalize_measurements();
@@ -140,6 +154,97 @@ impl<B: Backend> Scheduler<B> {
         results
     }
 
+    /// Run a single simulation whose phase transition and stopping point are
+    /// decided by an algorithm-specific controller.
+    ///
+    /// The fixed-count [`Self::run_one`] path remains the default. This method
+    /// is intended for adaptive workflows whose thermalization length is known
+    /// only at runtime.
+    pub fn run_controlled<MC, C>(
+        &self,
+        params: &Params,
+        mut control: C,
+    ) -> Result<Results, CarloError>
+    where
+        MC: FromParams,
+        C: AdaptiveRunControl<MC>,
+    {
+        let rng = MC::Rng::seed_from_u64(self.config.base_seed);
+        let mut ctx =
+            Context::new_with_binsize(rng, self.config.thermalization_sweeps, self.config.binsize);
+        let mut mc = MC::from_params(params, &mut ctx.rng)?;
+        let initial_phase = control.initial_phase();
+        if !matches!(
+            initial_phase,
+            RunPhase::Thermalization | RunPhase::Measurement
+        ) {
+            return Err(CarloError::InvalidConfig {
+                field: "run_control.initial_phase".into(),
+                reason: "expected Thermalization or Measurement".into(),
+            });
+        }
+
+        ctx.enter_phase(initial_phase);
+        mc.on_phase_start(initial_phase, &mut ctx);
+        let mut thermalization_sweeps = 0_u64;
+        let mut measurement_sweeps = 0_u64;
+
+        loop {
+            mc.sweep(&mut ctx);
+            match ctx.phase() {
+                RunPhase::Thermalization => thermalization_sweeps += 1,
+                RunPhase::Measurement => {
+                    mc.measure(&mut ctx);
+                    measurement_sweeps += 1;
+                }
+                RunPhase::Initialization | RunPhase::Finished => {
+                    return Err(CarloError::InvalidConfig {
+                        field: "run_control.phase".into(),
+                        reason: "controller entered a non-runnable phase".into(),
+                    });
+                }
+            }
+            ctx.advance_sweep();
+
+            match (ctx.phase(), control.after_sweep(&mc, &ctx)) {
+                (RunPhase::Thermalization, RunDecision::ContinueAdaptation)
+                | (RunPhase::Measurement, RunDecision::ContinueProduction) => {}
+                (RunPhase::Thermalization, RunDecision::BeginProduction) => {
+                    mc.on_phase_end(RunPhase::Thermalization, &mut ctx);
+                    ctx.enter_phase(RunPhase::Measurement);
+                    mc.on_phase_start(RunPhase::Measurement, &mut ctx);
+                }
+                (_, RunDecision::Stop) => break,
+                (RunPhase::Thermalization, RunDecision::ContinueProduction)
+                | (RunPhase::Measurement, RunDecision::ContinueAdaptation)
+                | (RunPhase::Measurement, RunDecision::BeginProduction) => {
+                    return Err(CarloError::InvalidConfig {
+                        field: "run_control.decision".into(),
+                        reason: "decision does not match the active phase".into(),
+                    });
+                }
+                (RunPhase::Initialization | RunPhase::Finished, _) => unreachable!(),
+            }
+        }
+
+        let previous = ctx.phase();
+        mc.on_phase_end(previous, &mut ctx);
+        ctx.enter_phase(RunPhase::Finished);
+        mc.on_phase_start(RunPhase::Finished, &mut ctx);
+
+        let estimates = ctx.finalize_measurements();
+        let mut results = Results::from_measurements(&estimates);
+        results.set_metadata(Metadata {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            timestamp: chrono::Utc::now(),
+            base_seed: self.config.base_seed,
+            thermalization_sweeps,
+            measurement_sweeps,
+            n_tasks: 1,
+        });
+        Ok(results)
+    }
+
     /// Run multiple parallel simulation tasks.
     pub fn run_parallel<MC: FromParams>(&self, n_tasks: usize, params: &Params) -> Vec<Results> {
         use std::sync::Mutex;
@@ -158,18 +263,28 @@ impl<B: Backend> Scheduler<B> {
                 let mut mc = MC::from_params(params, &mut ctx.rng)
                     .expect("Failed to create model from params");
 
-                // Thermalization
-                for _ in 0..config.thermalization_sweeps {
-                    mc.sweep(&mut ctx);
-                    ctx.advance_sweep();
+                // Thermalization. Zero-warmup tasks enter production directly.
+                if config.thermalization_sweeps > 0 {
+                    ctx.enter_phase(RunPhase::Thermalization);
+                    mc.on_phase_start(RunPhase::Thermalization, &mut ctx);
+                    for _ in 0..config.thermalization_sweeps {
+                        mc.sweep(&mut ctx);
+                        ctx.advance_sweep();
+                    }
+                    mc.on_phase_end(RunPhase::Thermalization, &mut ctx);
                 }
 
                 // Measurement
+                ctx.enter_phase(RunPhase::Measurement);
+                mc.on_phase_start(RunPhase::Measurement, &mut ctx);
                 for _ in 0..config.measurement_sweeps {
                     mc.sweep(&mut ctx);
                     mc.measure(&mut ctx);
                     ctx.advance_sweep();
                 }
+                mc.on_phase_end(RunPhase::Measurement, &mut ctx);
+                ctx.enter_phase(RunPhase::Finished);
+                mc.on_phase_start(RunPhase::Finished, &mut ctx);
 
                 let estimates = ctx.finalize_measurements();
                 let mut result = Results::from_measurements(&estimates);

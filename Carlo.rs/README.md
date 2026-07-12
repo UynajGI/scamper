@@ -69,6 +69,28 @@ impl FromParams for IsingMC {
 }
 ```
 
+## Explicit run lifecycle
+
+`Context` exposes the scheduler-owned `RunPhase`:
+
+```text
+Initialization -> Thermalization -> Measurement -> Finished
+```
+
+`Scheduler`, incremental `Run`, and parallel tempering invoke the default-compatible `MonteCarlo::on_phase_start` and `on_phase_end` hooks. Adaptive kernels can therefore change parameters during thermalization and freeze them before the first production sweep without inferring state from counters.
+
+```rust,ignore
+fn on_phase_start(&mut self, phase: RunPhase, _ctx: &mut Context<Self::Rng>) {
+    if phase == RunPhase::Measurement {
+        self.freeze_adaptation();
+    }
+}
+```
+
+Existing `MonteCarlo` implementations do not need to define these hooks.
+
+For convergence-driven warmup, `Scheduler::run_controlled` accepts an `AdaptiveRunControl`. The controller returns `ContinueAdaptation`, `BeginProduction`, `ContinueProduction`, or `Stop` after each completed sweep. This adds adaptive scheduling without changing the fixed-count `run_one` API or putting physics into the scheduler.
+
 ## Features
 
 | Feature | Description | Dependencies |
