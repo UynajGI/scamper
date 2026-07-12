@@ -8,7 +8,7 @@ Monte Carlo simulation framework in Rust, ported from [Carlo.jl](https://github.
 |-------|---------|
 | [Carlo.rs](Carlo.rs/README.md) | Core framework — scheduler, measurements, MPI backend, checkpointing |
 | QMC.rs | Quantum Monte Carlo — general continuous-time lattice QMC (arbitrary graph/spin), spin-boson wormhole QMC |
-| CMC.rs | Classical Monte Carlo — lattice (CSR graph, Ising/Potts/O(N), Metropolis/Wolff/SW/Heat-bath/Microcanonical, multi-spin coding, JSON snapshot v2) + particle (periodic cells, Lennard-Jones NVT, cell lists, Metropolis-Hastings translations) |
+| CMC.rs | Classical Monte Carlo — lattice (CSR graph, Ising/Potts/O(N), Metropolis/Wolff/SW/Heat-bath/Microcanonical, multi-spin coding, JSON snapshot v2) + particle (periodic cells, Lennard-Jones NVT/NPT/μVT, rigid molecules, cell lists, Metropolis-Hastings) |
 | [MCMC.rs](MCMC.rs/README.md) | Statistical MCMC — Euclidean-state kernels (RW-Metropolis, component-wise, slice), warmup adaptation, posterior traces, multi-chain diagnostics |
 
 ## Quick Start

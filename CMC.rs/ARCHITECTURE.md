@@ -2,7 +2,7 @@
 
 ## Scope of this revision
 
-This revision extends the reusable trial/ensemble/cache foundation from lattice spins to the first continuous domain: periodic Lennard-Jones NVT particles with single-particle translations. Density-of-states samplers, NPT/μVT moves, Wang-Landau controllers and worm configurations are not part of this stage.
+This revision extends the reusable trial/ensemble/cache foundation from lattice spins to continuous particle systems: NVT, NPT, grand-canonical (μVT), and rigid-molecule ensembles. Density-of-states samplers and Wang-Landau controllers are not part of this stage.
 
 ## Layering
 
@@ -17,17 +17,21 @@ ClassicalMC<H, A, O>                         ParticleMC<D, P, A>
   O: ObservableSet<H>                              |
       |                                            +-- ParticleSystem: accepted coordinates
       +-- System: accepted lattice state           |   + physical energy + beta + CellList
-      +-- CsrLattice: physical graph                +-- OrthorhombicCell / ParticleConfiguration
-      |                                            +-- LennardJones / TranslateParticle
-      +------------------- sampling core -------------------+
-                          ProposedMove
-                          TrialEvaluator
+      |                                            +-- OrthorhombicCell / ParticleConfiguration
+      +-- ensembles:                                +-- LennardJones / TranslateParticle
+      |   CanonicalEnsemble (NVT)                   +-- ParticleBatchMove (multi-atom)
+      |   IsothermalIsobaric (NPT)                  +-- IsotropicVolumeChange (NPT)
+      |   GrandCanonical (muVT)                     +-- GrandCanonicalMove (insert/delete)
+      |                                            +-- MoleculeTopology +
+      +------------------- sampling core ----------+   RigidMolecule{Translation,Rotation}
+                          ProposedMove                 TorsionRotation
+                          TrialEvaluator               MoveMixture<K>
                           ThermodynamicDelta
                           Ensemble
                           reusable Patch
 ```
 
-`ClassicalMC` remains the lattice adapter implementing Carlo.rs `MonteCarlo`, `FromParams`, and `ParallelTemperingCompatible`. `ParticleMC` provides the equivalent continuous-particle composition, with `LennardJonesNvt<D>` as the scheduler-ready monatomic alias.
+`ClassicalMC` remains the lattice adapter implementing Carlo.rs `MonteCarlo`, `FromParams`, and `ParallelTemperingCompatible`. `ParticleMC` provides the equivalent continuous-particle composition, with `LennardJonesNvt<D>`, `LennardJonesNpt<D>`, and `LennardJonesMuVt<D>` as scheduler-ready monatomic aliases.
 
 ## Carlo.rs lifecycle extension
 
@@ -109,6 +113,18 @@ Each physical edge is counted once, including parallel bonds and self-loops. Wol
 
 The first implementation deliberately uses a cell list rather than a Verlet list. Trial queries are local and accepted moves update membership without rebuilding the spatial cache.
 
+### NPT ensemble
+
+`IsothermalIsobaric` converts `ThermodynamicDelta { energy, volume, log_jacobian }` into `-β(ΔE + P·ΔV) + log_jacobian`. `IsotropicVolumeChange` models ln(V_new/V_old) with symmetric random-walk proposals. `LogVolumeScale` adapts the log-volume step size toward a target acceptance rate during thermalization. `VolumeChangePatch` stores trial cell, scaled positions, and recomputed total energy. On commit, the entire `CellList` is rebuilt since volume changes invalidate all spatial bins. The acceptance guard rejects moves where the cutoff exceeds half the minimum cell length.
+
+### Grand-canonical ensemble
+
+`GrandCanonical` encodes `π ∝ exp(-βE + log_activity · N)`. `InsertDeleteParticle` proposes reversible insert/delete with configurable species weights, branch probabilities (insert vs delete), and particle-count bounds. At boundaries (minimum_particles, maximum_particles), branch probabilities clamp to force-only-insert or force-only-delete. `ParticleGrandCanonicalCore<D>` runs one translation per particle plus configurable exchange attempts per sweep. Insertion evaluates local energy via cell-list neighbors; deletion reports negative local energy. On commit, the cell list is patched with `insert_particle`/`remove_particle_swap`.
+
+### Rigid molecules
+
+`MoleculeTopology` maps disjoint atom groups to molecules. `RigidMoleculeTranslation` applies a uniform displacement to all atoms; `RigidMoleculeRotation` selects two Cartesian axes and rotates around the molecular centroid. `TorsionRotation` (3D only) uses Rodrigues rotation around a bonded axis. All molecule moves produce `ParticleBatchMove<D>`, which evaluates changed-changed and changed-unchanged interactions with generation-stamped deduplication. `MolecularMetropolisCore<D>` visits each molecule once per sweep, selecting translation or rotation via a `MoveMixture<K>` which freezes on phase transition to Measurement.
+
 ## Graph representation
 
 `CsrLattice` contains:
@@ -129,7 +145,7 @@ It supports irregular graphs, arbitrary dimension, weighted/disordered interacti
 | `lattice/` | `graph.rs`, `state.rs`, `interaction.rs`, `models.rs`, `proposal.rs` |
 | `algorithms/` | `common.rs` (trait + phase), 6 kernel files |
 | `observables/` | `energy.rs`, `magnetization.rs`, `correlation.rs`, `common.rs` |
-| `particle/` | cell geometry, configuration, potential, cell list, move, state, kernel and Carlo adapter |
+| `particle/` | cell geometry, configuration, potential, cell list, move, state, kernel, Carlo adapter, batch moves, grand-canonical, move mixture, rigid molecules, volume changes |
 | Top-level | `classical_mc.rs`, `multi_spin.rs`, `postprocess.rs` |
 
 All public types are re-exported flat from `lib.rs`.

@@ -2,6 +2,30 @@
 
 Date: 2026-07-12
 
+## Phase 3 implementation status (NPT, grand-canonical, rigid molecules)
+
+Phase 3 extends the particle backend with three new ensembles and their kernels:
+
+- `GrandCanonical` and `IsothermalIsobaric` ensembles on the shared `ThermodynamicDelta`
+- `ParticleBatchMove` + `ParticleBatchPatch` for transactional multi-atom moves
+- `ParticleGrandCanonicalCore<D>`: μVT with per-particle translations + insertion/deletion
+- `ParticleNptMetropolisCore<D>`: NPT with translations + isotropic volume changes
+- `MolecularMetropolisCore<D>`: rigid molecules via `MoveMixture<Translation,Rotation>`
+- `MoleculeTopology`, `RigidMoleculeTranslation`, `RigidMoleculeRotation`, `TorsionRotation`
+- `LogVolumeScale`: adaptive ln(V) random-walk step size
+- `InsertDeleteParticle`: reversible proposal with species weights and particle-count bounds
+- `LennardJonesNpt<D>`, `LennardJonesMuVt<D>` with `FromParams`
+- `CanonicalParticleKernel` marker trait for replica-exchange eligibility
+
+```text
+cargo fmt --all --check                                      PASS
+cargo check --workspace --all-targets                        PASS
+cargo test -p cmc-rs                                         PASS: 117 passed, 1 ignored
+cargo clippy -p cmc-rs --lib --no-deps -- -D warnings        PASS
+```
+
+New particle-stage3 tests (15 total in `particle_stage3_test.rs`): batch transactionality, rigid rotation bond-length preservation, torsion axial/radial coordinates, NPT volume delta correctness, invalid volume contraction immutability, insertion/deletion cache consistency, ideal gas Poisson mean, all kernels invariant preservation, energy audit detection, and 6 coverage-gap tests (rigid translation, multi-species, particle-count bounds, volume scale adaptation, cutoff rejection, chemical potential→activity).
+
 ## Phase 2 implementation status
 
 Phase 2 adds the first continuous-system backend without changing the lattice public API:

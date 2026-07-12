@@ -11,7 +11,7 @@ Hooks via **lefthook** (`lefthook.yml` + `.lefthook/` scripts). pre-commit runs 
 |-------|------|-------------|
 | Carlo.rs | Core framework | `MonteCarlo` trait, `Scheduler`, `Context`, `Measurements`, `Merge`, `Backend` |
 | QMC.rs | Quantum MC | General continuous-time lattice QMC (`LatticeSpinQmc` implements `MonteCarlo` + `FromParams`), spin-boson wormhole QMC
-| CMC.rs | Classical MC | Lattice: `core/` → `lattice/` → `algorithms/` → `observables/` + `ClassicalMC` wrapper. Particle: `particle/` — periodic cells, Lennard-Jones, cell lists, NVT Metropolis-Hastings |
+| CMC.rs | Classical MC | Lattice: `core/` → `lattice/` → `algorithms/` → `observables/` + `ClassicalMC` wrapper. Particle: `particle/` — NVT/NPT/μVT ensembles, Lennard-Jones, cell lists, rigid molecules, volume changes, grand-canonical insertion/deletion |
 | MCMC.rs | Statistical MC | Euclidean-state transition kernels (RW-Metropolis, component-wise, slice), adaptation, multi-chain diagnostics, Carlo.rs adapter |
 
 ## Carlo.rs Architecture
@@ -47,7 +47,7 @@ Directories group related modules; public API is re-exported flat from `lib.rs`.
 | `lattice/` | `graph.rs`, `state.rs`, `interaction.rs`, `models.rs`, `proposal.rs` | `CsrLattice` + builders, `System`, `Hamiltonian` + capability traits, built-in models, `ProposalStrategy` |
 | `algorithms/` | `metropolis.rs`, `wolff.rs`, `swendsen_wang.rs`, `heat_bath.rs`, `microcanonical.rs`, `hybrid.rs`, `common.rs` | `Algorithm<H>` trait + 6 kernels, `SimulationPhase`, `checked_probability` |
 | `observables/` | `energy.rs`, `magnetization.rs`, `correlation.rs`, `common.rs` | `Observable<H>`, `DefaultObservableSet`, `TotalEnergy`, `Magnetization`, `compute_correlation_1d` |
-| `particle/` | `potential.rs`, `cell.rs`, `cell_list.rs`, `configuration.rs`, `state.rs`, `movement.rs`, `algorithm.rs`, `mc.rs`, `error.rs` | `PairPotential` trait, `LennardJones` 12-6 (Lorentz-Berthelot mixing, 3 cutoff modes), `OrthorhombicCell<D>`, packed `CellList`, `ParticleSystem` transactional evaluate/commit, `ParticleMetropolisCore`, `LennardJonesNvt` Carlo.rs adapter |
+| `particle/` | `potential.rs`, `cell.rs`, `cell_list.rs`, `configuration.rs`, `state.rs`, `movement.rs`, `algorithm.rs`, `mc.rs`, `error.rs`, `batch.rs`, `grand.rs`, `mixture.rs`, `molecule.rs`, `volume.rs` | `PairPotential` trait, `LennardJones` 12-6 (Lorentz-Berthelot mixing, 3 cutoff modes), `OrthorhombicCell<D>`, packed `CellList`, `ParticleSystem` transactional evaluate/commit, `ParticleMetropolisCore` (NVT), `ParticleNptMetropolisCore` (NPT), `ParticleGrandCanonicalCore` (μVT), `MolecularMetropolisCore` (rigid molecules), `MoveMixture`, `LennardJonesNvt/Npt/MuVt` Carlo.rs adapters |
 | Top-level | `classical_mc.rs`, `multi_spin.rs`, `postprocess.rs` | `ClassicalMC` Carlo.rs adapter, `MultiSpinIsing`, derived observables |
 
 Key patterns:
@@ -61,7 +61,7 @@ Key patterns:
 - Derived observables measured post-run from E²/M²/M⁴ moments stored in `Results`
 - `lattice_type` param: `"chain"`, `"square"`, `"triangular"`, `"honeycomb"`, `"kagome"`
 - Users can ignore `ClassicalMC` and compose manually for custom behavior
-- Particle: `ParticleSystem::evaluate_translation` never mutates accepted state; `commit_translation` updates position + cell-list + energy atomically. `TranslateParticle` multiplicative adaptation freezes on phase transition to Measurement. `ensemble.rs` handles ∞ energy as NEG_INFINITY log-ratio (rejection at any β). `ParticleMC<D, P, A>` is generic over dimension, potential, and algorithm — `LennardJonesNvt<D>` is the pre-built convenience type
+- Particle: `ParticleSystem` implements `TrialEvaluator` for `ParticleTranslation`, `ParticleBatchMove`, `GrandCanonicalMove`, and `IsotropicVolumeChange`. Evaluate never mutates accepted state; commit updates position + cell-list + energy atomically. `ParticleMC<D, P, A>` is generic over dimension, potential, and algorithm. Pre-built: `LennardJonesNvt<D>`, `LennardJonesNpt<D>`, `LennardJonesMuVt<D>`. `CanonicalParticleKernel` marker trait gates parallel-tempering eligibility (NVT/molecule kernels only, not NPT/μVT). `MolecularMetropolisCore<D>` composes `RigidMoleculeTranslation` + `RigidMoleculeRotation` via `MoveMixture`, with `MoleculeTopology` for atom grouping and `TorsionRotation` for local dihedral moves. `LogVolumeScale` adapts ln(V) random-walk step size toward target acceptance. `InsertDeleteParticle` proposes reversible insert/delete with species weights and particle-count bounds. `GrandCanonical` and `IsothermalIsobaric` ensembles drive acceptance via `ThermodynamicDelta`.
 
 ## QMC.rs Architecture
 
@@ -123,7 +123,7 @@ Statistical inference layer with Euclidean-state kernels:
 
 | Module | Directory | Purpose |
 |--------|-----------|---------|
-| `LogDensity` trait | `target/` | `log_density(&mut self, &[f64]) -> f64` — closures via `FnLogDensity` |
+| `LogDensity` trait | `target.rs` | `log_density(&mut self, &[f64]) -> f64` — closures via `FnLogDensity` |
 | `ChainState` | `state/` | Position + cached log-density + optional gradient cache |
 | `TransitionKernel` | `kernel/` | `transition()` + `on_phase_start`/`on_phase_end` — 3 kernels |
 | `adaptation` | `adaptation/` | `RobbinsMonroScale` (global), `DiagonalCovarianceAdaptation` |
@@ -137,7 +137,10 @@ Key patterns:
 - `TransitionKernel` is object-safe (no type parameter on trait — `T` is on `transition()`)
 - Adaptation freezes on phase transition to `Sampling`; `on_phase_end(Warmup)` also freezes
 - Traces never mix chain IDs; multi-chain uses Rayon with deterministic per-chain seeds
+- Component-wise and slice kernels use private workspace (`#[serde(default)]`) for atomic commit: copy position once (O(d)), work on workspace, `swap_position` at end (single iteration per transition). Old checkpoints without workspace fields deserialize via `serde(default)` and lazily initialize
+- `EuclideanState::validate()` checks finite position/density and gradient cache consistency; called by `MemoryTrace::record()` and `ChainCheckpoint::validate_format()`
 - Known issue: hdf5 feature broken workspace-wide (hdf5 0.8.1 lacks `create_dataset_simple`)
+- Known issue: `json_checkpoint_preserves_exact_future_trajectory` pre-existing failure (f64 serde round-trip ULP differences in MemoryTrace)
 
 
 ## Behavioral Guidelines
