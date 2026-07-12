@@ -70,4 +70,39 @@ impl EuclideanState {
     pub fn dimension(&self) -> usize {
         self.position().len()
     }
+
+    /// Validate invariants required by every Euclidean transition kernel.
+    pub fn validate(&self) -> Result<(), McmcError> {
+        let dimension = self.dimension();
+        if dimension == 0 {
+            return Err(McmcError::InvalidConfig(
+                "state dimension must be positive".to_string(),
+            ));
+        }
+        if self.position().iter().any(|value| !value.is_finite()) {
+            return Err(McmcError::InvalidConfig(
+                "state position must contain only finite values".to_string(),
+            ));
+        }
+        let log_density = validate_log_density(self.log_density())?;
+        if log_density == f64::NEG_INFINITY {
+            return Err(McmcError::InvalidConfig(
+                "accepted state cannot lie outside target support".to_string(),
+            ));
+        }
+        if self.cache().gradient.len() != dimension {
+            return Err(McmcError::DimensionMismatch {
+                expected: dimension,
+                actual: self.cache().gradient.len(),
+            });
+        }
+        if self.cache().gradient_valid
+            && self.cache().gradient.iter().any(|value| !value.is_finite())
+        {
+            return Err(McmcError::InvalidConfig(
+                "valid gradient cache must contain only finite values".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }

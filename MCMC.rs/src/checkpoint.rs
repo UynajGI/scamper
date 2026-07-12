@@ -86,6 +86,7 @@ where
         }
         self.target.validate()?;
         self.last_report.validate()?;
+        self.state.validate()?;
         if self.state.dimension() != self.target.dimension {
             return Err(McmcError::DimensionMismatch {
                 expected: self.target.dimension,

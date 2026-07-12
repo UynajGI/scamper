@@ -11,6 +11,8 @@ use crate::{EuclideanState, McmcError, SamplingPhase, TransitionKernel, Transiti
 pub struct ComponentWiseMetropolis {
     scales: Vec<f64>,
     adaptations: Vec<Option<RobbinsMonroScale>>,
+    #[serde(default)]
+    proposed_position: Vec<f64>,
 }
 
 impl ComponentWiseMetropolis {
@@ -25,9 +27,11 @@ impl ComponentWiseMetropolis {
             ));
         }
         let adaptations = vec![None; scales.len()];
+        let proposed_position = vec![0.0; scales.len()];
         Ok(Self {
             scales,
             adaptations,
+            proposed_position,
         })
     }
 
@@ -73,34 +77,52 @@ impl TransitionKernel for ComponentWiseMetropolis {
                 actual: state.dimension(),
             });
         }
+        if self.proposed_position.is_empty() {
+            self.proposed_position.resize(state.dimension(), 0.0);
+        } else if self.proposed_position.len() != state.dimension() {
+            return Err(McmcError::DimensionMismatch {
+                expected: self.proposed_position.len(),
+                actual: state.dimension(),
+            });
+        }
+
+        self.proposed_position.copy_from_slice(state.position());
+        let mut current_log_density = state.log_density();
+        let mut any_accepted = false;
         let mut report = TransitionReport::default();
+
         for index in 0..self.scales.len() {
             let multiplier = self.adaptations[index]
                 .as_ref()
                 .map_or(1.0, RobbinsMonroScale::multiplier);
-            let old_value = state.position()[index];
+            let old_value = self.proposed_position[index];
             let proposed_value = old_value + self.scales[index] * multiplier * standard_normal(rng);
-            state.position_mut_for_cache_rebuild()[index] = proposed_value;
+            self.proposed_position[index] = proposed_value;
+
             let (proposed_log_density, target_evaluations) = if proposed_value.is_finite() {
                 (
-                    validate_log_density(target.log_density(state.position()))?,
+                    validate_log_density(target.log_density(&self.proposed_position))?,
                     1,
                 )
             } else {
                 (f64::NEG_INFINITY, 0)
             };
-            let log_acceptance = proposed_log_density - state.log_density();
+            let log_acceptance = proposed_log_density - current_log_density;
+            if log_acceptance.is_nan() {
+                return Err(McmcError::InvalidLogDensity {
+                    value: log_acceptance,
+                });
+            }
             let acceptance_probability = log_acceptance.min(0.0).exp();
             let accepted = log_acceptance >= 0.0
                 || rng.random::<f64>().max(f64::MIN_POSITIVE).ln() < log_acceptance;
             if accepted {
-                let position = state.position().clone();
-                state.replace(position, proposed_log_density);
-                state.cache_mut().invalidate_gradient();
+                current_log_density = proposed_log_density;
+                any_accepted = true;
             } else {
-                state.position_mut_for_cache_rebuild()[index] = old_value;
-                state.mark_rejected_transition();
+                self.proposed_position[index] = old_value;
             }
+
             if phase == SamplingPhase::Warmup {
                 if let Some(adaptation) = &mut self.adaptations[index] {
                     adaptation.observe(acceptance_probability)?;
@@ -112,13 +134,17 @@ impl TransitionKernel for ComponentWiseMetropolis {
                 .saturating_add(if accepted { 1 } else { 0 });
             report.target_evaluations =
                 report.target_evaluations.saturating_add(target_evaluations);
-            report.log_acceptance_probability = if log_acceptance.is_finite() {
-                Some(log_acceptance.min(0.0))
-            } else {
-                None
-            };
         }
+
+        if any_accepted {
+            state.swap_position(&mut self.proposed_position, current_log_density);
+            state.cache_mut().invalidate_gradient();
+        } else {
+            state.mark_rejected_transition();
+        }
+
         report.accepted = None;
+        report.log_acceptance_probability = None;
         report.proposal_scale = Some(
             self.scales
                 .iter()

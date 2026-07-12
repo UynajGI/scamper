@@ -23,6 +23,7 @@ impl<S, C> ChainState<S, C> {
         &self.position
     }
 
+    #[allow(dead_code)]
     pub(crate) fn position_mut_for_cache_rebuild(&mut self) -> &mut S {
         &mut self.position
     }

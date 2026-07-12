@@ -215,6 +215,16 @@ impl MemoryTrace {
                 "trace metadata is invalid".to_string(),
             ));
         }
+        let expected_draws = self.seen_iterations.div_ceil(self.thinning);
+        if draws != expected_draws
+            || self.chain_id.is_some() != (self.seen_iterations > 0)
+            || self.accepted.iter().any(|value| !(-1..=1).contains(value))
+            || self.divergent.iter().any(|value| *value > 1)
+        {
+            return Err(McmcError::InvalidConfig(
+                "trace metadata or discrete columns are inconsistent".to_string(),
+            ));
+        }
         if self.positions.iter().any(|value| !value.is_finite())
             || self.log_density.iter().any(|value| !value.is_finite())
             || self
@@ -243,6 +253,8 @@ impl TraceStore for MemoryTrace {
         state: &EuclideanState,
         report: &TransitionReport,
     ) -> Result<bool, McmcError> {
+        state.validate()?;
+        report.validate()?;
         if state.dimension() != self.dimension {
             return Err(McmcError::DimensionMismatch {
                 expected: self.dimension,

@@ -10,6 +10,8 @@ pub struct SliceSampler {
     widths: Vec<f64>,
     max_steps_out: usize,
     max_shrink_steps: usize,
+    #[serde(default)]
+    working_position: Vec<f64>,
 }
 
 impl SliceSampler {
@@ -23,10 +25,12 @@ impl SliceSampler {
                 "slice widths must be non-empty, finite and positive".to_string(),
             ));
         }
+        let working_position = vec![0.0; widths.len()];
         Ok(Self {
             widths,
             max_steps_out: 100,
             max_shrink_steps: 1_000,
+            working_position,
         })
     }
 
@@ -34,6 +38,18 @@ impl SliceSampler {
         self.max_steps_out = max_steps_out;
         self.max_shrink_steps = max_shrink_steps;
         self
+    }
+
+    fn evaluate<T>(&self, target: &mut T, report: &mut TransitionReport) -> Result<f64, McmcError>
+    where
+        T: LogDensity<[f64]>,
+    {
+        if self.working_position.iter().all(|value| value.is_finite()) {
+            report.target_evaluations = report.target_evaluations.saturating_add(1);
+            validate_log_density(target.log_density(&self.working_position))
+        } else {
+            Ok(f64::NEG_INFINITY)
+        }
     }
 }
 
@@ -55,10 +71,27 @@ impl TransitionKernel for SliceSampler {
                 actual: state.dimension(),
             });
         }
+        if self.working_position.is_empty() {
+            self.working_position.resize(state.dimension(), 0.0);
+        } else if self.working_position.len() != state.dimension() {
+            return Err(McmcError::DimensionMismatch {
+                expected: self.working_position.len(),
+                actual: state.dimension(),
+            });
+        }
+        if self.max_shrink_steps == 0 {
+            return Err(McmcError::InvalidConfig(
+                "slice max_shrink_steps must be positive".to_string(),
+            ));
+        }
+
+        self.working_position.copy_from_slice(state.position());
+        let mut current_log_density = state.log_density();
         let mut report = TransitionReport::default();
+
         for index in 0..self.widths.len() {
-            let original = state.position()[index];
-            let slice_level = state.log_density() + rng.random::<f64>().max(f64::MIN_POSITIVE).ln();
+            let original = self.working_position[index];
+            let slice_level = current_log_density + rng.random::<f64>().max(f64::MIN_POSITIVE).ln();
             let width = self.widths[index];
             let offset = rng.random::<f64>() * width;
             let mut left = original - offset;
@@ -67,9 +100,8 @@ impl TransitionKernel for SliceSampler {
             let mut steps_left = rng.random_range(0..=self.max_steps_out);
             let mut steps_right = self.max_steps_out - steps_left;
             while steps_left > 0 {
-                state.position_mut_for_cache_rebuild()[index] = left;
-                let value = validate_log_density(target.log_density(state.position()))?;
-                report.target_evaluations = report.target_evaluations.saturating_add(1);
+                self.working_position[index] = left;
+                let value = self.evaluate(target, &mut report)?;
                 if value <= slice_level {
                     break;
                 }
@@ -77,9 +109,8 @@ impl TransitionKernel for SliceSampler {
                 steps_left -= 1;
             }
             while steps_right > 0 {
-                state.position_mut_for_cache_rebuild()[index] = right;
-                let value = validate_log_density(target.log_density(state.position()))?;
-                report.target_evaluations = report.target_evaluations.saturating_add(1);
+                self.working_position[index] = right;
+                let value = self.evaluate(target, &mut report)?;
                 if value <= slice_level {
                     break;
                 }
@@ -87,18 +118,19 @@ impl TransitionKernel for SliceSampler {
                 steps_right -= 1;
             }
 
-            let mut accepted = false;
+            let mut accepted_log_density = None;
             for _ in 0..self.max_shrink_steps {
-                let proposal = left + rng.random::<f64>() * (right - left);
-                state.position_mut_for_cache_rebuild()[index] = proposal;
-                let proposed_log_density =
-                    validate_log_density(target.log_density(state.position()))?;
-                report.target_evaluations = report.target_evaluations.saturating_add(1);
+                let interval = right - left;
+                if !interval.is_finite() || interval <= 0.0 {
+                    return Err(McmcError::InvalidConfig(
+                        "slice bracket became non-finite or empty".to_string(),
+                    ));
+                }
+                let proposal = left + rng.random::<f64>() * interval;
+                self.working_position[index] = proposal;
+                let proposed_log_density = self.evaluate(target, &mut report)?;
                 if proposed_log_density >= slice_level {
-                    let position = state.position().clone();
-                    state.replace(position, proposed_log_density);
-                    state.cache_mut().invalidate_gradient();
-                    accepted = true;
+                    accepted_log_density = Some(proposed_log_density);
                     break;
                 }
                 if proposal < original {
@@ -107,15 +139,19 @@ impl TransitionKernel for SliceSampler {
                     right = proposal;
                 }
             }
-            if !accepted {
-                state.position_mut_for_cache_rebuild()[index] = original;
+
+            let Some(proposed_log_density) = accepted_log_density else {
                 return Err(McmcError::InvalidConfig(
                     "slice shrinkage exceeded configured iteration limit".to_string(),
                 ));
-            }
+            };
+            current_log_density = proposed_log_density;
             report.proposals = report.proposals.saturating_add(1);
             report.acceptances = report.acceptances.saturating_add(1);
         }
+
+        state.swap_position(&mut self.working_position, current_log_density);
+        state.cache_mut().invalidate_gradient();
         report.accepted = None;
         Ok(report)
     }
