@@ -15,16 +15,18 @@ fn adaptive_random_walk_recovers_standard_normal_moments() {
         .unwrap();
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(11);
     kernel
-        .on_phase_start(SamplingPhase::Warmup, &state)
+        .on_phase_start(&mut target, SamplingPhase::Warmup, &state)
         .unwrap();
     for _ in 0..4_000 {
         kernel
             .transition(&mut target, &mut state, &mut rng, SamplingPhase::Warmup)
             .unwrap();
     }
-    kernel.on_phase_end(SamplingPhase::Warmup, &state).unwrap();
     kernel
-        .on_phase_start(SamplingPhase::Sampling, &state)
+        .on_phase_end(&mut target, SamplingPhase::Warmup, &state)
+        .unwrap();
+    kernel
+        .on_phase_start(&mut target, SamplingPhase::Sampling, &state)
         .unwrap();
     assert!(kernel.adaptation_is_frozen());
 

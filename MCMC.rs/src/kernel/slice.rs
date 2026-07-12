@@ -42,7 +42,7 @@ impl SliceSampler {
 
     fn evaluate<T>(&self, target: &mut T, report: &mut TransitionReport) -> Result<f64, McmcError>
     where
-        T: LogDensity<[f64]>,
+        T: LogDensity<[f64]> + ?Sized,
     {
         if self.working_position.iter().all(|value| value.is_finite()) {
             report.target_evaluations = report.target_evaluations.saturating_add(1);
@@ -53,8 +53,11 @@ impl SliceSampler {
     }
 }
 
-impl TransitionKernel for SliceSampler {
-    fn transition<T, R>(
+impl<T> TransitionKernel<T> for SliceSampler
+where
+    T: LogDensity<[f64]> + ?Sized,
+{
+    fn transition<R>(
         &mut self,
         target: &mut T,
         state: &mut EuclideanState,
@@ -62,9 +65,9 @@ impl TransitionKernel for SliceSampler {
         _phase: SamplingPhase,
     ) -> Result<TransitionReport, McmcError>
     where
-        T: LogDensity<[f64]>,
         R: Rng + ?Sized,
     {
+        state.validate()?;
         if state.dimension() != self.widths.len() {
             return Err(McmcError::DimensionMismatch {
                 expected: self.widths.len(),
@@ -153,10 +156,11 @@ impl TransitionKernel for SliceSampler {
         state.swap_position(&mut self.working_position, current_log_density);
         state.cache_mut().invalidate_gradient();
         report.accepted = None;
+        report.subtransitions = 1;
         Ok(report)
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self, _target: &T) -> &'static str {
         "SliceSampler"
     }
 }

@@ -110,7 +110,7 @@ pub fn run_multichain<T, K, FT, FK>(
 ) -> Result<McmcOutput, McmcError>
 where
     T: LogDensity<[f64]>,
-    K: TransitionKernel,
+    K: TransitionKernel<T>,
     FT: Fn(usize) -> T + Sync,
     FK: Fn(usize) -> K + Sync,
 {
@@ -127,13 +127,14 @@ where
             let mut kernel = kernel_factory(chain_id);
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(chain_seed(config.base_seed, chain_id));
 
-            kernel.on_phase_start(SamplingPhase::Warmup, &state)?;
+            kernel.on_phase_start(&mut target, SamplingPhase::Warmup, &state)?;
             for _ in 0..config.warmup {
-                let _report =
+                let report =
                     kernel.transition(&mut target, &mut state, &mut rng, SamplingPhase::Warmup)?;
+                report.validate()?;
             }
-            kernel.on_phase_end(SamplingPhase::Warmup, &state)?;
-            kernel.on_phase_start(SamplingPhase::Sampling, &state)?;
+            kernel.on_phase_end(&mut target, SamplingPhase::Warmup, &state)?;
+            kernel.on_phase_start(&mut target, SamplingPhase::Sampling, &state)?;
 
             let mut trace = MemoryTrace::new(dimension, config.thinning)?;
             trace.reserve_draws(retained);
@@ -146,7 +147,7 @@ where
                 )?;
                 let _retained = trace.record(chain_id, &state, &report)?;
             }
-            kernel.on_phase_end(SamplingPhase::Sampling, &state)?;
+            kernel.on_phase_end(&mut target, SamplingPhase::Sampling, &state)?;
             Ok(ChainOutput {
                 chain_id,
                 trace,
@@ -167,7 +168,7 @@ where
     })
 }
 
-fn chain_seed(base_seed: u64, chain_id: usize) -> u64 {
+pub(crate) fn chain_seed(base_seed: u64, chain_id: usize) -> u64 {
     let mut value = base_seed ^ (chain_id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);

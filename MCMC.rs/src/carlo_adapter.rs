@@ -54,7 +54,7 @@ where
 impl<T, K, Tr> MonteCarlo for McmcSampler<T, K, Tr>
 where
     T: LogDensity<[f64]>,
-    K: TransitionKernel,
+    K: TransitionKernel<T>,
     Tr: TraceStore,
 {
     type Rng = Xoshiro256PlusPlus;
@@ -65,6 +65,9 @@ where
             .kernel
             .transition(&mut self.target, &mut self.state, &mut context.rng, phase)
             .unwrap_or_else(|error| panic!("MCMC transition failed: {error}"));
+        self.last_report
+            .validate()
+            .unwrap_or_else(|error| panic!("MCMC transition report failed validation: {error}"));
     }
 
     fn measure(&mut self, context: &mut Context<Self::Rng>) {
@@ -93,7 +96,7 @@ where
     fn on_phase_start(&mut self, phase: RunPhase, _context: &mut Context<Self::Rng>) {
         if let Some(sampling_phase) = optional_map_phase(phase) {
             self.kernel
-                .on_phase_start(sampling_phase, &self.state)
+                .on_phase_start(&mut self.target, sampling_phase, &self.state)
                 .unwrap_or_else(|error| panic!("MCMC phase start failed: {error}"));
         }
     }
@@ -101,13 +104,13 @@ where
     fn on_phase_end(&mut self, phase: RunPhase, _context: &mut Context<Self::Rng>) {
         if let Some(sampling_phase) = optional_map_phase(phase) {
             self.kernel
-                .on_phase_end(sampling_phase, &self.state)
+                .on_phase_end(&mut self.target, sampling_phase, &self.state)
                 .unwrap_or_else(|error| panic!("MCMC phase end failed: {error}"));
         }
     }
 
     fn name(&self) -> &'static str {
-        self.kernel.name()
+        self.kernel.name(&self.target)
     }
 }
 

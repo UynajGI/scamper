@@ -1,8 +1,10 @@
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 
-use crate::adaptation::{DiagonalCovarianceAdaptation, RobbinsMonroScale};
-use crate::proposal::{standard_normal, GaussianScale};
+use crate::adaptation::{
+    DenseCovarianceAdaptation, DiagonalCovarianceAdaptation, RobbinsMonroScale,
+};
+use crate::proposal::GaussianScale;
 use crate::target::{validate_log_density, LogDensity};
 use crate::{EuclideanState, McmcError, SamplingPhase, TransitionKernel, TransitionReport};
 
@@ -12,7 +14,11 @@ pub struct RandomWalkMetropolis {
     scale: GaussianScale,
     scale_adaptation: Option<RobbinsMonroScale>,
     covariance_adaptation: Option<DiagonalCovarianceAdaptation>,
+    #[serde(default)]
+    dense_covariance_adaptation: Option<DenseCovarianceAdaptation>,
     proposed_position: Vec<f64>,
+    #[serde(default)]
+    normal_buffer: Vec<f64>,
 }
 
 impl RandomWalkMetropolis {
@@ -23,7 +29,9 @@ impl RandomWalkMetropolis {
             scale: proposal_scale,
             scale_adaptation: None,
             covariance_adaptation: None,
+            dense_covariance_adaptation: None,
             proposed_position: vec![0.0; dimension],
+            normal_buffer: vec![0.0; dimension],
         })
     }
 
@@ -35,7 +43,37 @@ impl RandomWalkMetropolis {
             scale: proposal_scale,
             scale_adaptation: None,
             covariance_adaptation: None,
+            dense_covariance_adaptation: None,
             proposed_position: vec![0.0; dimension],
+            normal_buffer: vec![0.0; dimension],
+        })
+    }
+
+    pub fn dense_cholesky(dimension: usize, cholesky: Vec<f64>) -> Result<Self, McmcError> {
+        let proposal_scale = GaussianScale::dense_cholesky(dimension, cholesky)?;
+        Ok(Self {
+            scale: proposal_scale,
+            scale_adaptation: None,
+            covariance_adaptation: None,
+            dense_covariance_adaptation: None,
+            proposed_position: vec![0.0; dimension],
+            normal_buffer: vec![0.0; dimension],
+        })
+    }
+
+    pub fn dense_covariance(
+        dimension: usize,
+        covariance: &[f64],
+        jitter: f64,
+    ) -> Result<Self, McmcError> {
+        let proposal_scale = GaussianScale::dense_from_covariance(dimension, covariance, jitter)?;
+        Ok(Self {
+            scale: proposal_scale,
+            scale_adaptation: None,
+            covariance_adaptation: None,
+            dense_covariance_adaptation: None,
+            proposed_position: vec![0.0; dimension],
+            normal_buffer: vec![0.0; dimension],
         })
     }
 
@@ -48,9 +86,22 @@ impl RandomWalkMetropolis {
         mut self,
         minimum_scale: f64,
     ) -> Result<Self, McmcError> {
+        self.dense_covariance_adaptation = None;
         self.covariance_adaptation = Some(DiagonalCovarianceAdaptation::new(
             self.proposed_position.len(),
             minimum_scale,
+        )?);
+        Ok(self)
+    }
+
+    pub fn with_dense_covariance_adaptation(
+        mut self,
+        regularization: f64,
+    ) -> Result<Self, McmcError> {
+        self.covariance_adaptation = None;
+        self.dense_covariance_adaptation = Some(DenseCovarianceAdaptation::new(
+            self.proposed_position.len(),
+            regularization,
         )?);
         Ok(self)
     }
@@ -73,10 +124,19 @@ impl RandomWalkMetropolis {
                 .covariance_adaptation
                 .as_ref()
                 .is_none_or(DiagonalCovarianceAdaptation::is_frozen)
+            && self
+                .dense_covariance_adaptation
+                .as_ref()
+                .is_none_or(DenseCovarianceAdaptation::is_frozen)
     }
 
     fn freeze_adaptation(&mut self) {
-        if let Some(adaptation) = &mut self.covariance_adaptation {
+        if let Some(adaptation) = &mut self.dense_covariance_adaptation {
+            if let Some(cholesky) = adaptation.finalize_cholesky() {
+                self.scale
+                    .set_dense_cholesky(self.proposed_position.len(), cholesky);
+            }
+        } else if let Some(adaptation) = &mut self.covariance_adaptation {
             if let Some(scales) = adaptation.finalize_scales() {
                 self.scale.set_diagonal(scales);
             }
@@ -87,8 +147,11 @@ impl RandomWalkMetropolis {
     }
 }
 
-impl TransitionKernel for RandomWalkMetropolis {
-    fn transition<T, R>(
+impl<T> TransitionKernel<T> for RandomWalkMetropolis
+where
+    T: LogDensity<[f64]> + ?Sized,
+{
+    fn transition<R>(
         &mut self,
         target: &mut T,
         state: &mut EuclideanState,
@@ -96,12 +159,12 @@ impl TransitionKernel for RandomWalkMetropolis {
         phase: SamplingPhase,
     ) -> Result<TransitionReport, McmcError>
     where
-        T: LogDensity<[f64]>,
         R: Rng + ?Sized,
     {
         if phase == SamplingPhase::Sampling && !self.adaptation_is_frozen() {
             self.freeze_adaptation();
         }
+        state.validate()?;
         let dimension = state.dimension();
         self.scale.validate(dimension)?;
         if self.proposed_position.len() != dimension {
@@ -110,14 +173,24 @@ impl TransitionKernel for RandomWalkMetropolis {
                 actual: dimension,
             });
         }
+        if self.normal_buffer.is_empty() {
+            self.normal_buffer.resize(dimension, 0.0);
+        } else if self.normal_buffer.len() != dimension {
+            return Err(McmcError::DimensionMismatch {
+                expected: self.normal_buffer.len(),
+                actual: dimension,
+            });
+        }
+
+        self.scale
+            .fill_displacement(rng, &mut self.normal_buffer, &mut self.proposed_position)?;
         let multiplier = self.effective_global_multiplier();
-        for (index, (proposed, current)) in self
+        for (proposed, current) in self
             .proposed_position
             .iter_mut()
             .zip(state.position().iter().copied())
-            .enumerate()
         {
-            *proposed = current + multiplier * self.scale.component(index) * standard_normal(rng);
+            *proposed = current + multiplier * *proposed;
         }
 
         let (proposed_log_density, target_evaluations) =
@@ -152,6 +225,9 @@ impl TransitionKernel for RandomWalkMetropolis {
             if let Some(adaptation) = &mut self.covariance_adaptation {
                 adaptation.observe(state.position())?;
             }
+            if let Some(adaptation) = &mut self.dense_covariance_adaptation {
+                adaptation.observe(state.position())?;
+            }
         }
 
         Ok(TransitionReport {
@@ -165,12 +241,14 @@ impl TransitionKernel for RandomWalkMetropolis {
             acceptances: if accepted { 1 } else { 0 },
             target_evaluations,
             proposal_scale: Some(multiplier),
+            subtransitions: 1,
             ..TransitionReport::default()
         })
     }
 
     fn on_phase_start(
         &mut self,
+        _target: &mut T,
         phase: SamplingPhase,
         _state: &EuclideanState,
     ) -> Result<(), McmcError> {
@@ -182,6 +260,7 @@ impl TransitionKernel for RandomWalkMetropolis {
 
     fn on_phase_end(
         &mut self,
+        _target: &mut T,
         phase: SamplingPhase,
         _state: &EuclideanState,
     ) -> Result<(), McmcError> {
@@ -191,7 +270,7 @@ impl TransitionKernel for RandomWalkMetropolis {
         Ok(())
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self, _target: &T) -> &'static str {
         "RandomWalkMetropolis"
     }
 }

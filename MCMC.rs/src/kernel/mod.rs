@@ -1,8 +1,12 @@
 mod component;
+mod compose;
+mod gibbs;
 mod metropolis;
 mod slice;
 
 pub use component::ComponentWiseMetropolis;
+pub use compose::{Mixture, Repeat, Then};
+pub use gibbs::{GibbsKernel, GibbsUpdate, GibbsUpdateResult};
 pub use metropolis::RandomWalkMetropolis;
 pub use slice::SliceSampler;
 
@@ -12,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::target::LogDensity;
 use crate::{EuclideanState, McmcError, SamplingPhase};
 
-/// Fixed-layout diagnostics for one transition.
+/// Fixed-layout diagnostics for one transition or composed transition sweep.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TransitionReport {
     pub accepted: Option<bool>,
@@ -26,11 +30,53 @@ pub struct TransitionReport {
     pub leapfrog_steps: u32,
     pub tree_depth: Option<u16>,
     pub proposal_scale: Option<f64>,
+    /// Number of elementary kernel transitions represented by this report.
+    #[serde(default)]
+    pub subtransitions: u32,
 }
 
 impl TransitionReport {
     pub fn acceptance_rate(&self) -> Option<f64> {
         (self.proposals > 0).then(|| f64::from(self.acceptances) / f64::from(self.proposals))
+    }
+
+    /// Merge another elementary/composed report into this one.
+    ///
+    /// Scalar diagnostics that are not well-defined after composition become
+    /// `None`; extrema and counters are aggregated deterministically.
+    pub fn merge(&mut self, other: Self) {
+        if *self == Self::default() {
+            *self = other;
+            return;
+        }
+
+        let previous_subtransitions = self.subtransitions.max(1);
+        self.accepted = None;
+        self.log_acceptance_probability = None;
+        self.proposals = self.proposals.saturating_add(other.proposals);
+        self.acceptances = self.acceptances.saturating_add(other.acceptances);
+        self.target_evaluations = self
+            .target_evaluations
+            .saturating_add(other.target_evaluations);
+        self.gradient_evaluations = self
+            .gradient_evaluations
+            .saturating_add(other.gradient_evaluations);
+        self.divergent |= other.divergent;
+        self.energy_error = worst_energy_error(self.energy_error, other.energy_error);
+        self.leapfrog_steps = self.leapfrog_steps.saturating_add(other.leapfrog_steps);
+        self.tree_depth = match (self.tree_depth, other.tree_depth) {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (Some(value), None) | (None, Some(value)) => Some(value),
+            (None, None) => None,
+        };
+        if self.proposal_scale != other.proposal_scale {
+            self.proposal_scale = None;
+        }
+        self.subtransitions = previous_subtransitions.saturating_add(other.subtransitions.max(1));
+    }
+
+    fn normalize_subtransitions(&mut self) {
+        self.subtransitions = self.subtransitions.max(1);
     }
 
     pub fn validate(&self) -> Result<(), McmcError> {
@@ -51,9 +97,24 @@ impl TransitionReport {
     }
 }
 
+fn worst_energy_error(left: Option<f64>, right: Option<f64>) -> Option<f64> {
+    match (left, right) {
+        (Some(left), Some(right)) if right.abs() > left.abs() => Some(right),
+        (Some(left), Some(_)) => Some(left),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
 /// Allocation-conscious transition kernel over a Euclidean chain state.
-pub trait TransitionKernel: Send {
-    fn transition<T, R>(
+///
+/// The target type is a trait parameter rather than a method parameter so
+/// target-specific Gibbs and blocked updates can implement this interface.
+pub trait TransitionKernel<T>: Send
+where
+    T: LogDensity<[f64]> + ?Sized,
+{
+    fn transition<R>(
         &mut self,
         target: &mut T,
         state: &mut EuclideanState,
@@ -61,11 +122,11 @@ pub trait TransitionKernel: Send {
         phase: SamplingPhase,
     ) -> Result<TransitionReport, McmcError>
     where
-        T: LogDensity<[f64]>,
         R: Rng + ?Sized;
 
     fn on_phase_start(
         &mut self,
+        _target: &mut T,
         _phase: SamplingPhase,
         _state: &EuclideanState,
     ) -> Result<(), McmcError> {
@@ -74,11 +135,12 @@ pub trait TransitionKernel: Send {
 
     fn on_phase_end(
         &mut self,
+        _target: &mut T,
         _phase: SamplingPhase,
         _state: &EuclideanState,
     ) -> Result<(), McmcError> {
         Ok(())
     }
 
-    fn name(&self) -> &'static str;
+    fn name(&self, _target: &T) -> &'static str;
 }

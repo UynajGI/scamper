@@ -18,7 +18,9 @@ fn proposal_scale_is_constant_in_sampling_phase() {
             .transition(&mut target, &mut state, &mut rng, SamplingPhase::Warmup)
             .unwrap();
     }
-    kernel.on_phase_end(SamplingPhase::Warmup, &state).unwrap();
+    kernel
+        .on_phase_end(&mut target, SamplingPhase::Warmup, &state)
+        .unwrap();
     let frozen = kernel.effective_global_multiplier();
     for _ in 0..500 {
         kernel

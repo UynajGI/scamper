@@ -41,6 +41,7 @@ impl<T, K, Tr> ChainRunner<T, K, Tr> {
                 leapfrog_steps: 0,
                 tree_depth: None,
                 proposal_scale: None,
+                subtransitions: 0,
             },
         }
     }
@@ -68,15 +69,18 @@ impl<T, K, Tr> ChainRunner<T, K, Tr> {
 
 impl<T, K, Tr> ChainRunner<T, K, Tr>
 where
-    K: TransitionKernel,
+    T: LogDensity<[f64]>,
+    K: TransitionKernel<T>,
     Tr: TraceStore,
 {
     pub fn start_phase(&mut self, phase: SamplingPhase) -> Result<(), McmcError> {
-        self.kernel.on_phase_start(phase, &self.state)
+        self.kernel
+            .on_phase_start(&mut self.target, phase, &self.state)
     }
 
     pub fn end_phase(&mut self, phase: SamplingPhase) -> Result<(), McmcError> {
-        self.kernel.on_phase_end(phase, &self.state)
+        self.kernel
+            .on_phase_end(&mut self.target, phase, &self.state)
     }
 
     pub fn step<R>(&mut self, rng: &mut R, phase: SamplingPhase) -> Result<(), McmcError>
@@ -87,6 +91,7 @@ where
         self.last_report = self
             .kernel
             .transition(&mut self.target, &mut self.state, rng, phase)?;
+        self.last_report.validate()?;
         if phase == SamplingPhase::Sampling {
             let _retained = self
                 .trace

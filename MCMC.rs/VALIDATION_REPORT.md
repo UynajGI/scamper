@@ -1,52 +1,50 @@
-# MCMC.rs v0.1.1 Validation Report
+# MCMC.rs v0.2 Validation Report
 
-## v0.1.1 changes (2026-07-12)
+## Review performed
 
-- Flattened `target/` directory into single `MCMC.rs/src/target.rs`
-- `ComponentWiseMetropolis`: `#[serde(default)] proposed_position` workspace, atomic swap on sweep completion, single iteration per transition, O(d) copy + O(1) swap, `log_acceptance` NaN guard
-- `SliceSampler`: `#[serde(default)] working_position` workspace, atomic swap, single iteration per transition, `max_shrink_steps == 0` guard, bracket interval validity check
-- `EuclideanState::validate()`: finite position/density, gradient cache dimension and content checks; called by `MemoryTrace::record()` and `ChainCheckpoint::validate_format()`
-- `MemoryTrace::validate()` strengthened: expected draw count, discrete column ranges, `chain_id` consistency
-- 6 new state-invariant tests: atomic error recovery (component + slice), unified iteration counting, invalid slice limits, old checkpoint backward compat
+- Confirmed the uploaded workspace contains the v0.1.1 target module, atomic
+  component/slice fixes and state-invariant regression tests.
+- Reviewed every MCMC source and test module after the target-typed
+  `TransitionKernel<T>` refactor.
+- Checked balanced Rust delimiters, comments and strings across all 190
+  workspace Rust source files.
+- Checked that every declared Rust module resolves, every struct has unique
+  field names, the workspace includes MCMC.rs, and both the package manifest
+  and root lockfile identify `mcmc-rs` as 0.2.0.
+- Checked changed Rust files for trailing whitespace and lines longer than 100
+  columns.
+- Numerically checked dense covariance/Cholesky reconstruction, correlated
+  proposal geometry, simplex normalization and finite-difference Jacobians,
+  and the generic replica-exchange acceptance ratio independently.
+- Audited v0.1 checkpoint compatibility for every newly serialized field.
+- Added tests for Gibbs error atomicity, composition report aggregation,
+  legacy/empty report normalization, dense covariance, correlated proposal
+  generation, transform round trips, transformed-density correction,
+  replica-exchange diagnostics and deterministic replay.
+- Rechecked component-wise Metropolis and slice sampling input-state validation
+  and consistent one-transition iteration semantics.
+- Rechecked accepted and rejected replica exchanges so state/log-density caches
+  remain synchronized and iteration counts advance deterministically.
 
-## Implemented checks
+## Important validation limitation
 
-- Static delimiter/string/comment balance over every Rust source file.
-- Workspace membership and local `Cargo.lock` package entry checked.
-- JSON checkpoint fields audited to avoid serializing NaN/Infinity sentinels.
-- Trace layout invariants checked by `MemoryTrace::validate`.
-- State invariants checked by `EuclideanState::validate()` on every `MemoryTrace::record()` and checkpoint load.
-- Independent numerical cross-check of the implemented rank-normalized R-hat
-  and ESS formulas on synthetic data:
-  - four IID normal chains: R-hat approximately 1.0001, bulk ESS 8000/8000;
-  - one chain shifted by 1.5 standard deviations: R-hat approximately 1.215.
-
-## Test results (2026-07-12)
+The execution container used for this revision has no `cargo`, `rustc`,
+`rustfmt`, `clippy`, local Cargo registry or network access for installing crate
+dependencies. Consequently this report does **not** claim an actual Rust build
+or test pass. Run the following in a Rust-enabled checkout before merging:
 
 ```bash
-cargo fmt --all --check     # PASS
-cargo clippy -p mcmc-rs     # PASS (no issues)
-cargo test -p mcmc-rs       # 13 passed, 1 failed (pre-existing)
+cargo fmt --all --check
+cargo clippy -p mcmc-rs --all-targets
+cargo test -p mcmc-rs
+cargo clippy -p mcmc-rs --all-targets --features hdf5
+cargo test -p mcmc-rs --features hdf5
 ```
 
-| Test | Status |
-|------|--------|
-| `adaptive_random_walk_recovers_standard_normal_moments` | PASS |
-| `proposal_scale_is_constant_in_sampling_phase` | PASS |
-| `component_wise_recovers_univariate_std_normal` | PASS |
-| `slice_sampler_recovers_univariate_standard_normal` | PASS |
-| `multi_chain_deterministic_reproducibility` | PASS |
-| `diagnostics_on_iid_and_shifted_chains` | PASS |
-| `carlo_run_returns_sampler_trace` | PASS |
-| `fallible_component_transition_leaves_accepted_state_unchanged` | PASS (new) |
-| `fallible_slice_transition_leaves_accepted_state_unchanged` | PASS (new) |
-| `every_kernel_advances_iteration_once_per_transition` | PASS (new) |
-| `invalid_slice_limits_fail_without_mutating_state` | PASS (new) |
-| `legacy_component_checkpoint_without_workspace_remains_usable` | PASS (new) |
-| `legacy_slice_checkpoint_without_workspace_remains_usable` | PASS (new) |
-| `json_checkpoint_preserves_exact_future_trajectory` | **FAIL** — pre-existing; `serde_json` f64 round-trip introduces 1-ULP differences in `MemoryTrace` positions; test uses `assert_eq!` on floats |
+## Workspace note
 
-## Known issues
-
-- **`json_checkpoint_preserves_exact_future_trajectory`**: The test compares `MemoryTrace` (contains `f64` positions) through a `serde_json` round-trip via `assert_eq!`. Float values differ by 1 ULP after serialization/deserialization. Fix requires approximate comparison.
-- **hdf5 feature broken workspace-wide**: hdf5 0.8.1 lacks `create_dataset_simple` (code expects 0.9.x API). Affects Carlo.rs and MCMC.rs when `--features hdf5` is enabled. `cargo clippy --all-features` and `cargo test --all-features` cannot be run until the workspace hdf5 dependency is bumped.
+MCMC.rs's HDF5 code has been updated for hdf5 0.8. Carlo.rs still contains its
+pre-existing `create_dataset_simple` calls behind Carlo's own `hdf5` feature.
+Therefore a full workspace `--all-features` build may still require a separate
+Carlo.rs HDF5 migration; the default workspace and MCMC-only HDF5 feature do
+not enable Carlo's HDF5 feature.

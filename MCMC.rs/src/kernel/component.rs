@@ -56,8 +56,11 @@ impl ComponentWiseMetropolis {
     }
 }
 
-impl TransitionKernel for ComponentWiseMetropolis {
-    fn transition<T, R>(
+impl<T> TransitionKernel<T> for ComponentWiseMetropolis
+where
+    T: LogDensity<[f64]> + ?Sized,
+{
+    fn transition<R>(
         &mut self,
         target: &mut T,
         state: &mut EuclideanState,
@@ -65,9 +68,9 @@ impl TransitionKernel for ComponentWiseMetropolis {
         phase: SamplingPhase,
     ) -> Result<TransitionReport, McmcError>
     where
-        T: LogDensity<[f64]>,
         R: Rng + ?Sized,
     {
+        state.validate()?;
         if phase == SamplingPhase::Sampling && !self.adaptation_is_frozen() {
             self.freeze();
         }
@@ -144,6 +147,7 @@ impl TransitionKernel for ComponentWiseMetropolis {
         }
 
         report.accepted = None;
+        report.subtransitions = 1;
         report.log_acceptance_probability = None;
         report.proposal_scale = Some(
             self.scales
@@ -163,6 +167,7 @@ impl TransitionKernel for ComponentWiseMetropolis {
 
     fn on_phase_start(
         &mut self,
+        _target: &mut T,
         phase: SamplingPhase,
         _state: &EuclideanState,
     ) -> Result<(), McmcError> {
@@ -174,6 +179,7 @@ impl TransitionKernel for ComponentWiseMetropolis {
 
     fn on_phase_end(
         &mut self,
+        _target: &mut T,
         phase: SamplingPhase,
         _state: &EuclideanState,
     ) -> Result<(), McmcError> {
@@ -183,7 +189,7 @@ impl TransitionKernel for ComponentWiseMetropolis {
         Ok(())
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self, _target: &T) -> &'static str {
         "ComponentWiseMetropolis"
     }
 }

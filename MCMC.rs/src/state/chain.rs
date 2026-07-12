@@ -59,4 +59,17 @@ impl<S, C> ChainState<S, C> {
     pub fn mark_rejected_transition(&mut self) {
         self.iteration = self.iteration.saturating_add(1);
     }
+
+    pub(crate) fn exchange_position_with(
+        &mut self,
+        other: &mut Self,
+        self_log_density: f64,
+        other_log_density: f64,
+    ) {
+        std::mem::swap(&mut self.position, &mut other.position);
+        self.log_density = self_log_density;
+        other.log_density = other_log_density;
+        self.iteration = self.iteration.saturating_add(1);
+        other.iteration = other.iteration.saturating_add(1);
+    }
 }

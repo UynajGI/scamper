@@ -128,38 +128,56 @@ impl MemoryTrace {
     pub fn save_hdf5(&self, path: impl AsRef<Path>) -> Result<(), McmcError> {
         self.validate()?;
         let file = hdf5::File::create(path)?;
-        file.create_dataset_simple("dimension", &[1], &(self.dimension as u64))?;
-        file.create_dataset_simple("thinning", &[1], &(self.thinning as u64))?;
-        file.create_dataset_simple("seen_iterations", &[1], &(self.seen_iterations as u64))?;
-        file.create_dataset_simple(
-            "chain_id",
-            &[1],
-            &(self.chain_id.map_or(u64::MAX, |value| value as u64)),
-        )?;
-        file.create_dataset_simple("positions", &[self.positions.len() as u64], &self.positions)?;
-        file.create_dataset_simple(
-            "log_density",
-            &[self.log_density.len() as u64],
-            &self.log_density,
-        )?;
-        file.create_dataset_simple("accepted", &[self.accepted.len() as u64], &self.accepted)?;
+        file.new_dataset::<u64>()
+            .shape([1])
+            .create("dimension")?
+            .write(&[self.dimension as u64])?;
+        file.new_dataset::<u64>()
+            .shape([1])
+            .create("thinning")?
+            .write(&[self.thinning as u64])?;
+        file.new_dataset::<u64>()
+            .shape([1])
+            .create("seen_iterations")?
+            .write(&[self.seen_iterations as u64])?;
+        file.new_dataset::<u64>()
+            .shape([1])
+            .create("chain_id")?
+            .write(&[self.chain_id.map_or(u64::MAX, |value| value as u64)])?;
+        file.new_dataset::<f64>()
+            .shape([self.positions.len()])
+            .create("positions")?
+            .write(self.positions.as_slice())?;
+        file.new_dataset::<f64>()
+            .shape([self.log_density.len()])
+            .create("log_density")?
+            .write(self.log_density.as_slice())?;
+        file.new_dataset::<i8>()
+            .shape([self.accepted.len()])
+            .create("accepted")?
+            .write(self.accepted.as_slice())?;
         let acceptance_rate = self
             .acceptance_rate
             .iter()
             .map(|value| value.unwrap_or(f64::NAN))
             .collect::<Vec<_>>();
-        file.create_dataset_simple(
-            "acceptance_rate",
-            &[acceptance_rate.len() as u64],
-            &acceptance_rate,
-        )?;
-        file.create_dataset_simple("divergent", &[self.divergent.len() as u64], &self.divergent)?;
+        file.new_dataset::<f64>()
+            .shape([acceptance_rate.len()])
+            .create("acceptance_rate")?
+            .write(acceptance_rate.as_slice())?;
+        file.new_dataset::<u8>()
+            .shape([self.divergent.len()])
+            .create("divergent")?
+            .write(self.divergent.as_slice())?;
         let energy_error = self
             .energy_error
             .iter()
             .map(|value| value.unwrap_or(f64::NAN))
             .collect::<Vec<_>>();
-        file.create_dataset_simple("energy_error", &[energy_error.len() as u64], &energy_error)?;
+        file.new_dataset::<f64>()
+            .shape([energy_error.len()])
+            .create("energy_error")?
+            .write(energy_error.as_slice())?;
         Ok(())
     }
 
