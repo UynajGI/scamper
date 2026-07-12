@@ -49,7 +49,16 @@ pub trait Algorithm<H: Hamiltonian>: Send {
     fn name(&self) -> &'static str {
         "Unknown"
     }
+
+    /// Lifecycle hook used by adaptive kernels to mark a completed run terminal.
+    fn finish_run(&mut self) {}
 }
+
+/// Marker for fixed-parameter lattice kernels whose replica-exchange weight is `-βE`.
+///
+/// Generalized-ensemble kernels deliberately do not implement this marker:
+/// changing `β` alone does not describe their target distribution.
+pub trait CanonicalLatticeKernel {}
 
 /// Validate and clamp a bond activation probability.
 pub fn checked_probability(value: f64, algorithm: &str) -> f64 {

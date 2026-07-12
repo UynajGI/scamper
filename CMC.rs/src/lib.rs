@@ -49,6 +49,7 @@ pub mod postprocess;
 
 pub mod algorithms;
 pub mod core;
+pub mod generalized;
 pub mod lattice;
 pub mod observables;
 pub mod particle;
@@ -68,6 +69,14 @@ pub use core::ensemble::{
 pub use core::r#move::{BatchSpinMove, SiteSpinMove, Spin};
 pub use core::trial::{metropolis_hastings_step, ProposedMove, TrialEvaluator, TrialOutcome};
 pub use core::visit::{SiteOrder, VisitSchedule};
+pub use generalized::{
+    canonical_reweight, enumerate_ising_density_of_states, BinnedAxis, CanonicalReweighting,
+    DiscreteAxis, EnergyBiasCore, EnergyMacrostate, ExactIsingDensityOfStates, FixedBias,
+    GeneralizedError, HarmonicUmbrellaBias, Histogram, IsingWangLandau, LogBias,
+    LogDensityOfStates, Macrostate, MacrostateAxis, MagnetizationMacrostate, MulticanonicalBias,
+    ParticleNumberMacrostate, WangLandauConfig, WangLandauCore, WangLandauPhase,
+    WangLandauRefinement, WangLandauRunControl, WangLandauState, WangLandauTermination,
+};
 pub use lattice::graph::{
     build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
     Bond, BondType, CsrLattice,

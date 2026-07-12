@@ -245,6 +245,98 @@ impl<B: Backend> Scheduler<B> {
         Ok(results)
     }
 
+    /// Run an adaptive simulation and return both the finalized model state and
+    /// ordinary measurement results.
+    ///
+    /// Density-of-states estimators and other adaptive algorithms often keep
+    /// their primary result in the Monte Carlo state rather than in scalar
+    /// measurements. This variant preserves that state after scheduler
+    /// finalization, including the terminal lifecycle hook.
+    pub fn run_controlled_with_state<MC, C>(
+        &self,
+        params: &Params,
+        mut control: C,
+    ) -> Result<(MC, Results), CarloError>
+    where
+        MC: FromParams,
+        C: AdaptiveRunControl<MC>,
+    {
+        let rng = MC::Rng::seed_from_u64(self.config.base_seed);
+        let mut ctx =
+            Context::new_with_binsize(rng, self.config.thermalization_sweeps, self.config.binsize);
+        let mut mc = MC::from_params(params, &mut ctx.rng)?;
+        let initial_phase = control.initial_phase();
+        if !matches!(
+            initial_phase,
+            RunPhase::Thermalization | RunPhase::Measurement
+        ) {
+            return Err(CarloError::InvalidConfig {
+                field: "run_control.initial_phase".into(),
+                reason: "expected Thermalization or Measurement".into(),
+            });
+        }
+
+        ctx.enter_phase(initial_phase);
+        mc.on_phase_start(initial_phase, &mut ctx);
+        let mut thermalization_sweeps = 0_u64;
+        let mut measurement_sweeps = 0_u64;
+
+        loop {
+            mc.sweep(&mut ctx);
+            match ctx.phase() {
+                RunPhase::Thermalization => thermalization_sweeps += 1,
+                RunPhase::Measurement => {
+                    mc.measure(&mut ctx);
+                    measurement_sweeps += 1;
+                }
+                RunPhase::Initialization | RunPhase::Finished => {
+                    return Err(CarloError::InvalidConfig {
+                        field: "run_control.phase".into(),
+                        reason: "controller entered a non-runnable phase".into(),
+                    });
+                }
+            }
+            ctx.advance_sweep();
+
+            match (ctx.phase(), control.after_sweep(&mc, &ctx)) {
+                (RunPhase::Thermalization, RunDecision::ContinueAdaptation)
+                | (RunPhase::Measurement, RunDecision::ContinueProduction) => {}
+                (RunPhase::Thermalization, RunDecision::BeginProduction) => {
+                    mc.on_phase_end(RunPhase::Thermalization, &mut ctx);
+                    ctx.enter_phase(RunPhase::Measurement);
+                    mc.on_phase_start(RunPhase::Measurement, &mut ctx);
+                }
+                (_, RunDecision::Stop) => break,
+                (RunPhase::Thermalization, RunDecision::ContinueProduction)
+                | (RunPhase::Measurement, RunDecision::ContinueAdaptation)
+                | (RunPhase::Measurement, RunDecision::BeginProduction) => {
+                    return Err(CarloError::InvalidConfig {
+                        field: "run_control.decision".into(),
+                        reason: "decision does not match the active phase".into(),
+                    });
+                }
+                (RunPhase::Initialization | RunPhase::Finished, _) => unreachable!(),
+            }
+        }
+
+        let previous = ctx.phase();
+        mc.on_phase_end(previous, &mut ctx);
+        ctx.enter_phase(RunPhase::Finished);
+        mc.on_phase_start(RunPhase::Finished, &mut ctx);
+
+        let estimates = ctx.finalize_measurements();
+        let mut results = Results::from_measurements(&estimates);
+        results.set_metadata(Metadata {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            timestamp: chrono::Utc::now(),
+            base_seed: self.config.base_seed,
+            thermalization_sweeps,
+            measurement_sweeps,
+            n_tasks: 1,
+        });
+        Ok((mc, results))
+    }
+
     /// Run multiple parallel simulation tasks.
     pub fn run_parallel<MC: FromParams>(&self, n_tasks: usize, params: &Params) -> Vec<Results> {
         use std::sync::Mutex;

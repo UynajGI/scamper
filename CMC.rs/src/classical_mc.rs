@@ -1,6 +1,6 @@
 //! Carlo.rs adapter for composing a physical model, update kernel and observables.
 
-use crate::algorithms::{Algorithm, SimulationPhase};
+use crate::algorithms::{Algorithm, CanonicalLatticeKernel, SimulationPhase};
 use crate::lattice::graph::{
     build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
     BondType, CsrLattice,
@@ -180,6 +180,12 @@ where
             .measure_all(&self.system, &self.model, context);
     }
 
+    fn on_phase_start(&mut self, phase: carlo_rs::RunPhase, _context: &mut Context<Self::Rng>) {
+        if phase == carlo_rs::RunPhase::Finished {
+            self.algorithm.finish_run();
+        }
+    }
+
     fn name(&self) -> &'static str {
         self.algorithm.name()
     }
@@ -188,7 +194,7 @@ where
 impl<H, A, O> ParallelTemperingCompatible for ClassicalMC<H, A, O>
 where
     H: Hamiltonian,
-    A: Algorithm<H>,
+    A: Algorithm<H> + CanonicalLatticeKernel,
     O: ObservableSet<H>,
 {
     fn log_weight_ratio(&self, parameter: &str, new_value: f64) -> f64 {

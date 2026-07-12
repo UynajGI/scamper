@@ -249,6 +249,18 @@ impl InsertDeleteParticle {
         Ok(self)
     }
 
+    /// Verify that every proposed insertion species is defined by the potential.
+    pub fn validate_potential<P: PairPotential>(&self, potential: &P) -> Result<(), ParticleError> {
+        for &(species, _) in &self.species {
+            if !potential.supports_species(species) {
+                return Err(ParticleError::InvalidMove(format!(
+                    "insertion species {species} is not supported by the pair potential"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn validate_state<const D: usize>(
         &self,
         system: &ParticleSystem<D>,
@@ -417,6 +429,9 @@ impl<const D: usize, P: PairPotential> ParticleAlgorithm<D, P> for ParticleGrand
         rng: &mut impl Rng,
         phase: SimulationPhase,
     ) {
+        self.exchange
+            .validate_potential(potential)
+            .expect("invalid μVT species/potential combination");
         self.exchange
             .validate_state(system)
             .expect("invalid μVT state/proposal combination");
