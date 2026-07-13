@@ -161,6 +161,7 @@ where
         Ok(TransitionReport {
             accepted: Some(true),
             log_acceptance_probability: Some(0.0),
+            acceptance_statistic: Some(1.0),
             proposals: 1,
             acceptances: 1,
             target_evaluations,

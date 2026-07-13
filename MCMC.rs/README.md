@@ -1,4 +1,4 @@
-# MCMC.rs v0.3
+# MCMC.rs v0.4
 
 `mcmc-rs` is Scuttle's statistical-inference MCMC layer. It remains independent
 of CMC.rs and QMC.rs:
@@ -11,35 +11,47 @@ Carlo.rs
    └── MCMC.rs
 ```
 
-Carlo.rs owns generic execution lifecycle, RNG contexts and scalar online
-measurements. MCMC.rs owns target densities, statistical transition kernels,
+Carlo.rs owns the generic run lifecycle, RNG contexts, scheduling and scalar
+online measurements. MCMC.rs owns target densities, transition kernels,
 warmup adaptation, constrained-parameter transforms, posterior traces,
 replica exchange and multi-chain diagnostics.
 
-## v0.3 capabilities
+## v0.4 capabilities
 
-v0.3 retains every v0.2 kernel and adds a production-oriented static HMC slice:
+v0.4 retains all v0.1–v0.3 functionality and adds dynamic Hamiltonian Monte
+Carlo:
 
-- `StaticHmc<M>` with fixed trajectory length and atomic accept/reject commit;
-- `UnitMetric`, `DiagonalMetric` and `DenseMetric` inverse-mass geometries;
-- allocation-conscious `LeapfrogIntegrator` and reusable `PhasePoint` storage;
-- accepted-state gradient caching through `EuclideanCache`;
-- finite-trajectory and configurable energy-error divergence detection;
-- Nesterov dual averaging for step size;
-- fast/slow/fast windowed warmup with diagonal or dense metric adaptation;
-- differentiable positive, interval, ordered, simplex and product transforms;
-- `TransformedTarget<T, B>: DifferentiableLogDensity` with analytic pullback and
-  log-Jacobian gradients;
-- HMC scalar measurements in the Carlo.rs adapter: energy error, divergence,
-  gradient evaluations, leapfrog steps and frozen step size.
+- `Nuts<M>` with unit, diagonal or dense Euclidean metrics;
+- binary trajectory doubling with a generalized metric-aware U-turn test;
+- multinomial candidate selection in the log domain;
+- configurable maximum tree depth and energy-error divergence threshold;
+- atomic state commit: invalid or divergent trajectories never corrupt the
+  accepted position, log density or gradient cache;
+- dual-averaged step-size adaptation and fast/slow/fast windowed metric
+  adaptation shared with static HMC;
+- per-transition Hamiltonian energy, tree depth, depth-limit hit, leapfrog,
+  acceptance-statistic and divergence reporting;
+- trace storage for the new dynamic-HMC diagnostics;
+- per-chain E-BFMI and aggregate maximum-tree-depth-hit diagnostics;
+- exact JSON checkpoint continuation, including warmup state, metric state and
+  RNG, while reconstructible trajectory workspaces remain un-serialized.
 
-NUTS and dynamic trajectory building remain deliberately deferred to v0.4.
+The package also keeps:
 
-## Static HMC
+- random-walk, component-wise, slice and Gibbs kernels;
+- static HMC;
+- static kernel composition;
+- diagonal and dense covariance adaptation;
+- parameter transforms and differentiable transformed targets;
+- parallel independent chains and replica exchange;
+- contiguous in-memory traces, JSON export and optional HDF5 export;
+- rank-normalized split R-hat, bulk/tail ESS and MCSE.
+
+## NUTS example
 
 ```rust
 use mcmc_rs::{
-    run_multichain, DifferentiableLogDensity, LogDensity, McmcConfig, StaticHmc,
+    run_multichain, DifferentiableLogDensity, LogDensity, McmcConfig, Nuts,
 };
 
 #[derive(Clone, Copy)]
@@ -52,7 +64,11 @@ impl LogDensity<[f64]> for Gaussian {
 }
 
 impl DifferentiableLogDensity for Gaussian {
-    fn log_density_and_gradient(&mut self, x: &[f64], gradient: &mut [f64]) -> f64 {
+    fn log_density_and_gradient(
+        &mut self,
+        x: &[f64],
+        gradient: &mut [f64],
+    ) -> f64 {
         for (gradient, value) in gradient.iter_mut().zip(x.iter().copied()) {
             *gradient = -value;
         }
@@ -60,95 +76,104 @@ impl DifferentiableLogDensity for Gaussian {
     }
 }
 
-let warmup = 1_000;
-let output = run_multichain(
-    |_| Gaussian,
-    |_| {
-        StaticHmc::diagonal(vec![1.0, 1.0], 0.15, 8)
-            .and_then(|kernel| kernel.with_diagonal_adaptation(warmup, 0.8, 1e-3))
-            .expect("valid HMC configuration")
-    },
-    vec![vec![-2.0, 1.0], vec![2.0, -1.0], vec![0.5, 2.0], vec![-0.5, -2.0]],
-    McmcConfig {
-        chains: 4,
-        warmup,
-        samples: 2_000,
-        parameter_names: vec!["x".into(), "y".into()],
-        ..McmcConfig::default()
-    },
-)?;
-println!("R-hat = {}", output.diagnostics.parameters[0].rhat);
-# Ok::<(), mcmc_rs::McmcError>(())
+fn main() -> Result<(), mcmc_rs::McmcError> {
+    let warmup = 1_000;
+    let output = run_multichain(
+        |_| Gaussian,
+        |_| {
+            Nuts::diagonal(vec![1.0, 1.0], 0.2, 10)
+                .and_then(|kernel| {
+                    kernel.with_diagonal_adaptation(
+                        warmup,
+                        0.8,
+                        1.0e-3,
+                    )
+                })
+                .expect("valid NUTS configuration")
+        },
+        vec![
+            vec![-2.0, -1.0],
+            vec![2.0, 1.0],
+            vec![-1.0, 2.0],
+            vec![1.0, -2.0],
+        ],
+        McmcConfig {
+            chains: 4,
+            warmup,
+            samples: 2_000,
+            parameter_names: vec!["x".into(), "y".into()],
+            ..McmcConfig::default()
+        },
+    )?;
+
+    println!("E-BFMI: {:?}", output.diagnostics.chain_ebfmi);
+    println!(
+        "maximum-tree-depth hits: {}",
+        output.diagnostics.max_tree_depth_hits
+    );
+    Ok(())
+}
 ```
 
-When HMC adaptation is enabled, the `total_warmup` supplied to the kernel must
-match the number of warmup transitions run by `ChainRunner`, `McmcConfig`, or
-the Carlo.rs scheduler. Entering sampling early returns an error instead of
-silently freezing an incomplete metric.
+A complete correlated-Gaussian example is in
+`examples/nuts_gaussian.rs`.
 
-## Metric convention
+## NUTS diagnostics
 
-Metrics store the inverse mass matrix `G = M^-1`:
+`TransitionReport` records:
 
 ```text
-p ~ Normal(0, M)
-K(p) = 0.5 pᵀ G p
-q̇ = G p
+acceptance_statistic
+energy
+energy_error
+leapfrog_steps
+tree_depth
+max_tree_depth_reached
+divergent
+target_evaluations
+gradient_evaluations
 ```
 
-Windowed adaptation estimates the position covariance and installs it directly
-as `G`. This makes the linearized frequencies approximately isotropic for a
-Gaussian target. Dense metrics cache a lower Cholesky factor and keep momentum
-sampling, velocity and kinetic energy synchronized to the same regularized
-matrix.
+`MemoryTrace` stores retained energy, tree depth and depth-limit flags.
+`diagnose()` reports per-chain E-BFMI and aggregate depth-limit hits in addition
+to R-hat, ESS, MCSE, divergence count and mean acceptance.
 
-## Constrained HMC
+E-BFMI is returned as `None` when the retained energy series is incomplete,
+non-finite, too short or constant.
 
-```rust
-use mcmc_rs::{
-    DifferentiableLogDensity, LogDensity, Positive, TransformedTarget,
-};
+## Checkpoint contract
 
-struct Exponential;
-impl LogDensity<[f64]> for Exponential {
-    fn log_density(&mut self, x: &[f64]) -> f64 {
-        if x[0] > 0.0 { -x[0] } else { f64::NEG_INFINITY }
-    }
-}
-impl DifferentiableLogDensity for Exponential {
-    fn log_density_and_gradient(&mut self, x: &[f64], gradient: &mut [f64]) -> f64 {
-        gradient[0] = -1.0;
-        self.log_density(x)
-    }
-}
+Persistent state includes:
 
-let target = TransformedTarget::new(Exponential, Positive)?;
-# let _ = target;
-# Ok::<(), mcmc_rs::McmcError>(())
+- accepted position, log density and valid gradient cache;
+- RNG state;
+- metric and adaptation state;
+- current step size and warmup windows;
+- trace and transition report.
+
+Private leapfrog/tree workspaces are skipped during serialization and rebuilt
+from dimension metadata. Consequently, a divergent temporary phase point cannot
+poison JSON serialization.
+
+## Feature flags
+
+Default builds are pure Rust apart from normal crate dependencies.
+
+The optional `hdf5` feature enables post-run HDF5 trace export. In the validation
+environment, `hdf5-sys 0.8.1` did not accept the installed HDF5 1.14.5 header,
+so that feature remains dependent on a compatible system HDF5 installation.
+
+## Validation
+
+The v0.4 implementation was exercised with:
+
+```bash
+cargo fmt --all --check
+cargo check -p mcmc-rs --all-targets
+cargo clippy -p mcmc-rs --all-targets -- -D warnings
+cargo test -p mcmc-rs
+cargo check --workspace --all-targets
 ```
 
-The HMC state is the unconstrained coordinate `z`; `TransformedTarget` computes
-`x = transform(z)`, adds `log |dx/dz|`, pulls the constrained gradient back to
-`z`, and adds the analytic log-Jacobian gradient.
-
-## Existing v0.2 functionality
-
-The following remain available and compatible:
-
-- random-walk, component-wise, slice and Gibbs kernels;
-- `Then`, `Repeat` and `Mixture` static composition;
-- diagonal and dense random-walk covariance adaptation;
-- `MemoryTrace`, thinning, JSON/HDF5 trace persistence;
-- rank-normalized split R-hat, bulk/tail ESS and MCSE;
-- deterministic Rayon multi-chain execution;
-- fixed-slot generic replica exchange;
-- generic serde chain checkpoints including persistent kernel/adaptation and RNG state;
-- exact f64 JSON round trips, with transient HMC trajectory workspaces rebuilt after restore.
-
-## Trace policy
-
-Posterior vectors remain in `MemoryTrace`, not `Context::measure_array()`.
-`MemoryTrace` records divergence and energy error for HMC. Carlo.rs measurements
-provide online scalar summaries including gradient evaluations and leapfrog
-work. Static HMC has a fixed leapfrog count and a frozen production step size,
-so those values do not require additional per-draw vector columns.
+The MCMC.rs suite completed with 51 passing tests. See
+`VALIDATION_REPORT.md` for the review and validation record.

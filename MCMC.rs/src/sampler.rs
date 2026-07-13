@@ -16,33 +16,14 @@ pub struct ChainRunner<T, K, Tr> {
 }
 
 impl<T, K, Tr> ChainRunner<T, K, Tr> {
-    pub const fn new(
-        target: T,
-        kernel: K,
-        state: EuclideanState,
-        trace: Tr,
-        chain_id: usize,
-    ) -> Self {
+    pub fn new(target: T, kernel: K, state: EuclideanState, trace: Tr, chain_id: usize) -> Self {
         Self {
             target,
             kernel,
             state,
             trace,
             chain_id,
-            last_report: TransitionReport {
-                accepted: None,
-                log_acceptance_probability: None,
-                proposals: 0,
-                acceptances: 0,
-                target_evaluations: 0,
-                gradient_evaluations: 0,
-                divergent: false,
-                energy_error: None,
-                leapfrog_steps: 0,
-                tree_depth: None,
-                proposal_scale: None,
-                subtransitions: 0,
-            },
+            last_report: TransitionReport::default(),
         }
     }
 

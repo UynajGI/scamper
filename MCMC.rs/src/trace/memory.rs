@@ -18,6 +18,12 @@ pub struct MemoryTrace {
     acceptance_rate: Vec<Option<f64>>,
     divergent: Vec<u8>,
     energy_error: Vec<Option<f64>>,
+    #[serde(default)]
+    energy: Vec<Option<f64>>,
+    #[serde(default)]
+    tree_depth: Vec<Option<u16>>,
+    #[serde(default)]
+    max_tree_depth_reached: Vec<u8>,
     seen_iterations: usize,
     chain_id: Option<usize>,
 }
@@ -43,6 +49,9 @@ impl MemoryTrace {
             acceptance_rate: Vec::new(),
             divergent: Vec::new(),
             energy_error: Vec::new(),
+            energy: Vec::new(),
+            tree_depth: Vec::new(),
+            max_tree_depth_reached: Vec::new(),
             seen_iterations: 0,
             chain_id: None,
         })
@@ -55,6 +64,9 @@ impl MemoryTrace {
         self.acceptance_rate.reserve(draws);
         self.divergent.reserve(draws);
         self.energy_error.reserve(draws);
+        self.energy.reserve(draws);
+        self.tree_depth.reserve(draws);
+        self.max_tree_depth_reached.reserve(draws);
     }
 
     pub const fn dimension(&self) -> usize {
@@ -95,6 +107,18 @@ impl MemoryTrace {
 
     pub fn energy_errors(&self) -> &[Option<f64>] {
         &self.energy_error
+    }
+
+    pub fn energies(&self) -> &[Option<f64>] {
+        &self.energy
+    }
+
+    pub fn tree_depths(&self) -> &[Option<u16>] {
+        &self.tree_depth
+    }
+
+    pub fn max_tree_depth_reached(&self) -> &[u8] {
+        &self.max_tree_depth_reached
     }
 
     pub fn view(&self) -> TraceView<'_> {
@@ -178,6 +202,21 @@ impl MemoryTrace {
             .shape([energy_error.len()])
             .create("energy_error")?
             .write(energy_error.as_slice())?;
+        let energy = normalized_optional_f64(&self.energy, self.len());
+        file.new_dataset::<f64>()
+            .shape([energy.len()])
+            .create("energy")?
+            .write(energy.as_slice())?;
+        let tree_depth = normalized_optional_u16(&self.tree_depth, self.len());
+        file.new_dataset::<u16>()
+            .shape([tree_depth.len()])
+            .create("tree_depth")?
+            .write(tree_depth.as_slice())?;
+        let max_tree_depth_reached = normalized_u8(&self.max_tree_depth_reached, self.len());
+        file.new_dataset::<u8>()
+            .shape([max_tree_depth_reached.len()])
+            .create("max_tree_depth_reached")?
+            .write(max_tree_depth_reached.as_slice())?;
         Ok(())
     }
 
@@ -209,6 +248,39 @@ impl MemoryTrace {
                 .iter()
                 .map(|value| (!value.is_nan()).then_some(*value))
                 .collect(),
+            energy: file
+                .dataset("energy")
+                .ok()
+                .map_or_else(Vec::new, |dataset| {
+                    dataset
+                        .read_1d::<f64>()
+                        .map(|values| {
+                            values
+                                .iter()
+                                .map(|value| (!value.is_nan()).then_some(*value))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                }),
+            tree_depth: file
+                .dataset("tree_depth")
+                .ok()
+                .map_or_else(Vec::new, |dataset| {
+                    dataset
+                        .read_1d::<u16>()
+                        .map(|values| {
+                            values
+                                .iter()
+                                .map(|value| (*value != u16::MAX).then_some(*value))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                }),
+            max_tree_depth_reached: file
+                .dataset("max_tree_depth_reached")
+                .ok()
+                .and_then(|dataset| dataset.read_1d::<u8>().ok())
+                .map_or_else(Vec::new, |values| values.to_vec()),
             seen_iterations,
             chain_id,
         };
@@ -223,6 +295,9 @@ impl MemoryTrace {
             || self.acceptance_rate.len() != draws
             || self.divergent.len() != draws
             || self.energy_error.len() != draws
+            || !optional_column_length_is_valid(self.energy.len(), draws)
+            || !optional_column_length_is_valid(self.tree_depth.len(), draws)
+            || !optional_column_length_is_valid(self.max_tree_depth_reached.len(), draws)
         {
             return Err(McmcError::InvalidConfig(
                 "trace columns have inconsistent lengths".to_string(),
@@ -238,6 +313,7 @@ impl MemoryTrace {
             || self.chain_id.is_some() != (self.seen_iterations > 0)
             || self.accepted.iter().any(|value| !(-1..=1).contains(value))
             || self.divergent.iter().any(|value| *value > 1)
+            || self.max_tree_depth_reached.iter().any(|value| *value > 1)
         {
             return Err(McmcError::InvalidConfig(
                 "trace metadata or discrete columns are inconsistent".to_string(),
@@ -255,12 +331,56 @@ impl MemoryTrace {
                 .iter()
                 .flatten()
                 .any(|value| !value.is_finite())
+            || self.energy.iter().flatten().any(|value| !value.is_finite())
         {
             return Err(McmcError::InvalidConfig(
                 "trace contains invalid floating-point values".to_string(),
             ));
         }
         Ok(())
+    }
+}
+
+fn optional_column_length_is_valid(length: usize, draws: usize) -> bool {
+    length == 0 || length == draws
+}
+
+fn normalize_optional_column<T: Clone>(column: &mut Vec<T>, draws: usize, missing: T) {
+    if column.is_empty() && draws > 0 {
+        column.resize(draws, missing);
+    }
+}
+
+#[cfg(feature = "hdf5")]
+fn normalized_optional_f64(column: &[Option<f64>], draws: usize) -> Vec<f64> {
+    if column.is_empty() {
+        vec![f64::NAN; draws]
+    } else {
+        column
+            .iter()
+            .map(|value| value.unwrap_or(f64::NAN))
+            .collect()
+    }
+}
+
+#[cfg(feature = "hdf5")]
+fn normalized_optional_u16(column: &[Option<u16>], draws: usize) -> Vec<u16> {
+    if column.is_empty() {
+        vec![u16::MAX; draws]
+    } else {
+        column
+            .iter()
+            .map(|value| value.unwrap_or(u16::MAX))
+            .collect()
+    }
+}
+
+#[cfg(feature = "hdf5")]
+fn normalized_u8(column: &[u8], draws: usize) -> Vec<u8> {
+    if column.is_empty() {
+        vec![0; draws]
+    } else {
+        column.to_vec()
     }
 }
 
@@ -289,6 +409,9 @@ impl TraceStore for MemoryTrace {
         if !(self.seen_iterations - 1).is_multiple_of(self.thinning) {
             return Ok(false);
         }
+        normalize_optional_column(&mut self.energy, self.log_density.len(), None);
+        normalize_optional_column(&mut self.tree_depth, self.log_density.len(), None);
+        normalize_optional_column(&mut self.max_tree_depth_reached, self.log_density.len(), 0);
         self.positions.extend_from_slice(state.position());
         self.log_density.push(state.log_density());
         self.accepted.push(match report.accepted {
@@ -296,9 +419,17 @@ impl TraceStore for MemoryTrace {
             Some(false) => 0,
             None => -1,
         });
-        self.acceptance_rate.push(report.acceptance_rate());
+        self.acceptance_rate.push(
+            report
+                .acceptance_statistic
+                .or_else(|| report.acceptance_rate()),
+        );
         self.divergent.push(u8::from(report.divergent));
         self.energy_error.push(report.energy_error);
+        self.energy.push(report.energy);
+        self.tree_depth.push(report.tree_depth);
+        self.max_tree_depth_reached
+            .push(u8::from(report.max_tree_depth_reached));
         Ok(true)
     }
 
@@ -309,6 +440,9 @@ impl TraceStore for MemoryTrace {
         self.acceptance_rate.clear();
         self.divergent.clear();
         self.energy_error.clear();
+        self.energy.clear();
+        self.tree_depth.clear();
+        self.max_tree_depth_reached.clear();
         self.seen_iterations = 0;
         self.chain_id = None;
     }

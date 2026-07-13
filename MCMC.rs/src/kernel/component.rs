@@ -147,6 +147,7 @@ where
         }
 
         report.accepted = None;
+        report.acceptance_statistic = report.acceptance_rate();
         report.subtransitions = 1;
         report.log_acceptance_probability = None;
         report.proposal_scale = Some(

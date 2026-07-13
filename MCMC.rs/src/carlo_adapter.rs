@@ -75,7 +75,9 @@ where
             .record(self.chain_id, &self.state, &self.last_report)
             .unwrap_or_else(|error| panic!("MCMC trace write failed: {error}"));
         context.measure("LogDensity", self.state.log_density());
-        if let Some(accepted) = self.last_report.accepted {
+        if let Some(statistic) = self.last_report.acceptance_statistic {
+            context.measure("Acceptance", statistic);
+        } else if let Some(accepted) = self.last_report.accepted {
             context.measure("Acceptance", if accepted { 1.0 } else { 0.0 });
         } else if let Some(rate) = self.last_report.acceptance_rate() {
             context.measure("Acceptance", rate);
@@ -93,8 +95,22 @@ where
             "Divergent",
             if self.last_report.divergent { 1.0 } else { 0.0 },
         );
+        if let Some(energy) = self.last_report.energy {
+            context.measure("Energy", energy);
+        }
         if let Some(error) = self.last_report.energy_error {
             context.measure("EnergyError", error);
+        }
+        if let Some(depth) = self.last_report.tree_depth {
+            context.measure("TreeDepth", f64::from(depth));
+            context.measure(
+                "MaxTreeDepthReached",
+                if self.last_report.max_tree_depth_reached {
+                    1.0
+                } else {
+                    0.0
+                },
+            );
         }
         if let Some(scale) = self.last_report.proposal_scale {
             context.measure("ProposalScale", scale);

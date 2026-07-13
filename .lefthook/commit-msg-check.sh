@@ -26,7 +26,7 @@ esac
 
 # --- regex -----------------------------------------------------------------
 TYPES='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
-SCOPES='Carlo|QMC|CMC|carlo-rs|qmc-rs|cmc-rs|spec|task|docs|deps|release'
+SCOPES='Carlo|QMC|CMC|carlo-rs|qmc-rs|cmc-rs|mcmc-rs|spec|task|docs|deps|release'
 HEADER_RE="^(${TYPES})(\((${SCOPES})\))?(!)?: .+"
 
 fail() {
@@ -81,7 +81,7 @@ fi
 # 4. Unknown scope → warn only (forward-compatible with future scopes).
 if [ -n "$SCOPE" ]; then
     case "$SCOPE" in
-        Carlo|QMC|CMC|carlo-rs|qmc-rs|cmc-rs|spec|task|docs|deps|release) ;;
+        Carlo|QMC|CMC|carlo-rs|qmc-rs|cmc-rs|mcmc-rs|spec|task|docs|deps|release) ;;
         *) yellow "⚠ Unknown scope '$SCOPE' (allowed but unusual). Continuing." ;;
     esac
 fi

@@ -3,6 +3,7 @@ mod compose;
 mod gibbs;
 mod hmc;
 mod metropolis;
+mod nuts;
 mod slice;
 
 pub use component::ComponentWiseMetropolis;
@@ -10,6 +11,7 @@ pub use compose::{Mixture, Repeat, Then};
 pub use gibbs::{GibbsKernel, GibbsUpdate, GibbsUpdateResult};
 pub use hmc::StaticHmc;
 pub use metropolis::RandomWalkMetropolis;
+pub use nuts::Nuts;
 pub use slice::SliceSampler;
 
 use rand::Rng;
@@ -23,14 +25,23 @@ use crate::{EuclideanState, McmcError, SamplingPhase};
 pub struct TransitionReport {
     pub accepted: Option<bool>,
     pub log_acceptance_probability: Option<f64>,
+    /// Mean Metropolis acceptance statistic used for Hamiltonian adaptation.
+    #[serde(default)]
+    pub acceptance_statistic: Option<f64>,
     pub proposals: u32,
     pub acceptances: u32,
     pub target_evaluations: u32,
     pub gradient_evaluations: u32,
     pub divergent: bool,
+    /// Hamiltonian energy associated with this iteration, when available.
+    #[serde(default)]
+    pub energy: Option<f64>,
     pub energy_error: Option<f64>,
     pub leapfrog_steps: u32,
     pub tree_depth: Option<u16>,
+    /// Whether a dynamic Hamiltonian trajectory exhausted its depth limit.
+    #[serde(default)]
+    pub max_tree_depth_reached: bool,
     pub proposal_scale: Option<f64>,
     /// Number of elementary kernel transitions represented by this report.
     #[serde(default)]
@@ -53,8 +64,15 @@ impl TransitionReport {
         }
 
         let previous_subtransitions = self.subtransitions.max(1);
+        let other_subtransitions = other.subtransitions.max(1);
         self.accepted = None;
         self.log_acceptance_probability = None;
+        self.acceptance_statistic = weighted_optional_mean(
+            self.acceptance_statistic,
+            previous_subtransitions,
+            other.acceptance_statistic,
+            other_subtransitions,
+        );
         self.proposals = self.proposals.saturating_add(other.proposals);
         self.acceptances = self.acceptances.saturating_add(other.acceptances);
         self.target_evaluations = self
@@ -64,6 +82,9 @@ impl TransitionReport {
             .gradient_evaluations
             .saturating_add(other.gradient_evaluations);
         self.divergent |= other.divergent;
+        if self.energy != other.energy {
+            self.energy = None;
+        }
         self.energy_error = worst_energy_error(self.energy_error, other.energy_error);
         self.leapfrog_steps = self.leapfrog_steps.saturating_add(other.leapfrog_steps);
         self.tree_depth = match (self.tree_depth, other.tree_depth) {
@@ -71,10 +92,11 @@ impl TransitionReport {
             (Some(value), None) | (None, Some(value)) => Some(value),
             (None, None) => None,
         };
+        self.max_tree_depth_reached |= other.max_tree_depth_reached;
         if self.proposal_scale != other.proposal_scale {
             self.proposal_scale = None;
         }
-        self.subtransitions = previous_subtransitions.saturating_add(other.subtransitions.max(1));
+        self.subtransitions = previous_subtransitions.saturating_add(other_subtransitions);
     }
 
     fn normalize_subtransitions(&mut self) {
@@ -86,6 +108,10 @@ impl TransitionReport {
             || self
                 .log_acceptance_probability
                 .is_some_and(|value| !value.is_finite() || value > 0.0)
+            || self
+                .acceptance_statistic
+                .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+            || self.energy.is_some_and(|value| !value.is_finite())
             || self.energy_error.is_some_and(|value| !value.is_finite())
             || self
                 .proposal_scale
@@ -96,6 +122,22 @@ impl TransitionReport {
             ));
         }
         Ok(())
+    }
+}
+
+fn weighted_optional_mean(
+    left: Option<f64>,
+    left_weight: u32,
+    right: Option<f64>,
+    right_weight: u32,
+) -> Option<f64> {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            let denominator = f64::from(left_weight.saturating_add(right_weight));
+            Some((left * f64::from(left_weight) + right * f64::from(right_weight)) / denominator)
+        }
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
     }
 }
 

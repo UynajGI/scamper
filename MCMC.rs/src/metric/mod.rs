@@ -32,6 +32,28 @@ pub trait Metric: Send {
 
     fn velocity(&self, momentum: &[f64], output: &mut [f64]) -> Result<(), McmcError>;
 
+    /// Compute `(right_position - left_position)^T G momentum` without
+    /// requiring the caller to allocate a velocity or displacement vector.
+    fn displacement_dot_velocity(
+        &self,
+        left_position: &[f64],
+        right_position: &[f64],
+        momentum: &[f64],
+    ) -> Result<f64, McmcError> {
+        let dimension = self.dimension();
+        check_vector(left_position, dimension)?;
+        check_vector(right_position, dimension)?;
+        check_vector(momentum, dimension)?;
+        let mut velocity = vec![0.0; dimension];
+        self.velocity(momentum, &mut velocity)?;
+        Ok(left_position
+            .iter()
+            .zip(right_position.iter())
+            .zip(velocity.iter())
+            .map(|((left, right), velocity)| (right - left) * velocity)
+            .sum())
+    }
+
     fn kinetic_energy(&self, momentum: &[f64]) -> Result<f64, McmcError>;
 
     /// Install a diagonal position-covariance estimate as the inverse mass.
@@ -94,6 +116,23 @@ impl Metric for UnitMetric {
         check_vector(output, self.dimension)?;
         output.copy_from_slice(momentum);
         Ok(())
+    }
+
+    fn displacement_dot_velocity(
+        &self,
+        left_position: &[f64],
+        right_position: &[f64],
+        momentum: &[f64],
+    ) -> Result<f64, McmcError> {
+        check_vector(left_position, self.dimension)?;
+        check_vector(right_position, self.dimension)?;
+        check_vector(momentum, self.dimension)?;
+        Ok(left_position
+            .iter()
+            .zip(right_position.iter())
+            .zip(momentum.iter())
+            .map(|((left, right), momentum)| (right - left) * momentum)
+            .sum())
     }
 
     fn kinetic_energy(&self, momentum: &[f64]) -> Result<f64, McmcError> {
@@ -159,6 +198,26 @@ impl Metric for DiagonalMetric {
             *output = inverse_mass * momentum;
         }
         Ok(())
+    }
+
+    fn displacement_dot_velocity(
+        &self,
+        left_position: &[f64],
+        right_position: &[f64],
+        momentum: &[f64],
+    ) -> Result<f64, McmcError> {
+        check_vector(left_position, self.dimension())?;
+        check_vector(right_position, self.dimension())?;
+        check_vector(momentum, self.dimension())?;
+        Ok(left_position
+            .iter()
+            .zip(right_position.iter())
+            .zip(momentum.iter())
+            .zip(self.inverse_mass.iter())
+            .map(|(((left, right), momentum), inverse_mass)| {
+                (right - left) * inverse_mass * momentum
+            })
+            .sum())
     }
 
     fn kinetic_energy(&self, momentum: &[f64]) -> Result<f64, McmcError> {
@@ -277,6 +336,27 @@ impl Metric for DenseMetric {
                 .sum();
         }
         Ok(())
+    }
+
+    fn displacement_dot_velocity(
+        &self,
+        left_position: &[f64],
+        right_position: &[f64],
+        momentum: &[f64],
+    ) -> Result<f64, McmcError> {
+        check_vector(left_position, self.dimension)?;
+        check_vector(right_position, self.dimension)?;
+        check_vector(momentum, self.dimension)?;
+        let mut product = 0.0;
+        for row in 0..self.dimension {
+            let velocity = self.inverse_mass[row * self.dimension..(row + 1) * self.dimension]
+                .iter()
+                .zip(momentum.iter())
+                .map(|(matrix, momentum)| matrix * momentum)
+                .sum::<f64>();
+            product += (right_position[row] - left_position[row]) * velocity;
+        }
+        Ok(product)
     }
 
     fn kinetic_energy(&self, momentum: &[f64]) -> Result<f64, McmcError> {

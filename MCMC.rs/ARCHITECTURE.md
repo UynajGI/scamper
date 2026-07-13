@@ -1,37 +1,33 @@
-# MCMC.rs Architecture — v0.3
+# MCMC.rs Architecture — v0.4
 
 ## Core invariants
 
-1. `ChainState.position`, cached `log_density`, and valid gradient cache describe
-   the same accepted position after every completed transition.
-2. `NEG_INFINITY` denotes outside support. Accepted states must have finite log
-   density and finite position; HMC accepted gradients must be finite.
-3. Every built-in kernel commits a proposal only after all target, geometry and
-   numerical checks succeed. A divergent HMC trajectory is rejected atomically.
-4. Adaptation is legal only in `SamplingPhase::Warmup`. Entering sampling with
-   incomplete configured HMC warmup is an error.
-5. HMC metrics store inverse mass `G = M^-1`; momentum sampling, kinetic energy
-   and velocity use one synchronized geometry.
-6. Leapfrog integration mutates private `PhasePoint` workspace, never the
-   accepted chain state.
-7. Windowed metric adaptation observes post-transition accepted positions,
-   updates geometry only at slow-window boundaries, resets dual averaging after
-   a geometry update, and retunes step size in the terminal buffer.
-8. Transform kernels operate in unconstrained coordinates. Differentiable
-   transforms provide analytic target-gradient pullback and log-Jacobian
-   gradients.
-9. Replica-exchange targets, kernels, RNGs and traces remain attached to fixed
-   ladder slots. Only accepted states move between slots.
-10. Checkpoints serialize RNG, persistent kernel/adaptation state, accepted
-    state, gradient cache and trace. Reconstructible HMC trajectory workspaces
-    are skipped and rebuilt; targets are reconstructed by the caller and
-    fingerprint-checked.
+1. `ChainState.position`, cached `log_density`, and a valid gradient cache always
+   describe the same accepted position after a completed transition.
+2. Accepted positions, log densities and gradients are finite. `NEG_INFINITY`
+   is allowed only as a target response for a proposed point outside support.
+3. Every kernel mutates private proposal/trajectory workspace first and commits
+   accepted state atomically.
+4. Adaptation is legal only in `SamplingPhase::Warmup`; production sampling
+   freezes step size and geometry.
+5. Metrics store inverse mass `G = M^-1`. Momentum sampling, kinetic energy,
+   velocity and U-turn checks all use that same geometry.
+6. Leapfrog and NUTS tree construction never mutate the accepted chain state.
+7. Reconstructible trajectory workspaces are omitted from checkpoints.
+8. One completed kernel call increments chain iteration exactly once, regardless
+   of the number of leapfrog or component substeps.
+9. Raw posterior draws and Hamiltonian diagnostics live in MCMC.rs traces;
+   Carlo.rs measurements remain scalar online summaries.
+10. Independent chains and temperature slots own independent target workspaces,
+    kernels, adaptation state, RNG streams and traces.
 
-## Hamiltonian target contract
-
-`DifferentiableLogDensity` combines value and gradient evaluation:
+## Target interfaces
 
 ```rust,ignore
+pub trait LogDensity<S: ?Sized>: Send {
+    fn log_density(&mut self, state: &S) -> f64;
+}
+
 pub trait DifferentiableLogDensity: LogDensity<[f64]> {
     fn log_density_and_gradient(
         &mut self,
@@ -41,118 +37,113 @@ pub trait DifferentiableLogDensity: LogDensity<[f64]> {
 }
 ```
 
-The combined interface avoids duplicate model evaluation at every leapfrog
-step. `StaticHmc` lazily evaluates the accepted-state gradient once and stores it
-in `EuclideanCache`. Rejected trajectories reuse that cache; accepted proposals
-commit position, log density and proposed gradient together.
+The combined differentiable interface avoids a duplicate model evaluation per
+leapfrog step and permits target-owned reusable workspaces.
 
-## Metric boundary
+## Metric abstraction
 
-`Metric` exposes four operations:
+`Metric` supplies:
 
-```text
-dimension
-sample p ~ Normal(0, M)
-velocity = G p
-kinetic energy = 0.5 pᵀ G p
-```
+- momentum sampling;
+- kinetic energy;
+- velocity `G p`;
+- a displacement–velocity dot product used by the U-turn criterion;
+- optional diagonal or dense inverse-mass updates.
 
-where `G = M^-1`. Built-ins:
+The displacement primitive has a correct default implementation for external
+metric implementations. Unit, diagonal and dense built-ins override it without
+allocating temporary velocity vectors in the NUTS tree hot path.
 
-- `UnitMetric`: identity geometry;
-- `DiagonalMetric`: positive inverse-mass diagonal;
-- `DenseMetric`: symmetric positive-definite row-major inverse mass plus cached
-  lower Cholesky factor.
+## Static HMC
 
-For dense `G = L Lᵀ`, momentum sampling solves `Lᵀ p = z`, `z ~ Normal(0, I)`,
-which gives `Cov(p) = G^-1`. Dense construction symmetrizes the supplied matrix,
-uses increasing diagonal jitter when necessary, and stores the exact matrix
-reconstructed from the accepted factor.
+`StaticHmc<M>` samples momentum, executes a fixed number of leapfrog steps,
+checks the final Hamiltonian error and performs a Metropolis correction.
+Candidate position, log density and gradient are committed together only after
+a successful acceptance decision.
 
-## Leapfrog and HMC transaction
+## NUTS
 
-One `StaticHmc` transition performs:
+`Nuts<M>` uses iterative outer doubling and recursive binary subtree building.
 
-```text
-validate accepted state
-→ obtain/copy accepted gradient
-→ sample private momentum
-→ integrate private PhasePoint for L leapfrog steps
-→ compute ΔH = H_proposed - H_current
-→ reject on invalid trajectory or |ΔH| above threshold
-→ otherwise Metropolis accept with min(1, exp(-ΔH))
-→ atomically commit position/log-density/gradient or mark rejection
-→ update warmup controller from the resulting accepted state
-```
+For each transition:
 
-`TransitionReport` records target/gradient evaluations, completed leapfrog
-steps, energy error, divergence, acceptance and the step size used by that
-trajectory.
+1. synchronize or evaluate the accepted-state gradient;
+2. sample momentum and compute the initial Hamiltonian;
+3. repeatedly choose a direction and build a subtree of depth `d`;
+4. combine valid subtree candidates with log-domain multinomial weighting;
+5. stop on a generalized U-turn, divergence or configured depth limit;
+6. atomically commit the selected candidate or mark a rejection;
+7. feed the mean trajectory acceptance statistic to warmup adaptation.
 
-## Warmup architecture
+A subtree that terminates internally because of a U-turn or divergence
+contributes evaluation and diagnostic counts, but its candidate mass is not
+merged into the outer trajectory. This preserves the valid trajectory set used
+for multinomial selection.
 
-`HmcWarmup` combines:
-
-- `DualAveraging` for step size;
-- `WarmupWindowConfig` with initial buffer, expanding slow windows and terminal
-  buffer;
-- diagonal or dense Welford covariance accumulation;
-- serialized iteration/window position for checkpoint continuation.
-
-At a slow-window boundary:
-
-1. covariance is regularized;
-2. the matching metric geometry is installed;
-3. the accumulator is reset;
-4. dual averaging restarts around the current step size.
-
-The terminal buffer contains no metric updates and only retunes the step size.
-The final production step size is the dual-averaged value.
-
-## Differentiable transform boundary
-
-`DifferentiableBijector` extends `Bijector` with:
+The generalized U-turn test evaluates both endpoint momenta against the
+endpoint displacement using metric velocity:
 
 ```text
-pullback: (d log π / dx) → (d log π / dz)
-log_jacobian_gradient: d/dz log |det(dx/dz)|
+(q_right - q_left) · G p_left  >= 0
+(q_right - q_left) · G p_right >= 0
 ```
 
-Implemented analytically for:
+Tree depth is capped at 20 internally to bound the largest possible trajectory.
+Users normally configure a lower limit such as 8–12.
 
-- identity;
-- positive exponential;
-- bounded logistic interval;
-- ordered vectors;
-- simplex stick breaking;
-- static binary products.
+## Warmup
 
-`TransformedTarget<T, B>` owns constrained value/gradient workspaces and
-implements `DifferentiableLogDensity` when both wrapped components support the
-required derivative contract.
+Static HMC and NUTS share `HmcWarmup`:
 
-## Composition and lifecycle
+- dual averaging tunes step size toward the requested acceptance statistic;
+- slow windows accumulate diagonal or dense covariance estimates;
+- geometry updates occur only at slow-window boundaries;
+- dual averaging restarts after a geometry update;
+- the terminal buffer retunes the final step size;
+- entering sampling before configured warmup completes is an error.
 
-`TransitionKernel<T>` remains the common boundary. `StaticHmc` composes with
-`Then`, `Repeat` and `Mixture` on differentiable targets. Phase hooks receive the
-target and state; HMC uses them to reject incomplete warmup and freeze the final
-step size before production.
+## Trace and diagnostics
 
-The Carlo.rs adapter records scalar HMC diagnostics without changing Carlo's
-measurement model. Raw posterior positions and per-draw divergence/energy error
-remain owned by `MemoryTrace`.
+`MemoryTrace` uses contiguous row-major position storage and parallel scalar
+columns. v0.4 adds backward-compatible serde-default columns for:
 
-## Deferred to v0.4
+- Hamiltonian energy;
+- tree depth;
+- maximum-tree-depth reached.
 
-v0.4 should add NUTS on top of the v0.3 metric, gradient cache and leapfrog
-contracts:
+When an old v0.3 JSON trace receives a new draw, missing columns are backfilled
+with `None` or `0` before append.
 
-- bidirectional tree expansion;
-- slice or multinomial trajectory sampling;
-- generalized U-turn criterion for all built-in metrics;
-- maximum tree depth and saturation diagnostics;
-- E-BFMI and trajectory-level energy storage;
-- optional reasonable-step-size search.
+Cross-chain diagnostics include:
 
-The v0.4 work should not change trace ownership, independent-chain diagnostics
-or the `TransitionKernel<T>` target boundary.
+- rank-normalized and folded split R-hat;
+- bulk and tail ESS;
+- MCSE;
+- posterior moments and quantiles;
+- divergence count and mean acceptance;
+- per-chain E-BFMI;
+- aggregate maximum-tree-depth hits.
+
+## Checkpoints
+
+A checkpoint serializes accepted state, valid gradient cache, persistent kernel
+configuration, metric/adaptation state, RNG, trace and target fingerprint.
+NUTS `PhasePoint` and integrator workspaces are serde-skipped because they are
+fully reconstructible and may contain non-finite values after a rejected
+numerical trajectory.
+
+JSON uses serde_json float round-tripping so resumed trajectories preserve
+future random decisions and floating-point state exactly.
+
+## Extension boundary
+
+v0.4 deliberately does not add:
+
+- automatic differentiation framework bindings;
+- Riemannian metrics;
+- generalized NUTS for discrete parameters;
+- dynamic trait-object kernel graphs;
+- SMC, particle MCMC or reversible-jump methods.
+
+Those can be layered over the stabilized target, metric, kernel, trace and
+checkpoint contracts without changing accepted-state invariants.

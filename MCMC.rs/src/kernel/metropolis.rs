@@ -237,6 +237,7 @@ where
             } else {
                 None
             },
+            acceptance_statistic: Some(acceptance_probability),
             proposals: 1,
             acceptances: if accepted { 1 } else { 0 },
             target_evaluations,

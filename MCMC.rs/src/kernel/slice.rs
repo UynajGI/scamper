@@ -156,6 +156,7 @@ where
         state.swap_position(&mut self.working_position, current_log_density);
         state.cache_mut().invalidate_gradient();
         report.accepted = None;
+        report.acceptance_statistic = Some(1.0);
         report.subtransitions = 1;
         Ok(report)
     }

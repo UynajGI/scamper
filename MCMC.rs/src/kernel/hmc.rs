@@ -346,14 +346,17 @@ where
         Ok(TransitionReport {
             accepted: Some(accepted),
             log_acceptance_probability,
+            acceptance_statistic: Some(acceptance_probability),
             proposals: 1,
             acceptances: if accepted { 1 } else { 0 },
             target_evaluations,
             gradient_evaluations,
             divergent,
+            energy: Some(initial_energy),
             energy_error,
             leapfrog_steps: integration.completed_steps,
             tree_depth: None,
+            max_tree_depth_reached: false,
             proposal_scale: Some(used_step_size),
             subtransitions: 1,
         })

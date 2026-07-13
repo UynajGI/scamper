@@ -29,11 +29,11 @@ pub use adaptation::{
 };
 pub use carlo_adapter::McmcSampler;
 pub use checkpoint::{ChainCheckpoint, TargetFingerprint, CHECKPOINT_FORMAT};
-pub use diagnostics::{diagnose, MultiChainDiagnostics, ParameterDiagnostics};
+pub use diagnostics::{diagnose, energy_bfmi, MultiChainDiagnostics, ParameterDiagnostics};
 pub use error::McmcError;
 pub use integrator::{IntegrationReport, LeapfrogIntegrator, PhasePoint};
 pub use kernel::{
-    ComponentWiseMetropolis, GibbsKernel, GibbsUpdate, GibbsUpdateResult, Mixture,
+    ComponentWiseMetropolis, GibbsKernel, GibbsUpdate, GibbsUpdateResult, Mixture, Nuts,
     RandomWalkMetropolis, Repeat, SliceSampler, StaticHmc, Then, TransitionKernel,
     TransitionReport,
 };

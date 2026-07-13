@@ -28,6 +28,52 @@ pub struct MultiChainDiagnostics {
     pub mean_acceptance: f64,
     pub chains: usize,
     pub draws_per_chain: usize,
+    /// Per-chain energy Bayesian fraction of missing information.
+    ///
+    /// `None` means that a chain does not contain a complete, finite energy
+    /// series or that the series has zero variance.
+    #[serde(default)]
+    pub chain_ebfmi: Vec<Option<f64>>,
+    /// Number of retained transitions that exhausted the configured NUTS
+    /// tree-depth limit.
+    #[serde(default)]
+    pub max_tree_depth_hits: u64,
+}
+
+/// Compute the energy Bayesian fraction of missing information (E-BFMI).
+///
+/// The estimate is the mean squared change in Hamiltonian energy divided by
+/// the sample variance numerator of the energy series. Missing or non-finite
+/// energies, fewer than three draws, and a constant energy series return
+/// `None`.
+pub fn energy_bfmi(energies: &[Option<f64>]) -> Option<f64> {
+    if energies.len() < 3 {
+        return None;
+    }
+    let values = energies.iter().copied().collect::<Option<Vec<_>>>()?;
+    if values.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    let denominator = values
+        .iter()
+        .map(|value| {
+            let centered = value - mean;
+            centered * centered
+        })
+        .sum::<f64>();
+    if !denominator.is_finite() || denominator <= 0.0 {
+        return None;
+    }
+    let numerator = values
+        .windows(2)
+        .map(|pair| {
+            let difference = pair[1] - pair[0];
+            difference * difference
+        })
+        .sum::<f64>();
+    let estimate = numerator / denominator;
+    estimate.is_finite().then_some(estimate)
 }
 
 /// Compute rank-normalized split R-hat, bulk/tail ESS and MCSE.
@@ -151,11 +197,23 @@ pub fn diagnose(
         finite_acceptance.iter().sum::<f64>() / finite_acceptance.len() as f64
     };
 
+    let chain_ebfmi = traces
+        .iter()
+        .map(|trace| energy_bfmi(trace.energies()))
+        .collect();
+    let max_tree_depth_hits = traces
+        .iter()
+        .flat_map(|trace| trace.max_tree_depth_reached().iter().copied())
+        .map(u64::from)
+        .sum();
+
     Ok(MultiChainDiagnostics {
         parameters,
         total_divergences,
         mean_acceptance,
         chains: traces.len(),
         draws_per_chain,
+        chain_ebfmi,
+        max_tree_depth_hits,
     })
 }

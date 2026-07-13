@@ -1,78 +1,82 @@
-# MCMC.rs v0.3 Validation Report
+# MCMC.rs v0.4 Validation Report
 
-## v0.2 review result
+## v0.3 review result
 
-The uploaded workspace contained the v0.2 kernel composition, Gibbs update,
-dense covariance, transform and replica-exchange implementation. No
-architecture-level blocker was found. The HMC-readiness gaps documented in
-`REVIEW_V02.md` were small enough to fix while proceeding directly to v0.3.
+The uploaded v0.3 implementation had no blocker requiring a separate repair
+release. Static HMC, metric geometry, windowed warmup, differentiable
+transforms, state atomicity and checkpoint boundaries were suitable foundations
+for NUTS. The detailed review is in `REVIEW_V03.md`.
 
-## v0.3 implementation checks
+## v0.4 implementation checks
 
-- Added static HMC with private trajectory workspace and atomic state commit.
-- Added unit, diagonal and dense inverse-mass metrics.
-- Added a reusable leapfrog integrator.
-- Added dual averaging and expanding fast/slow/fast warmup windows with
-  diagonal or dense metric adaptation.
-- Added accepted-state gradient synchronization and cache reuse after
-  rejection.
-- Added invalid-trajectory and absolute energy-error divergence handling.
-- Added analytic gradient pullback and log-Jacobian gradients for every v0.2
-  built-in transform.
-- Made `TransformedTarget` implement `DifferentiableLogDensity` when both the
-  constrained target and bijector are differentiable.
-- Added HMC scalar measurements to the Carlo.rs adapter.
-- Excluded reconstructible HMC trajectory workspaces from serde checkpoints so
-  non-finite divergent paths cannot poison JSON serialization.
-- Enabled serde_json `float_roundtrip` for exact f64 checkpoint continuation.
-- Added v0.3 tests for HMC moments, divergence atomicity, gradient-cache reuse,
-  warmup checkpoint trajectory equivalence, post-divergence serialization,
-  metrics, leapfrog reversibility and energy scaling, dual averaging, windowed
-  metric adaptation, incomplete warmup rejection and transformed gradients.
-- Updated package and lockfile `mcmc-rs` version to `0.3.0`.
+- Added multinomial `Nuts<M>` for unit, diagonal and dense metrics.
+- Added signed leapfrog integration for bidirectional trajectories.
+- Added a metric-aware, allocation-free built-in U-turn hot path.
+- Added maximum tree-depth and energy-error stopping.
+- Kept all trajectory construction in private workspace and committed state
+  atomically.
+- Reused dual averaging and windowed diagonal/dense metric adaptation.
+- Added transition acceptance statistic, Hamiltonian energy and depth-limit
+  reporting.
+- Extended `MemoryTrace`, Carlo measurements and multi-chain diagnostics.
+- Added per-chain E-BFMI.
+- Added backward-compatible serde defaults for new report, trace and diagnostic
+  fields.
+- Verified NUTS warmup checkpoint continuation step by step.
+- Verified that divergent workspaces remain JSON-serializable because they are
+  reconstructible and skipped.
+
+During statistical testing, an early implementation incorrectly merged a
+candidate from a subtree that had already terminated internally on a U-turn.
+That produced an inflated standard-normal variance near 1.24. The subtree merge
+rule was corrected so terminated subtree diagnostics remain counted but its
+candidate mass is excluded from the outer multinomial pool. A 30,000-draw
+independent numerical check then produced variance approximately 1.002.
 
 ## Actual Rust validation
 
-Validation used Rust 1.90.0. The following commands completed successfully:
+The implementation workspace was validated with Rust 1.90.0:
 
 ```bash
 cargo fmt --all --check
 cargo check -p mcmc-rs --all-targets
-cargo clippy -p mcmc-rs --all-targets
+cargo clippy -p mcmc-rs --all-targets -- -D warnings
 cargo test -p mcmc-rs
+cargo check --workspace --all-targets
 ```
 
-The default-feature test run completed with **41 passed, 0 failed**. This
-includes all retained v0.1/v0.2 tests, the new v0.3 tests and exact checkpoint
-continuation tests.
+Results:
 
-## Structural and numerical validation
+- MCMC.rs: **51 passed, 0 failed**;
+- strict Clippy: passed;
+- default-feature workspace check for Carlo.rs, CMC.rs, QMC.rs and MCMC.rs:
+  passed.
 
-- Parsed all 211 Rust source files in the workspace with the tree-sitter Rust
-  grammar: no syntax-error nodes.
-- Resolved every `mod name;` declaration in MCMC.rs to a source file/module.
-- Checked Rust struct declarations for duplicate field names: none found.
-- Checked the workspace still includes `MCMC.rs` and Carlo.rs still exposes
-  `Run::from_parts` / `Run::finalize_with_mc`.
-- Dense Cholesky reconstruction maximum error: approximately `4.44e-16`.
-- Dense metric velocity/kinetic-energy reference check passed.
-- Empirical dense-momentum covariance maximum error: approximately `1.96e-3`.
-- Leapfrog reversibility error: approximately `5.55e-17`.
-- Simplex transformed-gradient finite-difference maximum error: approximately
-  `2.58e-10`.
-- Independent fixed-HMC standard-normal run produced mean approximately
-  `0.00895` and variance approximately `1.0033`.
+The suite covers all v0.1–v0.3 regressions plus:
+
+- standard-normal NUTS moments;
+- depth-limit reporting;
+- divergence atomicity and post-divergence serialization;
+- warmup checkpoint trajectory equivalence;
+- metric displacement–velocity algebra;
+- E-BFMI edge cases;
+- dynamic-HMC trace columns and old JSON trace extension.
 
 ## Optional HDF5 feature
-
-The command below did not reach MCMC.rs source compilation:
 
 ```bash
 cargo check -p mcmc-rs --all-targets --features hdf5
 ```
 
-`hdf5-sys 0.8.1` rejected the installed HDF5 `1.14.5` header because that
-crate version's build-time parser recognizes the 1.8/1.10/1.12 version lines.
-Therefore the default feature set is fully validated, while the optional HDF5
-feature remains unverified in this environment due to dependency/system-library
-compatibility.
+did not reach MCMC.rs source compilation in the validation environment.
+`hdf5-sys 0.8.1` rejected the installed HDF5 1.14.5 header with
+`Invalid H5_VERSION: "1.14.5"`. Default-feature validation is unaffected.
+
+## Final archive checks
+
+The final workspace archive is required to:
+
+- contain `MCMC.rs/src/kernel/nuts.rs`, v0.4 tests and documentation;
+- declare `mcmc-rs` version 0.4.0 in both `Cargo.toml` and `Cargo.lock`;
+- exclude build caches, registries and authentication configuration;
+- pass ZIP CRC/integrity verification after creation.

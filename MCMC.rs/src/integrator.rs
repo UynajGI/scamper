@@ -85,9 +85,10 @@ impl LeapfrogIntegrator {
                 actual: self.velocity.len(),
             });
         }
-        if !step_size.is_finite() || step_size <= 0.0 || steps == 0 {
+        if !step_size.is_finite() || step_size == 0.0 || steps == 0 {
             return Err(McmcError::InvalidConfig(
-                "leapfrog step size and step count must be positive".to_string(),
+                "leapfrog step size must be finite and nonzero, and step count must be positive"
+                    .to_string(),
             ));
         }
         if point.position.iter().any(|value| !value.is_finite())

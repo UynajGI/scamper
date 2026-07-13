@@ -89,3 +89,39 @@ fn smaller_leapfrog_steps_reduce_energy_error() {
         "fine={fine_error}, coarse={coarse_error}"
     );
 }
+
+#[test]
+fn displacement_velocity_dot_matches_explicit_velocity() {
+    let left = [-0.5, 0.25];
+    let right = [1.0, -0.75];
+    let momentum = [0.4, -1.2];
+
+    assert_displacement_dot(&UnitMetric::new(2).unwrap(), &left, &right, &momentum);
+    assert_displacement_dot(
+        &DiagonalMetric::new(vec![2.0, 0.5]).unwrap(),
+        &left,
+        &right,
+        &momentum,
+    );
+    assert_displacement_dot(
+        &DenseMetric::from_inverse_mass(2, &[2.0, 0.5, 0.5, 1.0], 1.0e-12).unwrap(),
+        &left,
+        &right,
+        &momentum,
+    );
+}
+
+fn assert_displacement_dot<M: Metric>(metric: &M, left: &[f64], right: &[f64], momentum: &[f64]) {
+    let mut velocity = vec![0.0; momentum.len()];
+    metric.velocity(momentum, &mut velocity).unwrap();
+    let explicit = left
+        .iter()
+        .zip(right.iter())
+        .zip(velocity.iter())
+        .map(|((left, right), velocity)| (right - left) * velocity)
+        .sum::<f64>();
+    let direct = metric
+        .displacement_dot_velocity(left, right, momentum)
+        .unwrap();
+    assert!((direct - explicit).abs() < 1.0e-12);
+}
