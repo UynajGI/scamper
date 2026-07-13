@@ -5,13 +5,44 @@ use std::collections::HashMap;
 use super::bath::{Bath, KernelDirection};
 use super::error::SpinBosonError;
 use super::scattering::{ScatteringPolicy, ScatteringTable};
-use super::vertex::{Spin, VertexKind};
+use super::vertex::{Spin, VertexKind, LEGS_PER_VERTEX};
+
+/// Normalization convention for rotating- and counter-rotating amplitudes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CouplingNormalization {
+    /// `r = 1`, `c = crw_ratio`.
+    #[default]
+    FixedRw,
+    /// `r + c = 1`.
+    FixedTotal,
+    /// `r^2 + c^2 = 1`.
+    FixedQuadratic,
+}
+
+impl CouplingNormalization {
+    /// Dimensionless amplitudes in `rho = g (r sigma_- + c sigma_+)`.
+    pub fn amplitudes(self, crw_ratio: f64) -> (f64, f64) {
+        match self {
+            Self::FixedRw => (1.0, crw_ratio),
+            Self::FixedTotal => {
+                let denominator = 1.0 + crw_ratio;
+                (1.0 / denominator, crw_ratio / denominator)
+            }
+            Self::FixedQuadratic => {
+                let denominator = (1.0 + crw_ratio * crw_ratio).sqrt();
+                (1.0 / denominator, crw_ratio / denominator)
+            }
+        }
+    }
+}
 
 /// Supported impurity Hamiltonian families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpinBosonModelKind {
     /// Rotating-wave coupling `a^dagger S_- + S_+ a`.
     JaynesCummings,
+    /// Directed rotating/counter-rotating spin-boson coupling.
+    RwCrw,
     /// U(1)-symmetric coordinate coupling with `lambda_x = lambda_y`.
     Xxz,
     /// Fully anisotropic coordinate coupling.
@@ -58,10 +89,30 @@ impl InteractionChannel {
                 "an interaction channel needs at least one vertex kind",
             ));
         }
+
+        let mut pattern_lookup: HashMap<[Spin; LEGS_PER_VERTEX], usize> = HashMap::new();
         let mut diagonal_lookup = HashMap::new();
         for (kind_id, kind) in kinds.iter().enumerate() {
+            if let Some(previous) = pattern_lookup.insert(*kind.legs(), kind_id) {
+                return Err(SpinBosonError::parameter(
+                    "vertex catalog",
+                    format!(
+                        "duplicate leg pattern for kinds {previous} and {kind_id}: {:?}",
+                        kind.legs()
+                    ),
+                ));
+            }
             if kind.is_diagonal() {
-                diagonal_lookup.insert((kind.spin(0), kind.spin(2)), kind_id);
+                let key = (kind.spin(0), kind.spin(2));
+                if let Some(previous) = diagonal_lookup.insert(key, kind_id) {
+                    return Err(SpinBosonError::parameter(
+                        "vertex catalog",
+                        format!(
+                            "duplicate diagonal seed for ({},{}): kinds {previous} and {kind_id}",
+                            key.0, key.1
+                        ),
+                    ));
+                }
             }
         }
         for spin_a in [-1, 1] {
@@ -74,7 +125,7 @@ impl InteractionChannel {
                 }
             }
         }
-        let scattering = ScatteringTable::build(&kinds, scattering_policy);
+        let scattering = ScatteringTable::build(&kinds, scattering_policy)?;
         Ok(Self {
             name: name.into(),
             bath,
@@ -175,9 +226,40 @@ impl SpinBosonModel {
         })
     }
 
+    /// Directed rotating/counter-rotating spin-boson model.
+    ///
+    /// The retarded operator is `rho^dagger(tau_a) rho(tau_b)` with
+    /// `rho = g (r sigma_- + c sigma_+)`. `vertex_scale` is the integrated bath
+    /// activity, for example `2 alpha omega_c / s` for a sharp-cutoff power law
+    /// or `g^2 / omega_0` for one oscillator. The diagonal vertex is
+    /// `C + tunnelling (q_a + q_b) / 4` in the sampled spin basis.
+    pub fn rw_crw(
+        bath: Bath,
+        vertex_scale: f64,
+        crw_ratio: f64,
+        tunnelling: f64,
+        normalization: CouplingNormalization,
+        constant: Option<f64>,
+    ) -> Result<Self, SpinBosonError> {
+        validate_nonnegative("vertex_scale", vertex_scale)?;
+        validate_nonnegative("crw_ratio", crw_ratio)?;
+        if !tunnelling.is_finite() {
+            return Err(SpinBosonError::parameter("tunnelling", "must be finite"));
+        }
+        let kinds =
+            build_rw_crw_catalog(vertex_scale, crw_ratio, tunnelling, normalization, constant)?;
+        let interaction =
+            InteractionChannel::new("rw_crw", bath, KernelDirection::Directed, kinds)?;
+        Ok(Self {
+            kind: SpinBosonModelKind::RwCrw,
+            name: "RwCrwSpinBoson".into(),
+            interactions: vec![interaction],
+        })
+    }
+
     /// U(1)-symmetric XXZ spin-boson model.
     ///
-    /// `lambda_xy` and `lambda_z` are the normalized retarded couplings.  For
+    /// `lambda_xy` and `lambda_z` are the normalized retarded couplings. For
     /// Weber's power law they are `2 alpha_l omega_c / s`; for one coordinate
     /// mode they are `g_l^2 / omega_0`.
     pub fn xxz(
@@ -206,7 +288,7 @@ impl SpinBosonModel {
 
     /// Fully anisotropic XYZ coordinate-coupled spin-boson model.
     ///
-    /// The pair-flip coefficient is sampled with its absolute value.  If
+    /// The pair-flip coefficient is sampled with its absolute value. If
     /// `lambda_x < lambda_y`, a global `z`-axis phase rotation exchanges the
     /// sign; closed partition-function configurations contain pair vertices in
     /// parity-compatible combinations, so the sign-free catalog is unchanged.
@@ -282,7 +364,7 @@ impl SpinBosonModel {
     }
 }
 
-type OffDiagonalSpec<'a> = (&'a str, [Spin; 4], f64);
+type OffDiagonalSpec<'a> = (&'a str, [Spin; LEGS_PER_VERTEX], f64);
 
 fn build_catalog(
     lambda_z: f64,
@@ -335,6 +417,59 @@ fn build_catalog(
     Ok(kinds)
 }
 
+fn build_rw_crw_catalog(
+    vertex_scale: f64,
+    crw_ratio: f64,
+    tunnelling: f64,
+    normalization: CouplingNormalization,
+    constant: Option<f64>,
+) -> Result<Vec<VertexKind>, SpinBosonError> {
+    let diagonal_constant =
+        constant.unwrap_or_else(|| 0.5 * tunnelling.abs() + 16.0 * f64::EPSILON);
+    if !diagonal_constant.is_finite() {
+        return Err(SpinBosonError::parameter("C", "must be finite"));
+    }
+
+    let mut kinds = Vec::with_capacity(8);
+    for spin_a in [-1, 1] {
+        for spin_b in [-1, 1] {
+            let weight = diagonal_constant + 0.25 * tunnelling * f64::from(spin_a + spin_b);
+            kinds.push(VertexKind::new(
+                format!("diag_{spin_a:+}_{spin_b:+}"),
+                [spin_a, spin_a, spin_b, spin_b],
+                weight,
+                true,
+            )?);
+        }
+    }
+
+    let (rotating, counter_rotating) = normalization.amplitudes(crw_ratio);
+    for spin_a in [-1, 1] {
+        for spin_b in [-1, 1] {
+            let amplitude_a = if spin_a == 1 {
+                rotating
+            } else {
+                counter_rotating
+            };
+            let amplitude_b = if spin_b == -1 {
+                rotating
+            } else {
+                counter_rotating
+            };
+            let weight = vertex_scale * amplitude_a * amplitude_b;
+            if weight > 0.0 {
+                kinds.push(VertexKind::new(
+                    format!("rw_crw_{spin_a:+}_{spin_b:+}"),
+                    [spin_a, -spin_a, spin_b, -spin_b],
+                    weight,
+                    false,
+                )?);
+            }
+        }
+    }
+    Ok(kinds)
+}
+
 fn validate_nonnegative(field: &str, value: f64) -> Result<(), SpinBosonError> {
     if !value.is_finite() || value < 0.0 {
         return Err(SpinBosonError::parameter(
@@ -354,6 +489,15 @@ mod tests {
         Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"))
     }
 
+    fn kind_weight(model: &SpinBosonModel, legs: [Spin; LEGS_PER_VERTEX]) -> Option<f64> {
+        model
+            .interaction(0)
+            .kinds()
+            .iter()
+            .find(|kind| kind.legs() == &legs)
+            .map(VertexKind::weight)
+    }
+
     #[test]
     fn custom_model_accepts_positive_channels() {
         let kinds = build_catalog(0.0, 0.0, None, &[]).expect("catalog");
@@ -366,6 +510,15 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_vertex_patterns_are_rejected() {
+        let kinds = vec![
+            VertexKind::new("first", [1, 1, 1, 1], 1.0, true).expect("kind"),
+            VertexKind::new("second", [1, 1, 1, 1], 2.0, true).expect("kind"),
+        ];
+        assert!(InteractionChannel::new("bad", mode(), KernelDirection::Directed, kinds).is_err());
+    }
+
+    #[test]
     fn jc_has_one_flip_kind() {
         let model = SpinBosonModel::jaynes_cummings(mode(), 0.4, 0.2, None).expect("model");
         let offdiag = model
@@ -374,6 +527,70 @@ mod tests {
             .iter()
             .filter(|kind| !kind.is_diagonal());
         assert_eq!(offdiag.count(), 1);
+    }
+
+    #[test]
+    fn pure_rw_catalog_selects_only_the_rotating_channel() {
+        let model =
+            SpinBosonModel::rw_crw(mode(), 0.4, 0.0, 0.1, CouplingNormalization::FixedRw, None)
+                .expect("model");
+        let offdiagonal: Vec<_> = model
+            .interaction(0)
+            .kinds()
+            .iter()
+            .filter(|kind| !kind.is_diagonal())
+            .collect();
+        assert_eq!(offdiagonal.len(), 1);
+        assert_eq!(offdiagonal[0].legs(), &[1, -1, -1, 1]);
+        assert!((offdiagonal[0].weight() - 0.4).abs() < 1.0e-14);
+        assert_eq!(model.interaction(0).direction(), KernelDirection::Directed);
+    }
+
+    #[test]
+    fn rw_crw_weights_match_reference_formula() {
+        let scale = 0.7;
+        let ratio = 0.2;
+        let model = SpinBosonModel::rw_crw(
+            mode(),
+            scale,
+            ratio,
+            0.0,
+            CouplingNormalization::FixedRw,
+            Some(0.5),
+        )
+        .expect("model");
+        for spin_a in [-1, 1] {
+            for spin_b in [-1, 1] {
+                let first = if spin_a == 1 { 1.0 } else { ratio };
+                let second = if spin_b == -1 { 1.0 } else { ratio };
+                let expected = scale * first * second;
+                let legs = [spin_a, -spin_a, spin_b, -spin_b];
+                let actual = kind_weight(&model, legs).expect("off-diagonal kind");
+                assert!((actual - expected).abs() < 1.0e-14);
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_total_diagonal_point_matches_rotated_rabi_catalog() {
+        let scale = 0.8;
+        let tunnelling = 0.15;
+        let constant = Some(0.6);
+        let rw_crw = SpinBosonModel::rw_crw(
+            mode(),
+            scale,
+            1.0,
+            tunnelling,
+            CouplingNormalization::FixedTotal,
+            constant,
+        )
+        .expect("RW-CRW model");
+        let rabi = SpinBosonModel::rotated_spin_boson(mode(), scale, tunnelling, constant)
+            .expect("Rabi model");
+        for kind in rw_crw.interaction(0).kinds() {
+            let matching = kind_weight(&rabi, *kind.legs()).expect("matching Rabi kind");
+            assert!((matching - kind.weight()).abs() < 1.0e-14);
+        }
     }
 
     #[test]

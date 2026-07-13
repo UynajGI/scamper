@@ -13,7 +13,8 @@ fn run_model(model: &str) -> carlo_rs::Results {
     params.set("g_y", 0.20);
     params.set("g_z", 0.10);
     params.set("h_z", 0.2);
-    params.set("delta", 0.2);
+    params.set("crw_ratio", 0.2);
+    params.set("tunnelling", 0.2);
     params.set("validate_each_sweep", true);
     let run = RunConfig {
         thermalization_sweeps: 300,
@@ -27,13 +28,14 @@ fn run_model(model: &str) -> carlo_rs::Results {
 
 #[test]
 fn all_impurity_catalogs_run_through_carlo() {
-    for model in ["jc", "xxz", "xyz", "rabi"] {
+    for model in ["jc", "rw_crw", "xxz", "xyz", "rabi"] {
         let results = run_model(model);
         let order = results
             .get("ExpansionOrder")
             .unwrap_or_else(|| panic!("missing ExpansionOrder for {model}"));
         assert!(order.mean >= 0.0);
         assert!(results.get("WormholeFraction").is_some());
+        assert!(results.get("LoopAbortFraction").is_some());
     }
 }
 

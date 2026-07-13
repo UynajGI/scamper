@@ -47,7 +47,7 @@ impl Ord for EventKey {
 }
 
 /// Doubly-linked list pointers for one endpoint.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct EndpointLinks {
     prev: EndpointId,
     next: EndpointId,
@@ -55,7 +55,7 @@ struct EndpointLinks {
 }
 
 /// A vertex with persistent linked-list and index metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct LinkedVertex {
     vertex: Vertex,
     endpoints: [EndpointLinks; 2],
@@ -67,7 +67,7 @@ struct LinkedVertex {
 
 /// Sampled continuous-time retarded-vertex expansion with persistent worldline
 /// links.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WormholeConfiguration {
     beta: f64,
 
@@ -147,6 +147,20 @@ impl WormholeConfiguration {
     /// Change the empty-sector spin.
     pub(crate) fn set_empty_spin(&mut self, spin: Spin) {
         self.empty_spin = spin;
+    }
+
+    /// Synchronize the stored zero-order spin with the worldline segment at
+    /// `tau = 0`. Directed loops can change this trace sector even though
+    /// vertex times and links remain fixed.
+    pub(crate) fn sync_empty_spin_from_worldline(
+        &mut self,
+        model: &SpinBosonModel,
+    ) -> Result<(), SpinBosonError> {
+        if let Some(first) = self.first_endpoint {
+            let spin = self.endpoint_incoming_spin(first, model)?;
+            self.empty_spin = spin;
+        }
+        Ok(())
     }
 
     /// Expansion order (number of active vertices).
@@ -406,6 +420,53 @@ impl WormholeConfiguration {
         Ok(LegId::from_local(vertex_id, local_leg))
     }
 
+    /// Map a uniformly sampled imaginary time to a directed-loop start leg.
+    ///
+    /// Forward propagation enters the incoming leg of the next endpoint.
+    /// Backward propagation enters the outgoing leg of the previous endpoint.
+    /// Vertex times are unchanged by a loop, so this proposal is symmetric
+    /// between a loop and its reverse.
+    pub fn start_leg_at_time(&self, tau: f64, forward: bool) -> Result<LegId, SpinBosonError> {
+        if self.time_order.is_empty() {
+            return Err(SpinBosonError::InvalidConfiguration(
+                "cannot start a directed loop from an empty configuration".into(),
+            ));
+        }
+        let key = EventKey {
+            time: tau.rem_euclid(self.beta),
+            tie_breaker: 0,
+        };
+        if forward {
+            let endpoint = self
+                .time_order
+                .range(key..)
+                .next()
+                .map(|(_, &endpoint)| endpoint)
+                .unwrap_or_else(|| self.first_endpoint.expect("non-empty time index"));
+            Ok(LegId {
+                endpoint,
+                side: LegSide::Incoming,
+            })
+        } else {
+            let endpoint = self
+                .time_order
+                .range(..key)
+                .next_back()
+                .map(|(_, &endpoint)| endpoint)
+                .unwrap_or_else(|| {
+                    self.time_order
+                        .values()
+                        .next_back()
+                        .copied()
+                        .expect("non-empty time index")
+                });
+            Ok(LegId {
+                endpoint,
+                side: LegSide::Outgoing,
+            })
+        }
+    }
+
     /// Random diagonal vertex for removal.
     pub fn random_diagonal_vertex<R: Rng + ?Sized>(
         &self,
@@ -533,9 +594,15 @@ impl WormholeConfiguration {
             prev_key = cur_key;
         }
 
-        // 6. Worldline spin continuity.
+        // 6. Worldline spin continuity and the stored tau=0 trace sector.
         let first_incoming = self.endpoint_incoming_spin(first, model)?;
-        let mut propagated = first_incoming;
+        if first_incoming != self.empty_spin {
+            return Err(SpinBosonError::InvalidConfiguration(format!(
+                "stored empty spin {} differs from the tau=0 worldline spin {first_incoming}",
+                self.empty_spin
+            )));
+        }
+        let mut propagated = self.empty_spin;
         let mut ep = first;
         for _ in 0..2 * n {
             let (incoming, outgoing) = self.endpoint_spins(ep, model)?;
@@ -548,7 +615,7 @@ impl WormholeConfiguration {
             let links = self.endpoint_links(ep)?;
             ep = links.next;
         }
-        if propagated != first_incoming {
+        if propagated != self.empty_spin {
             return Err(SpinBosonError::InvalidConfiguration(
                 "worldline is not periodic".into(),
             ));
@@ -1076,6 +1143,39 @@ mod tests {
     }
 
     #[test]
+    fn sync_empty_spin_tracks_the_tau_zero_worldline_sector() {
+        let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
+        let model = SpinBosonModel::xxz(bath, 0.4, 0.0, 0.0, Some(0.2)).expect("model");
+        let offdiagonal_kind = model
+            .interaction(0)
+            .kinds()
+            .iter()
+            .position(|kind| kind.legs() == &[1, -1, -1, 1])
+            .expect("exchange vertex");
+        let mut configuration = WormholeConfiguration::new(1.0, -1).expect("configuration");
+        configuration
+            .insert_vertex(
+                Vertex {
+                    tau_a: 0.25,
+                    tau_b: 0.75,
+                    omega: 1.0,
+                    interaction: 0,
+                    kind: offdiagonal_kind,
+                },
+                &model,
+            )
+            .expect("insert exchange vertex");
+        assert!(configuration.validate(&model).is_err());
+        configuration
+            .sync_empty_spin_from_worldline(&model)
+            .expect("synchronize trace sector");
+        configuration
+            .validate(&model)
+            .expect("valid synchronized worldline");
+        assert_eq!(configuration.empty_spin(), 1);
+    }
+
+    #[test]
     fn insert_and_remove_single_diagonal() {
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
         let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
@@ -1105,7 +1205,7 @@ mod tests {
     fn two_vertices_with_different_spins() {
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
         let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
-        let mut configuration = WormholeConfiguration::new(8.0, 1).expect("configuration");
+        let mut configuration = WormholeConfiguration::new(8.0, -1).expect("configuration");
 
         let interaction = model.interaction(0);
 

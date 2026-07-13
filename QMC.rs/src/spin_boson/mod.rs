@@ -12,6 +12,7 @@
 //! # Included model catalogs
 //!
 //! - Jaynes-Cummings (directed `S_+ D S_-` vertex)
+//! - directed rotating/counter-rotating (RW-CRW) spin-boson
 //! - U(1)-symmetric XXZ spin-boson
 //! - fully anisotropic XYZ spin-boson
 //! - original spin-boson / single-mode Rabi after a spin-axis rotation
@@ -40,14 +41,14 @@ pub use bath::{Bath, BathSample, KernelDirection, PowerLawBath, SingleModeBath, 
 pub use configuration::WormholeConfiguration;
 pub use error::SpinBosonError;
 pub use mc::SpinBosonQmc;
-pub use model::{InteractionChannel, SpinBosonModel, SpinBosonModelKind};
+pub use model::{CouplingNormalization, InteractionChannel, SpinBosonModel, SpinBosonModelKind};
 pub use observables::{
     correlation_sigma_z, integrated_sigma_z, measure_observables, SpinBosonObservables,
 };
 pub use scattering::{
     kind_after_flips, ScatteringChoice, ScatteringDiagnostics, ScatteringPolicy, ScatteringTable,
 };
-pub use updates::{WormholeEngine, WormholeUpdateStats};
+pub use updates::{LoopStartPolicy, WormholeEngine, WormholeUpdateStats};
 pub use vertex::{
     EndpointId, Event, LegId, LegSide, Spin, Vertex, VertexId, VertexKind, A_IN, A_OUT, B_IN, B_OUT,
 };

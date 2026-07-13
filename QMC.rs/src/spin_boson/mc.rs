@@ -8,9 +8,9 @@ use crate::algorithm::{QmcKernel, UpdateSchedule};
 use super::bath::{Bath, PowerLawBath, SingleModeBath, TabulatedBath};
 use super::configuration::WormholeConfiguration;
 use super::error::SpinBosonError;
-use super::model::SpinBosonModel;
+use super::model::{CouplingNormalization, SpinBosonModel};
 use super::observables::measure_observables;
-use super::updates::WormholeEngine;
+use super::updates::{LoopStartPolicy, WormholeEngine};
 
 /// Runnable single-impurity spin-boson QMC simulation.
 ///
@@ -128,6 +128,7 @@ impl MonteCarlo for SpinBosonQmc {
         ctx.measure("MeanLoopSteps", stats.mean_loop_steps());
         ctx.measure("BounceFraction", stats.bounce_fraction());
         ctx.measure("WormholeFraction", stats.wormhole_fraction());
+        ctx.measure("LoopAbortFraction", stats.loop_abort_fraction());
     }
 
     fn name(&self) -> &'static str {
@@ -152,6 +153,27 @@ impl FromParams for SpinBosonQmc {
                 let lambda = effective_coupling(params, &bath, "lambda", "g", "alpha")?;
                 SpinBosonModel::jaynes_cummings(bath, lambda, h_z, constant)
             }
+            "rw_crw" | "rw-crw" | "weber" => {
+                let vertex_scale = effective_rw_crw_scale(params, &bath)?;
+                let crw_ratio = params
+                    .get::<f64>("crw_ratio")
+                    .or_else(|| params.get::<f64>("delta"))
+                    .unwrap_or(0.0);
+                let tunnelling = params
+                    .get::<f64>("tunnelling")
+                    .or_else(|| params.get::<f64>("h_x"))
+                    .unwrap_or(0.0);
+                let normalization = coupling_normalization_from_params(params)?;
+                let rw_crw_constant = rw_crw_constant_from_params(params, tunnelling)?;
+                SpinBosonModel::rw_crw(
+                    bath,
+                    vertex_scale,
+                    crw_ratio,
+                    tunnelling,
+                    normalization,
+                    rw_crw_constant,
+                )
+            }
             "xxz" => {
                 let lambda_xy = effective_coupling(params, &bath, "lambda_xy", "g_xy", "alpha_xy")?;
                 let lambda_z = effective_coupling(params, &bath, "lambda_z", "g_z", "alpha_z")?;
@@ -166,7 +188,7 @@ impl FromParams for SpinBosonQmc {
             "spin_boson" | "spin-boson" | "rabi" | "rotated_spin_boson" => {
                 let lambda = effective_rabi_coupling(params, &bath)?;
                 let tunnelling = params
-                    .get::<f64>("delta")
+                    .get::<f64>("tunnelling")
                     .or_else(|| params.get::<f64>("h_x"))
                     .unwrap_or(h_z);
                 SpinBosonModel::rotated_spin_boson(bath, lambda, tunnelling, constant)
@@ -195,6 +217,9 @@ impl FromParams for SpinBosonQmc {
         simulation
             .engine
             .set_validate_each_sweep(params.get::<bool>("validate_each_sweep").unwrap_or(false));
+        simulation
+            .engine
+            .set_loop_start_policy(loop_start_policy_from_params(params)?);
         simulation.set_adaptive_schedule(
             params.get::<bool>("adaptive_schedule").unwrap_or(true),
             params.get::<usize>("adaptation_interval").unwrap_or(100),
@@ -239,6 +264,75 @@ fn bath_from_params(params: &Params) -> Result<Bath, SpinBosonError> {
             format!("unsupported bath `{other}`"),
         )),
     }
+}
+
+fn coupling_normalization_from_params(
+    params: &Params,
+) -> Result<CouplingNormalization, CarloError> {
+    let name = params
+        .get::<String>("coupling_normalization")
+        .unwrap_or_else(|| "fixed-rw".into())
+        .to_ascii_lowercase();
+    match name.as_str() {
+        "fixed-rw" | "fixed_rw" | "rw" => Ok(CouplingNormalization::FixedRw),
+        "fixed-total" | "fixed_total" | "total" => Ok(CouplingNormalization::FixedTotal),
+        "fixed-quadratic" | "fixed_quadratic" | "quadratic" => {
+            Ok(CouplingNormalization::FixedQuadratic)
+        }
+        other => Err(CarloError::InvalidConfig {
+            field: "coupling_normalization".into(),
+            reason: format!("unsupported normalization `{other}`"),
+        }),
+    }
+}
+
+fn rw_crw_constant_from_params(
+    params: &Params,
+    tunnelling: f64,
+) -> Result<Option<f64>, CarloError> {
+    let explicit_constant = params.get::<f64>("C");
+    let diagonal_shift = params.get::<f64>("diagonal_shift");
+    if explicit_constant.is_some() && diagonal_shift.is_some() {
+        return Err(CarloError::InvalidConfig {
+            field: "C".into(),
+            reason: "use either `C` or `diagonal_shift`, not both".into(),
+        });
+    }
+    if let Some(shift) = diagonal_shift {
+        if !shift.is_finite() || shift < 0.0 {
+            return Err(CarloError::InvalidConfig {
+                field: "diagonal_shift".into(),
+                reason: format!("must be finite and non-negative, got {shift}"),
+            });
+        }
+        return Ok(Some(0.5 * tunnelling.abs() + shift + 16.0 * f64::EPSILON));
+    }
+    Ok(explicit_constant)
+}
+
+fn loop_start_policy_from_params(params: &Params) -> Result<LoopStartPolicy, CarloError> {
+    let name = params
+        .get::<String>("loop_start")
+        .unwrap_or_else(|| "random-time".into())
+        .to_ascii_lowercase();
+    match name.as_str() {
+        "random-time" | "random_time" | "time" => Ok(LoopStartPolicy::RandomTime),
+        "random-leg" | "random_leg" | "leg" => Ok(LoopStartPolicy::RandomLeg),
+        other => Err(CarloError::InvalidConfig {
+            field: "loop_start".into(),
+            reason: format!("unsupported loop-start policy `{other}`"),
+        }),
+    }
+}
+
+fn effective_rw_crw_scale(params: &Params, bath: &Bath) -> Result<f64, CarloError> {
+    if let Some(vertex_scale) = params.get::<f64>("vertex_scale") {
+        return Ok(vertex_scale);
+    }
+    if let Some(lambda) = params.get::<f64>("lambda") {
+        return Ok(lambda);
+    }
+    effective_coupling(params, bath, "vertex_scale", "g", "alpha")
 }
 
 fn effective_rabi_coupling(params: &Params, bath: &Bath) -> Result<f64, CarloError> {
@@ -340,7 +434,7 @@ mod tests {
 
     #[test]
     fn from_params_builds_each_model() {
-        for model in ["jc", "xxz", "xyz", "rabi"] {
+        for model in ["jc", "rw_crw", "xxz", "xyz", "rabi"] {
             let mut params = Params::new();
             params.set("beta", 4.0);
             params.set("model", model);
@@ -349,10 +443,22 @@ mod tests {
             params.set("g", 0.3);
             params.set("g_xy", 0.3);
             params.set("g_x", 0.3);
+            params.set("crw_ratio", 0.2);
+            params.set("tunnelling", 0.1);
             let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(1);
             let simulation = SpinBosonQmc::from_params(&params, &mut rng);
             assert!(simulation.is_ok(), "failed to build {model}");
         }
+    }
+
+    #[test]
+    fn rw_crw_diagonal_shift_uses_the_weber_positivity_bound() {
+        let mut params = Params::new();
+        params.set("diagonal_shift", 0.2);
+        let constant = rw_crw_constant_from_params(&params, -0.6)
+            .expect("constant")
+            .expect("explicit shifted constant");
+        assert!((constant - 0.5).abs() < 1.0e-14);
     }
 
     #[test]

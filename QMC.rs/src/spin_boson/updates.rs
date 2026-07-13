@@ -11,6 +11,16 @@ use super::error::SpinBosonError;
 use super::model::SpinBosonModel;
 use super::vertex::{LegId, Vertex, VertexId};
 
+/// Proposal used to choose the first directed-loop leg.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LoopStartPolicy {
+    /// Sample imaginary time and propagation direction uniformly.
+    #[default]
+    RandomTime,
+    /// Sample one of the existing vertex legs uniformly.
+    RandomLeg,
+}
+
 /// Accumulated update diagnostics.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WormholeUpdateStats {
@@ -30,6 +40,8 @@ pub struct WormholeUpdateStats {
     pub wormholes: u64,
     /// Non-bounce exits through the same endpoint.
     pub same_endpoint_exits: u64,
+    /// Loops rolled back after reaching the safety limit.
+    pub loop_aborts: u64,
 }
 
 impl WormholeUpdateStats {
@@ -42,12 +54,13 @@ impl WormholeUpdateStats {
             / self.diagonal_proposals as f64
     }
 
-    /// Mean number of local steps per loop.
+    /// Mean number of local steps per attempted loop.
     pub fn mean_loop_steps(&self) -> f64 {
-        if self.loops == 0 {
+        let attempts = self.loops + self.loop_aborts;
+        if attempts == 0 {
             return 0.0;
         }
-        self.loop_steps as f64 / self.loops as f64
+        self.loop_steps as f64 / attempts as f64
     }
 
     /// Fraction of loop steps that bounce.
@@ -65,6 +78,15 @@ impl WormholeUpdateStats {
         }
         self.wormholes as f64 / self.loop_steps as f64
     }
+
+    /// Fraction of attempted loops that were rolled back.
+    pub fn loop_abort_fraction(&self) -> f64 {
+        let attempts = self.loops + self.loop_aborts;
+        if attempts == 0 {
+            return 0.0;
+        }
+        self.loop_aborts as f64 / attempts as f64
+    }
 }
 
 /// Generic continuous-time spin-boson update engine.
@@ -74,6 +96,7 @@ pub struct WormholeEngine {
     schedule: UpdateSchedule,
     stats: WormholeUpdateStats,
     validate_each_sweep: bool,
+    loop_start_policy: LoopStartPolicy,
 }
 
 impl WormholeEngine {
@@ -84,6 +107,7 @@ impl WormholeEngine {
             schedule,
             stats: WormholeUpdateStats::default(),
             validate_each_sweep: false,
+            loop_start_policy: LoopStartPolicy::RandomTime,
         }
     }
 
@@ -105,6 +129,16 @@ impl WormholeEngine {
     /// Enable expensive invariant checking after every sweep.
     pub fn set_validate_each_sweep(&mut self, enabled: bool) {
         self.validate_each_sweep = enabled;
+    }
+
+    /// Select the directed-loop start proposal.
+    pub fn set_loop_start_policy(&mut self, policy: LoopStartPolicy) {
+        self.loop_start_policy = policy;
+    }
+
+    /// Current directed-loop start proposal.
+    pub fn loop_start_policy(&self) -> LoopStartPolicy {
+        self.loop_start_policy
     }
 
     /// Update statistics.
@@ -201,63 +235,110 @@ impl WormholeEngine {
         }
 
         for _ in 0..self.schedule.directed_loops {
-            let start = configuration.random_leg(rng)?;
-            let mut current = start;
             let leg_count = 4 * configuration.expansion_order();
             let limit = (self.schedule.max_loop_steps_factor * leg_count).max(32);
-            let mut steps = 0_usize;
-
-            // Rollback journal: records (vertex_id, old_kind) for each kind change.
-            let mut journal: Vec<(VertexId, usize)> = Vec::new();
-
-            loop {
-                let vertex_id = current.endpoint.vertex;
-                let entrance = current.local_leg();
-
-                let vertex = configuration.vertex(vertex_id)?;
-                let interaction_id = vertex.interaction;
-                let old_kind = vertex.kind;
-
-                let choice = self
-                    .model
-                    .interaction(interaction_id)
-                    .scattering()
-                    .sample(old_kind, entrance, rng);
-
-                // Record before modifying.
-                journal.push((vertex_id, old_kind));
-                configuration.set_kind(vertex_id, choice.new_kind, &self.model)?;
-
-                let exit = LegId::from_local(vertex_id, choice.exit_leg);
-
-                self.stats.loop_steps += 1;
-                steps += 1;
-                if choice.exit_leg == entrance {
-                    self.stats.bounces += 1;
-                } else if choice.exit_leg / 2 != entrance / 2 {
-                    self.stats.wormholes += 1;
-                } else {
-                    self.stats.same_endpoint_exits += 1;
-                }
-
-                let next = configuration.linked_leg(exit)?;
-                if next == start {
-                    break;
-                }
-                current = next;
-
-                if steps > limit {
-                    // Rollback all kind changes.
-                    for (vid, old_kind) in journal.into_iter().rev() {
-                        configuration.set_kind(vid, old_kind, &self.model)?;
-                    }
-                    return Err(SpinBosonError::LoopDidNotClose { steps, limit });
-                }
-            }
-            self.stats.loops += 1;
+            self.one_directed_loop(configuration, rng, limit)?;
         }
         Ok(())
     }
+
+    fn one_directed_loop<R: Rng + ?Sized>(
+        &mut self,
+        configuration: &mut WormholeConfiguration,
+        rng: &mut R,
+        limit: usize,
+    ) -> Result<bool, SpinBosonError> {
+        let start = match self.loop_start_policy {
+            LoopStartPolicy::RandomTime => {
+                let tau = rng.random::<f64>() * configuration.beta();
+                configuration.start_leg_at_time(tau, rng.random::<bool>())?
+            }
+            LoopStartPolicy::RandomLeg => configuration.random_leg(rng)?,
+        };
+        let original_empty_spin = configuration.empty_spin();
+        let mut current = start;
+        let mut first = true;
+        let mut steps = 0_usize;
+        let mut journal: Vec<(VertexId, usize)> = Vec::new();
+
+        loop {
+            if steps >= limit {
+                rollback_kinds(configuration, &self.model, journal)?;
+                self.stats.loop_aborts += 1;
+                return Ok(false);
+            }
+
+            let vertex_id = current.endpoint.vertex;
+            let entrance = current.local_leg();
+            let vertex = configuration.vertex(vertex_id)?;
+            let interaction_id = vertex.interaction;
+            let old_kind = vertex.kind;
+            let choice = self
+                .model
+                .interaction(interaction_id)
+                .scattering()
+                .sample(old_kind, entrance, rng);
+            let bounce = choice.exit_leg == entrance;
+
+            if !bounce {
+                journal.push((vertex_id, old_kind));
+                configuration.set_kind(vertex_id, choice.new_kind, &self.model)?;
+            }
+
+            self.stats.loop_steps += 1;
+            steps += 1;
+            if bounce {
+                self.stats.bounces += 1;
+            } else if choice.exit_leg / 2 != entrance / 2 {
+                self.stats.wormholes += 1;
+            } else {
+                self.stats.same_endpoint_exits += 1;
+            }
+
+            if first && bounce {
+                self.stats.loops += 1;
+                return Ok(true);
+            }
+
+            let exit = LegId::from_local(vertex_id, choice.exit_leg);
+            let next = match configuration.linked_leg(exit) {
+                Ok(next) => next,
+                Err(error) => {
+                    rollback_kinds(configuration, &self.model, journal)?;
+                    return Err(error);
+                }
+            };
+            if next == start {
+                if let Err(error) = configuration.sync_empty_spin_from_worldline(&self.model) {
+                    rollback_kinds(configuration, &self.model, journal)?;
+                    configuration.set_empty_spin(original_empty_spin);
+                    return Err(error);
+                }
+                #[cfg(debug_assertions)]
+                if configuration.validate(&self.model).is_err() {
+                    rollback_kinds(configuration, &self.model, journal)?;
+                    configuration.set_empty_spin(original_empty_spin);
+                    self.stats.loop_aborts += 1;
+                    return Ok(false);
+                }
+                self.stats.loops += 1;
+                return Ok(true);
+            }
+            current = next;
+            first = false;
+        }
+    }
+}
+
+fn rollback_kinds(
+    configuration: &mut WormholeConfiguration,
+    model: &SpinBosonModel,
+    journal: Vec<(VertexId, usize)>,
+) -> Result<(), SpinBosonError> {
+    for (vertex, old_kind) in journal.into_iter().rev() {
+        configuration.set_kind(vertex, old_kind, model)?;
+    }
+    Ok(())
 }
 
 impl<R: Rng + ?Sized> QmcKernel<WormholeConfiguration, R> for WormholeEngine {
@@ -293,8 +374,56 @@ mod tests {
 
     use crate::spin_boson::bath::{Bath, SingleModeBath};
     use crate::spin_boson::model::SpinBosonModel;
+    use crate::spin_boson::vertex::Vertex;
 
     use super::*;
+
+    #[test]
+    fn loop_limit_abort_restores_the_configuration() {
+        let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
+        let model = SpinBosonModel::xyz(bath, 0.8, 0.2, 0.0, 0.0, Some(0.4)).expect("model");
+        let diagonal_kind = model.interaction(0).diagonal_kind(1, 1);
+        let mut baseline = WormholeConfiguration::new(2.0, 1).expect("configuration");
+        for (tau_a, tau_b) in [(0.2, 0.7), (1.1, 1.6)] {
+            baseline
+                .insert_vertex(
+                    Vertex {
+                        tau_a,
+                        tau_b,
+                        omega: 1.0,
+                        interaction: 0,
+                        kind: diagonal_kind,
+                    },
+                    &model,
+                )
+                .expect("insert vertex");
+        }
+        baseline.validate(&model).expect("valid baseline");
+
+        let mut observed_abort = false;
+        for seed in 0..512 {
+            let mut configuration = baseline.clone();
+            let mut engine = WormholeEngine::new(model.clone(), UpdateSchedule::new(0, 1, 1));
+            engine.set_loop_start_policy(LoopStartPolicy::RandomLeg);
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+            let closed = engine
+                .one_directed_loop(&mut configuration, &mut rng, 1)
+                .expect("loop attempt");
+            if !closed {
+                assert_eq!(configuration, baseline);
+                configuration
+                    .validate(&model)
+                    .expect("rollback preserves worldline");
+                assert_eq!(engine.stats().loop_aborts, 1);
+                observed_abort = true;
+                break;
+            }
+        }
+        assert!(
+            observed_abort,
+            "test seeds did not exercise the rollback path"
+        );
+    }
 
     #[test]
     fn mixed_updates_preserve_worldline() {
