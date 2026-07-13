@@ -16,6 +16,7 @@ pub struct WolffCore {
     members: Vec<usize>,
     movement: BatchSpinMove,
     patch: BatchEnergyPatch,
+    last_cluster_size: usize,
 }
 
 impl WolffCore {
@@ -30,6 +31,7 @@ impl WolffCore {
                 delta_energy: 0.0,
                 workspace: crate::core::cache::BatchEnergyWorkspace::new(),
             },
+            last_cluster_size: 0,
         }
     }
 
@@ -53,6 +55,12 @@ impl WolffCore {
     #[inline]
     fn contains(&self, site: usize) -> bool {
         self.visit_stamp[site] == self.generation
+    }
+
+    /// Number of sites in the most recently completed cluster.
+    #[inline]
+    pub const fn last_cluster_size(&self) -> usize {
+        self.last_cluster_size
     }
 
     #[inline]
@@ -107,6 +115,7 @@ impl<H: Hamiltonian + ClusterModel> Algorithm<H> for WolffCore {
             }
         }
 
+        self.last_cluster_size = self.members.len();
         self.movement.reset(spin_dim);
         for &site in &self.members {
             let transformed =

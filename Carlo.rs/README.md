@@ -27,9 +27,8 @@ rand_xoshiro = "0.8"
 Implement the `MonteCarlo` trait for your model:
 
 ```rust
-use carlo_rs::{MonteCarlo, Context, CarloError, FromParams, Params, Scheduler, RunConfig, RayonBackend};
+use carlo_rs::{accept_log_probability, MonteCarlo, Context, CarloError, FromParams, Params, Scheduler, RunConfig, RayonBackend};
 use rand_xoshiro::Xoshiro256PlusPlus;
-use rand_core::Rng;
 
 struct IsingMC {
     spins: Vec<i8>,
@@ -45,7 +44,7 @@ impl MonteCarlo for IsingMC {
             let neighbor_sum = self.spins[(i + 1) % self.spins.len()]
                 + self.spins[(i - 1 + self.spins.len()) % self.spins.len()];
             let dE = 2.0 * self.spins[i] as f64 * neighbor_sum as f64;
-            if dE < 0.0 || ctx.rng.random::<f64>() < (-dE * self.beta).exp() {
+            if accept_log_probability(-dE * self.beta, &mut ctx.rng) {
                 self.spins[i] *= -1;
             }
         }
@@ -98,6 +97,8 @@ For convergence-driven warmup, `Scheduler::run_controlled` accepts an `AdaptiveR
 | `hdf5` | HDF5 checkpoint and measurement files | `libhdf5-dev` |
 | `mpi` | MPI distributed backend | `libopenmpi-dev` |
 | `strict-repro` | Strict reproducibility mode | None |
+
+Random streams are derived from logical task/run/chain/replica/phase identities through `RngStreamKey`; see [`RNG_STREAMS.md`](RNG_STREAMS.md).
 
 ## Installation
 

@@ -1,5 +1,6 @@
 //! Diagonal insertion/removal and wormhole directed-loop updates.
 
+use carlo_rs::accept_log_probability;
 use rand::Rng;
 use rand::RngExt;
 
@@ -147,9 +148,10 @@ impl WormholeEngine {
         let kind = interaction.diagonal_kind(spin_a, spin_b);
         let weight = interaction.kind(kind).weight();
         let interaction_probability = 1.0 / self.model.interaction_count() as f64;
-        let ratio =
-            configuration.beta() * weight / ((diagonal_order + 1) as f64 * interaction_probability);
-        if rng.random::<f64>() < ratio.min(1.0) {
+        let log_acceptance = configuration.beta().ln() + weight.ln()
+            - ((diagonal_order + 1) as f64).ln()
+            - interaction_probability.ln();
+        if accept_log_probability(log_acceptance, rng) {
             configuration.insert_vertex(
                 Vertex {
                     tau_a,
@@ -176,9 +178,10 @@ impl WormholeEngine {
         let interaction = self.model.interaction(vertex.interaction);
         let weight = interaction.kind(vertex.kind).weight();
         let interaction_probability = 1.0 / self.model.interaction_count() as f64;
-        let ratio =
-            diagonal_order as f64 * interaction_probability / (configuration.beta() * weight);
-        if rng.random::<f64>() < ratio.min(1.0) {
+        let log_acceptance = (diagonal_order as f64).ln() + interaction_probability.ln()
+            - configuration.beta().ln()
+            - weight.ln();
+        if accept_log_probability(log_acceptance, rng) {
             configuration.remove_vertex(selected)?;
             self.stats.diagonal_remove_accepts += 1;
         }

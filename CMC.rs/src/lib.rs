@@ -44,10 +44,12 @@
 pub mod classical_mc;
 pub mod multi_spin;
 pub mod postprocess;
+pub mod statistics;
 
 // Hierarchical modules
 
 pub mod algorithms;
+pub mod audit;
 pub mod core;
 pub mod generalized;
 pub mod lattice;
@@ -59,6 +61,10 @@ pub mod particle;
 pub use algorithms::{
     Algorithm, ContinuousHeatBathCore, HeatBathCore, HybridCore, MetropolisCore,
     MicrocanonicalCore, SWCore, SimulationPhase, WolffCore,
+};
+pub use audit::{
+    audit_lattice_cache, audit_macrostate_bin, audit_particle_cache, automatic_cache_audit_enabled,
+    effective_cache_audit_interval, should_audit_cache, DEFAULT_CACHE_AUDIT_INTERVAL,
 };
 pub use classical_mc::{build_lattice_from_params, ClassicalMC, FromHamiltonianParams};
 pub use core::acceptance::{AcceptanceRule, MetropolisHastingsAcceptance};
@@ -106,3 +112,4 @@ pub use particle::{
     TorsionRotation, TranslateParticle, VolumeChangePatch, WeightedMove,
 };
 pub use postprocess::{binder_cumulant, specific_heat, susceptibility};
+pub use statistics::{statistical_efficiency, StatisticalEfficiency};

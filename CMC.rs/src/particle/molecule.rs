@@ -1,6 +1,7 @@
 //! Rigid-molecule topology, whole-molecule translations and plane rotations.
 
 use crate::algorithms::SimulationPhase;
+use crate::audit::{audit_particle_cache, should_audit_cache};
 use crate::core::acceptance::MetropolisHastingsAcceptance;
 use crate::core::trial::{metropolis_hastings_step, ProposedMove};
 use crate::core::visit::{SiteOrder, VisitSchedule};
@@ -489,11 +490,8 @@ impl<const D: usize, P: PairPotential> ParticleAlgorithm<D, P> for MolecularMetr
         }
 
         self.sweeps = self.sweeps.wrapping_add(1);
-        if self.energy_check_interval > 0 && self.sweeps.is_multiple_of(self.energy_check_interval)
-        {
-            system
-                .validate(potential)
-                .expect("molecular particle cache audit failed");
+        if should_audit_cache(self.sweeps, self.energy_check_interval) {
+            audit_particle_cache(system, potential).expect("molecular particle cache audit failed");
         }
     }
 

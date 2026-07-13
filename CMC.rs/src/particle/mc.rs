@@ -1,6 +1,7 @@
 //! Carlo.rs adapters for Lennard-Jones NVT, NPT and μVT simulations.
 
 use crate::algorithms::SimulationPhase;
+use crate::audit::{audit_particle_cache, should_audit_cache};
 use crate::particle::{
     CanonicalParticleKernel, CutoffTreatment, InsertDeleteParticle, LennardJones, LogVolumeScale,
     OrthorhombicCell, ParticleAlgorithm, ParticleConfiguration, ParticleError,
@@ -50,6 +51,11 @@ where
         let phase = SimulationPhase::from_run_phase(context.phase());
         self.algorithm
             .sweep_with_phase(&mut self.system, &self.potential, &mut context.rng, phase);
+        let completed_sweeps = context.sweep_count().saturating_add(1);
+        if should_audit_cache(completed_sweeps, 0) {
+            audit_particle_cache(&self.system, &self.potential)
+                .expect("automatic particle cache audit failed");
+        }
     }
 
     fn measure(&mut self, context: &mut Context<Self::Rng>) {

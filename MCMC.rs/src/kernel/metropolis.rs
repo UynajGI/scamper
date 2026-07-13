@@ -1,4 +1,5 @@
-use rand::{Rng, RngExt};
+use carlo_rs::accept_log_probability;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::adaptation::{
@@ -209,8 +210,7 @@ where
             });
         }
         let acceptance_probability = log_acceptance.min(0.0).exp();
-        let accepted = log_acceptance >= 0.0
-            || rng.random::<f64>().max(f64::MIN_POSITIVE).ln() < log_acceptance;
+        let accepted = accept_log_probability(log_acceptance, rng);
         if accepted {
             state.swap_position(&mut self.proposed_position, proposed_log_density);
             state.cache_mut().invalidate_gradient();

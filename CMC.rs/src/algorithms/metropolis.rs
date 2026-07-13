@@ -1,6 +1,7 @@
 //! Metropolis-Hastings local-update kernel.
 
 use crate::algorithms::common::{Algorithm, SimulationPhase};
+use crate::audit::{audit_lattice_cache, should_audit_cache};
 use crate::core::acceptance::MetropolisHastingsAcceptance;
 use crate::core::cache::EnergyPatch;
 use crate::core::r#move::SiteSpinMove;
@@ -50,8 +51,8 @@ impl<S> MetropolisCore<S> {
         self
     }
 
-    /// Periodically replace the cached energy with an exact recomputation.
-    /// Zero (default) disables the audit.
+    /// Periodically validate the cached energy against an exact recomputation.
+    /// Zero selects the build-mode automatic audit policy.
     pub fn with_energy_check_interval(mut self, interval: u64) -> Self {
         self.energy_check_interval = interval;
         self
@@ -99,9 +100,8 @@ where
 
         self.strategy.finish_sweep(phase.allows_adaptation());
         self.sweeps = self.sweeps.wrapping_add(1);
-        if self.energy_check_interval > 0 && self.sweeps.is_multiple_of(self.energy_check_interval)
-        {
-            system.recompute_energy(model);
+        if should_audit_cache(self.sweeps, self.energy_check_interval) {
+            audit_lattice_cache(system, model).expect("Metropolis lattice cache audit failed");
         }
     }
 

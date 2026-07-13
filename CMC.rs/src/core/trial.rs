@@ -7,7 +7,8 @@
 
 use crate::core::acceptance::AcceptanceRule;
 use crate::core::ensemble::Ensemble;
-use rand::{Rng, RngExt};
+use carlo_rs::accept_log_probability;
+use rand::Rng;
 
 /// Proposal plus the Metropolis-Hastings proposal-density correction.
 #[derive(Debug, Clone)]
@@ -87,8 +88,7 @@ where
         "trial produced NaN log acceptance"
     );
 
-    let accepted =
-        log_acceptance >= 0.0 || rng.random::<f64>().max(f64::MIN_POSITIVE).ln() < log_acceptance;
+    let accepted = accept_log_probability(log_acceptance, rng);
     if accepted {
         state.commit_trial(&proposal.movement, patch);
     }

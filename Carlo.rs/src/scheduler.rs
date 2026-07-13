@@ -38,11 +38,9 @@
 
 use std::time::Instant;
 
-use rand_core::{Rng, SeedableRng};
-
 use crate::{
     AdaptiveRunControl, Backend, CarloError, Context, FromParams, Metadata, Params, Results,
-    RunDecision, RunPhase,
+    RngPhase, RngStreamKey, RunDecision, RunPhase,
 };
 
 /// Configuration for a Monte Carlo run.
@@ -97,7 +95,9 @@ impl<B: Backend> Scheduler<B> {
         let start = Instant::now();
 
         // Initialize RNG and context
-        let rng = MC::Rng::seed_from_u64(self.config.base_seed);
+        let rng: MC::Rng = RngStreamKey::new(self.config.base_seed)
+            .with_phase(RngPhase::Initialization)
+            .seeded();
         let mut ctx =
             Context::new_with_binsize(rng, self.config.thermalization_sweeps, self.config.binsize);
 
@@ -169,7 +169,9 @@ impl<B: Backend> Scheduler<B> {
         MC: FromParams,
         C: AdaptiveRunControl<MC>,
     {
-        let rng = MC::Rng::seed_from_u64(self.config.base_seed);
+        let rng: MC::Rng = RngStreamKey::new(self.config.base_seed)
+            .with_phase(RngPhase::Initialization)
+            .seeded();
         let mut ctx =
             Context::new_with_binsize(rng, self.config.thermalization_sweeps, self.config.binsize);
         let mut mc = MC::from_params(params, &mut ctx.rng)?;
@@ -261,7 +263,9 @@ impl<B: Backend> Scheduler<B> {
         MC: FromParams,
         C: AdaptiveRunControl<MC>,
     {
-        let rng = MC::Rng::seed_from_u64(self.config.base_seed);
+        let rng: MC::Rng = RngStreamKey::new(self.config.base_seed)
+            .with_phase(RngPhase::Initialization)
+            .seeded();
         let mut ctx =
             Context::new_with_binsize(rng, self.config.thermalization_sweeps, self.config.binsize);
         let mut mc = MC::from_params(params, &mut ctx.rng)?;
@@ -345,9 +349,13 @@ impl<B: Backend> Scheduler<B> {
         let config = self.config.clone();
 
         self.backend
-            .spawn_tasks(n_tasks, config.base_seed, |task_id, rng| {
+            .spawn_tasks(n_tasks, config.base_seed, |task_id, _backend_rng| {
+                let task_seed = RngStreamKey::new(config.base_seed)
+                    .with_task(task_id as u64)
+                    .with_chain(task_id as u64)
+                    .with_phase(RngPhase::Initialization);
                 let mut ctx = Context::new_with_binsize(
-                    MC::Rng::seed_from_u64(rng.next_u64()),
+                    task_seed.seeded::<MC::Rng>(),
                     config.thermalization_sweeps,
                     config.binsize,
                 );
@@ -383,7 +391,7 @@ impl<B: Backend> Scheduler<B> {
                 result.set_metadata(Metadata {
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     timestamp: chrono::Utc::now(),
-                    base_seed: config.base_seed.wrapping_add(task_id as u64),
+                    base_seed: task_seed.seed(),
                     thermalization_sweeps: config.thermalization_sweeps,
                     measurement_sweeps: config.measurement_sweeps,
                     n_tasks,

@@ -148,8 +148,8 @@ impl ScatteringTable {
                 let mut bounce_probability = 0.0;
                 for exit in 0..LEGS_PER_VERTEX {
                     if let Some(new_kind) = kind_after_flips(kinds, kind_id, entrance, exit) {
-                        let ratio = kinds[new_kind].weight() / kind.weight();
-                        let accept = ratio.min(1.0);
+                        let log_acceptance = kinds[new_kind].weight().ln() - kind.weight().ln();
+                        let accept = log_acceptance.min(0.0).exp();
                         let probability = accept / LEGS_PER_VERTEX as f64;
                         if exit == entrance {
                             bounce_probability += probability;

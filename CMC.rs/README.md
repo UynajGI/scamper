@@ -138,6 +138,8 @@ use cmc_rs::MetropolisCore;
 let algorithm = MetropolisCore::new().with_energy_check_interval(1_000);
 ```
 
+Debug/test builds audit automatically every 1024 completed sweeps. Optimized builds can enable the same cross-kernel policy with the `cache-audit` feature. Audits detect rather than repair lattice energy drift, particle cell-list inconsistencies, and generalized-ensemble macrostate cache mismatches. See [`CACHE_AUDIT.md`](CACHE_AUDIT.md).
+
 ## Explicit Carlo.rs lifecycle
 
 `carlo_rs::Context` now carries a `RunPhase`:
@@ -197,4 +199,4 @@ impl PairInteraction for MyModel {
 
 Models with genuine multi-site/factor interactions can implement `Hamiltonian` directly and inherit the correct scratch-backed batch path.
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md), [`MIGRATION.md`](MIGRATION.md), and [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md).
+See [`ARCHITECTURE.md`](ARCHITECTURE.md), [`MIGRATION.md`](MIGRATION.md), [`CACHE_AUDIT.md`](CACHE_AUDIT.md), [`BENCHMARKS.md`](BENCHMARKS.md), and [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md).

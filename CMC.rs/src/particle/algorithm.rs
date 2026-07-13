@@ -1,6 +1,7 @@
 //! NVT Metropolis-Hastings kernel for single-particle translations.
 
 use crate::algorithms::SimulationPhase;
+use crate::audit::{audit_particle_cache, should_audit_cache};
 use crate::core::acceptance::MetropolisHastingsAcceptance;
 use crate::core::trial::metropolis_hastings_step;
 use crate::core::visit::{SiteOrder, VisitSchedule};
@@ -136,10 +137,8 @@ impl<const D: usize, P: PairPotential> ParticleAlgorithm<D, P> for ParticleMetro
         self.translation.finish_sweep(phase.allows_adaptation());
 
         self.sweeps = self.sweeps.wrapping_add(1);
-        if self.energy_check_interval > 0 && self.sweeps.is_multiple_of(self.energy_check_interval)
-        {
-            system
-                .validate(potential)
+        if should_audit_cache(self.sweeps, self.energy_check_interval) {
+            audit_particle_cache(system, potential)
                 .expect("particle energy/cell-list audit failed");
         }
     }

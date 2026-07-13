@@ -1,6 +1,7 @@
 //! Carlo.rs adapter for composing a physical model, update kernel and observables.
 
 use crate::algorithms::{Algorithm, CanonicalLatticeKernel, SimulationPhase};
+use crate::audit::{audit_lattice_cache, should_audit_cache};
 use crate::lattice::graph::{
     build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
     BondType, CsrLattice,
@@ -173,6 +174,11 @@ where
         let phase = SimulationPhase::from_run_phase(context.phase());
         self.algorithm
             .sweep_with_phase(&mut self.system, &self.model, &mut context.rng, phase);
+        let completed_sweeps = context.sweep_count().saturating_add(1);
+        if should_audit_cache(completed_sweeps, 0) {
+            audit_lattice_cache(&self.system, &self.model)
+                .expect("automatic lattice cache audit failed");
+        }
     }
 
     fn measure(&mut self, context: &mut Context<Self::Rng>) {

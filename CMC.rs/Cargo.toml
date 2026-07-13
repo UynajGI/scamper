@@ -21,8 +21,17 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "particle_bench"
 harness = false
 
+[[bench]]
+name = "generalized_bench"
+harness = false
+
+[[bench]]
+name = "performance_bench"
+harness = false
+
 [features]
 default = []
+cache-audit = []
 hdf5 = ["carlo-rs/hdf5"]
 mpi = ["carlo-rs/mpi"]
 

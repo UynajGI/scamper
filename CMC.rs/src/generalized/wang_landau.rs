@@ -6,6 +6,7 @@
 //! production run with weight `1 / g(E)`.
 
 use crate::algorithms::{Algorithm, SimulationPhase};
+use crate::audit::{audit_lattice_cache, audit_macrostate_bin, should_audit_cache};
 use crate::classical_mc::{
     build_lattice_from_params, parse_bool, parse_param, ClassicalMC, FromHamiltonianParams,
 };
@@ -13,7 +14,6 @@ use crate::core::cache::EnergyPatch;
 use crate::core::r#move::SiteSpinMove;
 use crate::core::trial::TrialEvaluator;
 use crate::core::visit::{SiteOrder, VisitSchedule};
-use crate::generalized::multicanonical::{accept_log_probability, audit_lattice_energy};
 use crate::generalized::{GeneralizedError, Histogram, LogDensityOfStates, MacrostateAxis};
 use crate::lattice::interaction::{Hamiltonian, Initializable, Proposable};
 use crate::lattice::models::IsingModel;
@@ -21,7 +21,8 @@ use crate::lattice::proposal::{ProposalStrategy, StandardStrategy};
 use crate::lattice::state::System;
 use crate::observables::{DefaultObservableSet, ObservableSet};
 use carlo_rs::{
-    AdaptiveRunControl, CarloError, Context, FromParams, MonteCarlo, Params, RunDecision, RunPhase,
+    accept_log_probability, AdaptiveRunControl, CarloError, Context, FromParams, MonteCarlo,
+    Params, RunDecision, RunPhase,
 };
 use rand::Rng;
 use serde_json::{json, Value as Json};
@@ -500,7 +501,25 @@ impl WangLandauState {
         Ok(state)
     }
 
+    pub fn validate_bin_count(&self, expected: usize) -> Result<(), GeneralizedError> {
+        if self.log_density.bins() != expected
+            || self.adaptation_histogram.bins() != expected
+            || self.production_histogram.bins() != expected
+        {
+            return Err(GeneralizedError::new(
+                "Wang-Landau DOS/histogram buffers disagree with the macrostate axis",
+            ));
+        }
+        if self.refinement_visits != self.adaptation_histogram.total() {
+            return Err(GeneralizedError::new(
+                "Wang-Landau refinement visits disagree with the adaptive histogram total",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_checkpoint_consistency(&self) -> Result<(), GeneralizedError> {
+        self.validate_bin_count(self.log_density.bins())?;
         if self.refinement_visits != self.adaptation_histogram.total() {
             return Err(GeneralizedError::new(
                 "checkpoint refinement visits do not match the adaptive histogram total",
@@ -673,6 +692,7 @@ pub struct WangLandauCore<A, S = StandardStrategy> {
     energy_check_interval: u64,
     sweeps: u64,
     out_of_range_proposals: u64,
+    last_visited_bin: Option<usize>,
 }
 
 impl<A> WangLandauCore<A, StandardStrategy>
@@ -704,6 +724,7 @@ where
             energy_check_interval: 0,
             sweeps: 0,
             out_of_range_proposals: 0,
+            last_visited_bin: None,
         })
     }
 
@@ -727,6 +748,7 @@ where
             energy_check_interval: 0,
             sweeps: 0,
             out_of_range_proposals: 0,
+            last_visited_bin: None,
         })
     }
 
@@ -776,6 +798,7 @@ where
             "energy_check_interval": self.energy_check_interval,
             "sweeps": self.sweeps,
             "out_of_range_proposals": self.out_of_range_proposals,
+            "last_visited_bin": self.last_visited_bin,
             "estimator": self.estimator.save_snapshot(),
         })
     }
@@ -808,6 +831,21 @@ where
         kernel.energy_check_interval = required_u64(snapshot, "energy_check_interval")?;
         kernel.sweeps = required_u64(snapshot, "sweeps")?;
         kernel.out_of_range_proposals = required_u64(snapshot, "out_of_range_proposals")?;
+        kernel.last_visited_bin = match snapshot.get("last_visited_bin") {
+            None => None,
+            Some(value) if value.is_null() => None,
+            Some(value) => {
+                let bin = value.as_u64().ok_or_else(|| {
+                    GeneralizedError::new("invalid Wang-Landau cached macrostate bin")
+                })? as usize;
+                if bin >= kernel.axis.bins() {
+                    return Err(GeneralizedError::new(
+                        "Wang-Landau cached macrostate bin is outside the axis",
+                    ));
+                }
+                Some(bin)
+            }
+        };
         Ok(kernel)
     }
 }
@@ -866,15 +904,22 @@ where
                 old_bin
             };
             self.estimator.record_visit(visited_bin);
+            self.last_visited_bin = Some(visited_bin);
         }
         self.strategy
             .finish_sweep(phase.allows_adaptation() && self.estimator.is_adaptive());
         self.estimator.finish_sweep();
 
         self.sweeps = self.sweeps.wrapping_add(1);
-        if self.energy_check_interval > 0 && self.sweeps.is_multiple_of(self.energy_check_interval)
-        {
-            audit_lattice_energy(system, model, "Wang-Landau cache audit failed");
+        if should_audit_cache(self.sweeps, self.energy_check_interval) {
+            audit_lattice_cache(system, model).expect("Wang-Landau cache audit failed");
+            self.estimator
+                .validate_bin_count(self.axis.bins())
+                .expect("Wang-Landau histogram/DOS cache audit failed");
+            if let Some(bin) = self.last_visited_bin {
+                audit_macrostate_bin(&self.axis, system.energy, bin)
+                    .expect("Wang-Landau macrostate cache audit failed");
+            }
         }
     }
 

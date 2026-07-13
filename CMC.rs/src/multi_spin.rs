@@ -12,9 +12,11 @@ use crate::classical_mc::{build_lattice_from_params, parse_bool, parse_param};
 use crate::lattice::interaction::Hamiltonian;
 use crate::lattice::models::IsingModel;
 use crate::lattice::state::System;
-use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible, Params};
-use rand::Rng;
-use rand::RngExt;
+use carlo_rs::{
+    accept_log_probability, CarloError, Context, FromParams, MonteCarlo,
+    ParallelTemperingCompatible, Params,
+};
+use rand::{Rng, RngExt};
 
 /// Number of replicas packed into each u64 word.
 pub const N_REPLICAS: usize = 64;
@@ -27,9 +29,9 @@ pub struct MultiSpinIsing {
     /// `packed_spins[site]` has 64 bits, one per replica.
     /// bit = 1 → spin +1, bit = 0 → spin -1.
     pub packed_spins: Vec<u64>,
-    /// Acceptance probability LUT: `accept_prob[k]` where `k` = number of
+    /// Log acceptance LUT: `log_acceptance[k]` where `k` = number of
     /// aligned neighbors (out of `z` total neighbors).
-    accept_prob: Vec<f64>,
+    log_acceptance: Vec<f64>,
     /// Coordination number (assumed uniform across sites).
     z: usize,
     /// Shared system state (spins, energy, beta, lattice).
@@ -82,19 +84,15 @@ impl MultiSpinIsing {
         // Build acceptance LUT
         let beta = system.beta;
         let j = model.coupling();
-        let mut accept_prob: Vec<f64> = vec![0.0; z + 1];
-        for (k, prob) in accept_prob.iter_mut().enumerate() {
-            let delta_e: f64 = 2.0 * j * (2.0 * k as f64 - z as f64);
-            *prob = if delta_e <= 0.0 {
-                1.0
-            } else {
-                (-beta * delta_e).exp()
-            };
+        let mut log_acceptance = vec![0.0; z + 1];
+        for (k, value) in log_acceptance.iter_mut().enumerate() {
+            let delta_e = 2.0 * j * (2.0 * k as f64 - z as f64);
+            *value = (-beta * delta_e).min(0.0);
         }
 
         Self {
             packed_spins: packed,
-            accept_prob,
+            log_acceptance,
             z,
             system,
             model,
@@ -135,7 +133,7 @@ impl MultiSpinIsing {
             let mut flip_mask: u64 = 0;
             for (r, &anti) in anti_counts.iter().enumerate() {
                 let k = z - anti as usize;
-                if rng.random::<f64>() < self.accept_prob[k] {
+                if accept_log_probability(self.log_acceptance[k], rng) {
                     flip_mask |= 1u64 << r;
                 }
             }
@@ -203,13 +201,9 @@ impl MultiSpinIsing {
         let beta = self.system.beta;
         let j = self.model.coupling();
         let z = self.z;
-        for (k, prob) in self.accept_prob.iter_mut().enumerate() {
-            let delta_e: f64 = 2.0 * j * (2.0 * k as f64 - z as f64);
-            *prob = if delta_e <= 0.0 {
-                1.0
-            } else {
-                (-beta * delta_e).exp()
-            };
+        for (k, value) in self.log_acceptance.iter_mut().enumerate() {
+            let delta_e = 2.0 * j * (2.0 * k as f64 - z as f64);
+            *value = (-beta * delta_e).min(0.0);
         }
     }
 }
@@ -438,9 +432,9 @@ mod tests {
         let model = IsingModel::new(1.0);
         let system = System::new(lattice.clone(), 1, 1.0, 1.0);
         let msi = MultiSpinIsing::new(system, model);
-        assert!((msi.accept_prob[2] - (-4.0f64).exp()).abs() < 1e-10);
-        assert!((msi.accept_prob[1] - 1.0).abs() < 1e-10);
-        assert!((msi.accept_prob[0] - 1.0).abs() < 1e-10);
+        assert!((msi.log_acceptance[2] + 4.0).abs() < 1e-10);
+        assert_eq!(msi.log_acceptance[1], 0.0);
+        assert_eq!(msi.log_acceptance[0], 0.0);
     }
 
     #[test]

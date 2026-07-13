@@ -26,7 +26,8 @@ use std::time::{Duration, Instant};
 #[cfg(feature = "hdf5")]
 use crate::RngCheckpointHdf5;
 use crate::{
-    CarloError, Estimate, FromParams, MonteCarlo, Params, Results, Run, RunConfig, RunId, TaskId,
+    CarloError, Estimate, FromParams, MonteCarlo, Params, Results, RngPhase, RngStreamKey, Run,
+    RunConfig, RunId, TaskId,
 };
 
 // ============================================================================
@@ -875,11 +876,11 @@ where
             checkpoint_interval: config.run_config.checkpoint_interval,
         };
 
-        let seed = config
-            .run_config
-            .base_seed
-            .wrapping_add((task_id as u64) * 10000)
-            .wrapping_add(w.run_id());
+        let seed = RngStreamKey::new(config.run_config.base_seed)
+            .with_task(task_id as u64)
+            .with_run(w.run_id())
+            .with_phase(RngPhase::Initialization)
+            .seed();
 
         // Check for existing checkpoint
         #[cfg(feature = "hdf5")]
@@ -1094,11 +1095,13 @@ where
                 checkpoint_interval: config.run_config.checkpoint_interval,
             };
 
-            let seed = bcast
-                .base_seed
-                .wrapping_add((task_id as u64) * 10000)
-                .wrapping_add(bcast.run_id)
-                .wrapping_add(rank_in_run as u64);
+            let seed = RngStreamKey::new(bcast.base_seed)
+                .with_task(task_id as u64)
+                .with_run(bcast.run_id)
+                .with_replica(rank_in_run as u64)
+                .with_thread(rank_in_run as u64)
+                .with_phase(RngPhase::Initialization)
+                .seed();
 
             // Check for existing checkpoint
             #[cfg(feature = "hdf5")]

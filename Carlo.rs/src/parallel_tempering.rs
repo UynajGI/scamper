@@ -30,7 +30,10 @@ use rand::SeedableRng;
 use rand::RngExt;
 
 #[cfg(feature = "mpi")]
-use crate::{CarloError, FromParams, Metadata, Params, Results, RunPhase};
+use crate::{
+    accept_log_probability, CarloError, FromParams, Metadata, Params, Results, RngPhase,
+    RngStreamKey, RunPhase,
+};
 
 #[cfg(feature = "mpi")]
 use mpi::topology::{Communicator, SimpleCommunicator};
@@ -258,9 +261,12 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
         let mut chain_params = params.clone();
         chain_params.set(&config.parameter, config.values[chain_idx].to_string());
 
-        // Create RNG with chain-specific seed
-        let chain_seed = seed.wrapping_add(chain_idx as u64 * 100000);
-        let rng = R::seed_from_u64(chain_seed);
+        // Create a domain-separated chain stream.
+        let rng: R = RngStreamKey::new(seed)
+            .with_chain(chain_idx as u64)
+            .with_replica(chain_idx as u64)
+            .with_phase(RngPhase::Initialization)
+            .seeded();
 
         let mut ctx = Context::new_with_binsize(rng, 0, binsize);
         let child_mc = MC::from_params(&chain_params, &mut ctx.rng)?;
@@ -353,7 +359,7 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
         let accept = if my_chain_idx % 2 == pairing_offset as usize {
             // Even/offset chains receive first
             let partner_w = self.recv_weight(partner_rank)?;
-            let accept = self.ctx.rng.random::<f64>() < (w + partner_w).exp();
+            let accept = accept_log_probability(w + partner_w, &mut self.ctx.rng);
             self.send_switch(partner_rank, accept)?;
             accept
         } else {

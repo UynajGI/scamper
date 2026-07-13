@@ -40,11 +40,10 @@
 //!
 //! ```rust,ignore
 //! use carlo_rs::{
-//!     MonteCarlo, FromParams, Context, Params, CarloError,
+//!     accept_log_probability, MonteCarlo, FromParams, Context, Params, CarloError,
 //!     Scheduler, RunConfig, RayonBackend, Backend,
 //! };
 //! use rand_xoshiro::Xoshiro256PlusPlus;
-//! use rand_core::Rng;
 //!
 //! // ── Step 1: define your model ──
 //! struct Ising1D {
@@ -62,7 +61,7 @@
 //!             let left  = self.spins[(i + n - 1) % n] as f64;
 //!             let right = self.spins[(i + 1) % n] as f64;
 //!             let dE = 2.0 * self.beta * self.spins[i] as f64 * (left + right);
-//!             if dE <= 0.0 || ctx.rng.gen::<f64>() < (-dE).exp() {
+//!             if accept_log_probability(-dE, &mut ctx.rng) {
 //!                 self.spins[i] *= -1;
 //!             }
 //!         }
@@ -153,6 +152,7 @@
 //! | [`cli`] | `carlo run/status/merge/delete` CLI |
 //! | [`progress`] | Progress bars and status tables |
 
+mod acceptance;
 pub mod backend;
 pub mod cli;
 mod context;
@@ -171,11 +171,13 @@ mod phase;
 pub mod progress;
 mod results;
 mod rng_checkpoint;
+pub mod rng_stream;
 pub mod run;
 mod run_control;
 mod scheduler;
 mod version;
 
+pub use acceptance::accept_log_probability;
 #[cfg(feature = "mpi")]
 pub use backend::{run_distributed, MpiBackend, MpiRunConfig, SchedulerTask};
 pub use backend::{Backend, RayonBackend};
@@ -214,5 +216,6 @@ pub use parallel_tempering::{
 pub use params::Params;
 pub use phase::RunPhase;
 pub use results::{ComplexResult, Metadata, Results};
+pub use rng_stream::{RngPhase, RngStreamKey};
 pub use run_control::{AdaptiveRunControl, RunDecision};
 pub use scheduler::{RunConfig, Scheduler};

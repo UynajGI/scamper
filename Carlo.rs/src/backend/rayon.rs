@@ -1,8 +1,8 @@
-use rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 
 use super::Backend;
+use crate::{RngPhase, RngStreamKey};
 
 /// Rayon-based parallel backend (Phase 1).
 #[derive(Clone)]
@@ -31,11 +31,13 @@ impl Backend for RayonBackend {
     where
         F: Fn(usize, &mut Self::Rng) + Sync,
     {
-        // Simple seed offset strategy (default)
-        // For strict-repro, use jump sequence (Phase 2)
         (0..n_tasks).into_par_iter().for_each(|task_id| {
-            let seed = base_seed.wrapping_add(task_id as u64);
-            let mut rng = Self::Rng::seed_from_u64(seed);
+            let mut rng: Self::Rng = RngStreamKey::new(base_seed)
+                .with_task(task_id as u64)
+                // Deliberately omit the physical Rayon worker index: task streams
+                // must not change when work stealing assigns a task elsewhere.
+                .with_phase(RngPhase::BackendTask)
+                .seeded();
             f(task_id, &mut rng);
         });
     }

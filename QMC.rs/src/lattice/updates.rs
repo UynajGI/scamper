@@ -1,5 +1,6 @@
 //! Continuous-time diagonal and directed-loop updates.
 
+use carlo_rs::accept_log_probability;
 use rand::Rng;
 use rand::RngExt;
 
@@ -185,9 +186,10 @@ impl<M: PositiveOperatorModel> ContinuousLatticeEngine<M> {
                 })?;
         let weight = term.kind(kind_id).weight();
         let proposal_probability = self.model.term_probability(term_id);
-        let ratio =
-            configuration.beta() * weight / ((diagonal_order + 1) as f64 * proposal_probability);
-        if rng.random::<f64>() < ratio.min(1.0) {
+        let log_acceptance = configuration.beta().ln() + weight.ln()
+            - ((diagonal_order + 1) as f64).ln()
+            - proposal_probability.ln();
+        if accept_log_probability(log_acceptance, rng) {
             configuration.vertices_mut().push(Vertex {
                 tau,
                 term: term_id,
@@ -221,8 +223,10 @@ impl<M: PositiveOperatorModel> ContinuousLatticeEngine<M> {
         let term = self.model.term(vertex.term);
         let weight = term.kind(vertex.kind).weight();
         let proposal_probability = self.model.term_probability(vertex.term);
-        let ratio = diagonal_order as f64 * proposal_probability / (configuration.beta() * weight);
-        if rng.random::<f64>() < ratio.min(1.0) {
+        let log_acceptance = (diagonal_order as f64).ln() + proposal_probability.ln()
+            - configuration.beta().ln()
+            - weight.ln();
+        if accept_log_probability(log_acceptance, rng) {
             configuration.vertices_mut().swap_remove(selected);
             self.stats.diagonal_remove_accepts += 1;
             return Ok(true);

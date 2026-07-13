@@ -1,6 +1,7 @@
 //! Frozen energy-bias Metropolis kernels for umbrella and multicanonical production.
 
 use crate::algorithms::{Algorithm, SimulationPhase};
+use crate::audit::{audit_lattice_cache, audit_macrostate_bin, should_audit_cache};
 use crate::core::cache::EnergyPatch;
 use crate::core::r#move::SiteSpinMove;
 use crate::core::trial::TrialEvaluator;
@@ -9,7 +10,8 @@ use crate::generalized::{Histogram, LogBias, MacrostateAxis};
 use crate::lattice::interaction::{Hamiltonian, Proposable};
 use crate::lattice::proposal::{ProposalStrategy, StandardStrategy};
 use crate::lattice::state::System;
-use rand::{Rng, RngExt};
+use carlo_rs::accept_log_probability;
+use rand::Rng;
 
 /// Local Metropolis-Hastings kernel driven by a frozen total energy log weight.
 #[derive(Debug, Clone)]
@@ -24,6 +26,7 @@ pub struct EnergyBiasCore<A, B, S = StandardStrategy> {
     energy_check_interval: u64,
     sweeps: u64,
     out_of_range_proposals: u64,
+    last_visited_bin: Option<usize>,
 }
 
 impl<A, B> EnergyBiasCore<A, B, StandardStrategy>
@@ -59,6 +62,7 @@ where
             energy_check_interval: 0,
             sweeps: 0,
             out_of_range_proposals: 0,
+            last_visited_bin: None,
         }
     }
 
@@ -145,36 +149,26 @@ where
                 old_bin
             };
             self.histogram.record(visited_bin);
+            self.last_visited_bin = Some(visited_bin);
         }
         self.strategy.finish_sweep(phase.allows_adaptation());
 
         self.sweeps = self.sweeps.wrapping_add(1);
-        if self.energy_check_interval > 0 && self.sweeps.is_multiple_of(self.energy_check_interval)
-        {
-            audit_lattice_energy(system, model, "energy-bias cache audit failed");
+        if should_audit_cache(self.sweeps, self.energy_check_interval) {
+            audit_lattice_cache(system, model).expect("energy-bias cache audit failed");
+            assert_eq!(
+                self.histogram.bins(),
+                self.axis.bins(),
+                "energy-bias histogram/axis bin mismatch"
+            );
+            if let Some(bin) = self.last_visited_bin {
+                audit_macrostate_bin(&self.axis, system.energy, bin)
+                    .expect("energy-bias macrostate cache audit failed");
+            }
         }
     }
 
     fn name(&self) -> &'static str {
         "Frozen generalized-energy Metropolis-Hastings"
     }
-}
-
-#[inline]
-pub(crate) fn accept_log_probability(log_acceptance: f64, rng: &mut impl Rng) -> bool {
-    assert!(
-        !log_acceptance.is_nan(),
-        "generalized trial produced NaN log acceptance"
-    );
-    log_acceptance >= 0.0 || rng.random::<f64>().max(f64::MIN_POSITIVE).ln() < log_acceptance
-}
-
-pub(crate) fn audit_lattice_energy<H: Hamiltonian>(system: &System, model: &H, message: &str) {
-    let exact = model.compute_total_energy(&system.spins, &system.lattice, system.beta);
-    let tolerance = 1e-10 * (1.0 + exact.abs());
-    assert!(
-        (system.energy - exact).abs() <= tolerance,
-        "{message}: cached={}, exact={exact}",
-        system.energy
-    );
 }
