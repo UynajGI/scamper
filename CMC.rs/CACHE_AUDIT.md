@@ -14,6 +14,7 @@ Audits are detection-only. They never recompute and overwrite a bad cache before
 - Lattice kernels validate graph/configuration shape and compare cached physical energy with a full Hamiltonian evaluation.
 - Particle kernels validate finite coordinates, supported species, cached energy, packed cell membership, particle-to-cell and particle-to-slot reverse indices.
 - Generalized-ensemble kernels additionally validate histogram/DOS dimensions and the cached macrostate bin against the accepted physical energy.
+- Classical worm kernels recompute graph occupations, vertex parity, reduced log weight and endpoint-sector constraints; optional endpoint histogram dimensions are also checked.
 
 The public helpers in `cmc_rs::audit` can also be called by custom kernels:
 

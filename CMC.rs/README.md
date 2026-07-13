@@ -5,7 +5,7 @@ CMC.rs is Scuttle's classical Monte Carlo sampling layer. It is intentionally bu
 - **Carlo.rs** owns RNG contexts, explicit run phases, scheduling, backends, accumulation/results, checkpoint orchestration and parallel tempering.
 - **CMC.rs** owns classical configurations, physical energy models, transactional trial moves, target ensembles, update kernels and observables.
 
-This revision keeps the existing lattice-spin functionality and public `ClassicalMC<Model, Algorithm>` composition, while adding continuous-system backends (periodic Lennard-Jones NVT/NPT/μVT particles, rigid molecules) and generalized-ensemble methods (Wang-Landau DOS estimation, multicanonical, umbrella sampling with canonical reweighting).
+This revision keeps the existing lattice-spin functionality and public `ClassicalMC<Model, Algorithm>` composition, while adding continuous-system backends (periodic Lennard-Jones NVT/NPT/μVT particles, rigid molecules) and generalized-ensemble methods (Wang-Landau DOS estimation, multicanonical, umbrella sampling with canonical reweighting), and a persistent classical worm framework with a ferromagnetic Ising high-temperature graph backend.
 
 ## Existing user entry point
 
@@ -38,7 +38,9 @@ Source code is organised into five subdirectories plus three top-level adapter m
 | `lattice/` | `CsrLattice` graph, `System` state, `Hamiltonian` traits, built-in models, `ProposalStrategy` |
 | `algorithms/` | `Algorithm<H>` trait, 6 kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
 | `observables/` | `Observable<H>`, `DefaultObservableSet`, energy, magnetisation, correlation |
-| `particle/` | Periodic cells, AoS coordinates, pair potentials, packed cell lists, translations and NVT adapter |
+| `particle/` | Periodic cells, AoS coordinates, pair potentials, packed cell lists, translations and NVT/NPT/μVT adapters |
+| `generalized/` | Wang-Landau, frozen biases, DOS/histograms, exact enumeration and reweighting |
+| `worm/` | Persistent physical/worm sectors, generic local driver and Ising graph representation |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
 The public API is re-exported flat from `lib.rs` — user code sees no change.
@@ -152,6 +154,27 @@ Schedulers and `Run` call `MonteCarlo::on_phase_start` / `on_phase_end` at bound
 
 For convergence-driven samplers, Carlo.rs provides `AdaptiveRunControl`, `Scheduler::run_controlled` and `Scheduler::run_controlled_with_state`. CMC.rs adds `WangLandauRunControl` and `IsingWangLandau` as adaptive ensemble implementations, with `WangLandauCore` for user-supplied axes and `EnergyBiasCore` for frozen umbrella/multicanonical production.
 
+## Classical persistent worm
+
+`IsingGraphWormMC` samples the ferromagnetic Ising high-temperature graph representation in explicit physical and two-defect worm sectors. Open, close and local head moves include their complete Hastings factors and are accepted in log space. The chain may remain open across sweep and checkpoint boundaries; optional endpoint-pair samples provide two-point correlation estimators.
+
+```rust,ignore
+use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
+use cmc_rs::IsingGraphWormMC;
+
+let mut params = Params::new();
+params.set("lattice_type", "square");
+params.set("Lx", 16);
+params.set("Ly", 16);
+params.set("beta", 0.44);
+params.set("worm_updates_per_sweep", 512);
+
+let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
+    .run_one::<IsingGraphWormMC>(&params);
+```
+
+The reusable `WormModel`/`WormKernel` boundary is intended for future integer-current, dimer and loop-gas representations without pretending that their defect constraints are identical. See [`CLASSICAL_WORM.md`](CLASSICAL_WORM.md).
+
 ## Arbitrary weighted graph
 
 `CsrLattice` stores each physical undirected edge exactly once and keeps CSR incidences for local access:
@@ -199,4 +222,4 @@ impl PairInteraction for MyModel {
 
 Models with genuine multi-site/factor interactions can implement `Hamiltonian` directly and inherit the correct scratch-backed batch path.
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md), [`MIGRATION.md`](MIGRATION.md), [`CACHE_AUDIT.md`](CACHE_AUDIT.md), [`BENCHMARKS.md`](BENCHMARKS.md), and [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md).
+See [`ARCHITECTURE.md`](ARCHITECTURE.md), [`CLASSICAL_WORM.md`](CLASSICAL_WORM.md), [`MIGRATION.md`](MIGRATION.md), [`CACHE_AUDIT.md`](CACHE_AUDIT.md), [`BENCHMARKS.md`](BENCHMARKS.md), and [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md).

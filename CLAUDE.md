@@ -49,6 +49,7 @@ Directories group related modules; public API is re-exported flat from `lib.rs`.
 | `observables/` | `energy.rs`, `magnetization.rs`, `correlation.rs`, `common.rs` | `Observable<H>`, `DefaultObservableSet`, `TotalEnergy`, `Magnetization`, `compute_correlation_1d` |
 | `particle/` | `potential.rs`, `cell.rs`, `cell_list.rs`, `configuration.rs`, `state.rs`, `movement.rs`, `algorithm.rs`, `mc.rs`, `error.rs`, `batch.rs`, `grand.rs`, `mixture.rs`, `molecule.rs`, `volume.rs` | `PairPotential` trait, `LennardJones` 12-6 (Lorentz-Berthelot mixing, 3 cutoff modes), `OrthorhombicCell<D>`, packed `CellList`, `ParticleSystem` transactional evaluate/commit, `ParticleMetropolisCore` (NVT), `ParticleNptMetropolisCore` (NPT), `ParticleGrandCanonicalCore` (μVT), `MolecularMetropolisCore` (rigid molecules), `MoveMixture`, `LennardJonesNvt/Npt/MuVt` Carlo.rs adapters |
 | `generalized/` | `axis.rs`, `bias.rs`, `histogram.rs`, `macrostate.rs`, `multicanonical.rs`, `wang_landau.rs`, `exact.rs`, `reweight.rs`, `error.rs` | `MacrostateAxis` (Binned/Discrete), `LogDensityOfStates`, `Histogram`, `LogBias` (Fixed/HarmonicUmbrella/Multicanonical), `EnergyBiasCore` (frozen production), `WangLandauState` + `WangLandauCore` (adaptive DOS estimation, flat-histogram + 1/t refinement, JSON checkpoint), `IsingWangLandau` (Carlo.rs adapter), `WangLandauRunControl` (AdaptiveRunControl), `canonical_reweight` (log-sum-exp), exact Ising DOS enumeration |
+| `worm/` | `error.rs`, `model.rs`, `state.rs`, `kernel.rs`, `ising.rs`, `mc.rs` | Generic `WormKernel<M>` persisting open/close/step/bounce transitions, `WormState` physical/worm sector container, `IsingGraphWormModel` (HT graph, tanh weights), versioned JSON checkpoint `cmc-rs-ising-worm-v1`, `EndpointPairHistogram`, exact 2ⁿ enumeration (≤24 edges) |
 | Top-level | `classical_mc.rs`, `multi_spin.rs`, `postprocess.rs` | `ClassicalMC` Carlo.rs adapter, `MultiSpinIsing`, derived observables |
 
 Key patterns:
@@ -64,6 +65,7 @@ Key patterns:
 - Users can ignore `ClassicalMC` and compose manually for custom behavior
 - Particle: `ParticleSystem` implements `TrialEvaluator` for `ParticleTranslation`, `ParticleBatchMove`, `GrandCanonicalMove`, and `IsotropicVolumeChange`. Evaluate never mutates accepted state; commit updates position + cell-list + energy atomically. `ParticleMC<D, P, A>` is generic over dimension, potential, and algorithm. Pre-built: `LennardJonesNvt<D>`, `LennardJonesNpt<D>`, `LennardJonesMuVt<D>`. `CanonicalParticleKernel` marker trait gates parallel-tempering eligibility (NVT/molecule kernels only, not NPT/μVT). `MolecularMetropolisCore<D>` composes `RigidMoleculeTranslation` + `RigidMoleculeRotation` via `MoveMixture`, with `MoleculeTopology` for atom grouping and `TorsionRotation` for local dihedral moves. `LogVolumeScale` adapts ln(V) random-walk step size toward target acceptance. `InsertDeleteParticle` proposes reversible insert/delete with species weights and particle-count bounds; `validate_potential()` checks species/potential compatibility upfront. `GrandCanonical` and `IsothermalIsobaric` ensembles drive acceptance via `ThermodynamicDelta`.
 - Generalized ensembles: `MacrostateAxis` maps scalars to stable bins. `EnergyBiasCore<A, B>` runs frozen umbrella/multicanonical production on the lattice `TrialEvaluator` path. `WangLandauCore<A>` does adaptive DOS estimation: `Discovery → Adaptation (flat-histogram + optional 1/t) → FrozenProduction → Finished`. `WangLandauRunControl` plugs into `Scheduler::run_controlled_with_state` to return the estimator after scheduling. `CanonicalLatticeKernel` marker gates lattice PT to canonical kernels only (generalized-ensemble kernels never implement it). `canonical_reweight` uses log-sum-exp for stable canonical reconstruction from ln g(E). `IsingWangLandau` is the scheduler-ready reference with exact axis enumeration (≤24 sites).
+- Classical worm: `WormKernel<M>` drives open/close/step/bounce transitions in an extended physical/worm sector space. `WormModel` trait owns defects, proposals, `log_reverse_over_forward` Hastings factors, weight deltas and transactional patches. Open: `ln η + ln P_close + ln N`; close: exact negative; step: `log_weight_ratio + log_reverse_over_forward + ln(1-P_close·1_new_coincident) - ln(1-P_close·1_old_coincident)`. `EndpointPairHistogram` estimates two-point correlations via `count(tail,head)/count(tail,tail)`. `IsingGraphWormMC` implements `MonteCarlo`+`FromParams` with versioned `cmc-rs-ising-worm-v1` JSON checkpoint. Zero-field, non-negative `J`, self-loop rejection.
 
 ## QMC.rs Architecture
 
@@ -127,15 +129,15 @@ Statistical inference layer with Euclidean-state and Hamiltonian kernels:
 |--------|-----------|---------|
 | `LogDensity` / `DifferentiableLogDensity` | `target.rs` | Value-only and combined value/gradient target contracts; closure adapters for both |
 | `ChainState` | `state/` | Position + cached log density + synchronized accepted-state gradient + PT exchange |
-| `TransitionKernel<T>` | `kernel/` | Target-typed trait — RW/component/slice/Gibbs, static composition and `StaticHmc<M>` |
+| `TransitionKernel<T>` | `kernel/` | Target-typed trait — RW/component/slice/Gibbs, static composition, `StaticHmc<M>` and `Nuts<M>` |
 | `metric` | `metric/` | Unit, diagonal and dense inverse-mass geometries; momentum, velocity and kinetic energy |
 | `LeapfrogIntegrator` | `integrator.rs` | Private `PhasePoint` integration workspace and invalid-trajectory reporting |
 | `adaptation` | `adaptation/` | RW covariance/scale adaptation plus HMC dual averaging and windowed metric adaptation |
 | `Bijector` / `DifferentiableBijector` | `transform/` | Value transforms, gradient pullback and log-Jacobian gradients |
 | `TransformedTarget` | `transform/target.rs` | Constrained target wrapper implementing value-only or differentiable unconstrained density |
 | `tempering` | `tempering.rs` | Rayon local transitions + alternating generic neighboring exchange |
-| `MemoryTrace` | `trace/` | Contiguous posterior storage, thinning, divergence/energy error, JSON/HDF5 |
-| `diagnostics` | `diagnostics/` | Rank-normalized R-hat, bulk/tail ESS, MCSE |
+| `MemoryTrace` | `trace/` | Contiguous posterior storage, thinning, divergence/energy/tree-depth/depth-limit flags, JSON/HDF5 |
+| `diagnostics` | `diagnostics/` | Rank-normalized R-hat, bulk/tail ESS, MCSE, per-chain E-BFMI, depth-limit-hit totals |
 | `ChainCheckpoint` | `checkpoint.rs` | Serde envelope for kernel workspace, warmup, RNG, state and trace |
 | `McmcSampler` | `carlo_adapter.rs` | Carlo lifecycle adapter including HMC scalar diagnostics |
 
@@ -152,7 +154,9 @@ Key patterns:
 - Traces never mix chain IDs; multi-chain uses Rayon with deterministic per-chain seeds
 - Component-wise, slice, Gibbs and HMC kernels preserve accepted-state validity on proposal/integration errors
 - Replica exchange keeps targets/kernels/RNGs/traces fixed to ladder slots and swaps only synchronized states
-- Default-feature MCMC.rs v0.3 validation passes fmt, check, Clippy and all 41 tests on Rust 1.90.0
+- `Nuts<M>` doubles a binary Hamiltonian trajectory until U-turn, divergence or depth exhaustion; multinomial candidate selection in the log domain; shares dual averaging and windowed metric adaptation with `StaticHmc<M>`; metric-aware U-turn via `displacement_dot_velocity`
+- `TransitionReport` includes `energy`, `acceptance_statistic`, `tree_depth`, `max_tree_depth_reached` for dynamic-HMC diagnostics; `merge()` uses weighted averaging for `acceptance_statistic` and OR for `max_tree_depth_reached`
+- Default-feature MCMC.rs v0.4 validation passes fmt, check, Clippy and all 51 tests on Rust 1.90.0
 - Optional HDF5 validation is currently blocked before MCMC.rs source compilation: `hdf5-sys 0.8.1` does not recognize the installed HDF5 1.14.5 header format
 
 

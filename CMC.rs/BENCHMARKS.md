@@ -36,3 +36,13 @@ To compile every benchmark without executing the timing loops:
 ```bash
 cargo bench -p cmc-rs --bench performance_bench --no-run
 ```
+
+## Stage 5 worm benchmark
+
+The persistent classical worm path has a separate Criterion target:
+
+```bash
+cargo bench -p cmc-rs --bench worm_bench
+```
+
+It reports local extended-space transitions, full sweeps, endpoint-pair tracking overhead, JSON snapshot serialization and a fixed-seed physical-sector occupied-edge `tau_int` / ESS / ESS-per-second pilot. The endpoint benchmark is separate because dense correlation tracking is optional and should not be hidden in the core transition number.

@@ -4,7 +4,7 @@ version = "0.1.0-dev1"
 edition = "2021"
 authors = ["Scuttle Team"]
 license = "Apache-2.0"
-description = "Reusable classical Monte Carlo kernels for lattice and continuous particle systems"
+description = "Reusable classical Monte Carlo kernels for lattice, particle, generalized and worm ensembles"
 
 [dependencies]
 carlo-rs = { path = "../Carlo.rs" }
@@ -27,6 +27,10 @@ harness = false
 
 [[bench]]
 name = "performance_bench"
+harness = false
+
+[[bench]]
+name = "worm_bench"
 harness = false
 
 [features]

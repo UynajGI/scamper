@@ -45,6 +45,7 @@ pub mod classical_mc;
 pub mod multi_spin;
 pub mod postprocess;
 pub mod statistics;
+pub mod worm;
 
 // Hierarchical modules
 
@@ -113,3 +114,9 @@ pub use particle::{
 };
 pub use postprocess::{binder_cumulant, specific_heat, susceptibility};
 pub use statistics::{statistical_efficiency, StatisticalEfficiency};
+pub use worm::{
+    enumerate_ising_graph_expansion, EndpointPairHistogram, ExactIsingGraphExpansion,
+    IsingGraphConfiguration, IsingGraphPatch, IsingGraphWormMC, IsingGraphWormModel, IsingWormStep,
+    WormConfig, WormError, WormKernel, WormModel, WormSector, WormState, WormStepDelta,
+    WormStepProposal, WormTransition, WormTransitionStatistics,
+};

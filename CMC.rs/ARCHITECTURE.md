@@ -2,7 +2,7 @@
 
 ## Scope of this revision
 
-This revision extends the reusable trial/ensemble/cache foundation from lattice spins to continuous particle systems (NVT, NPT, grand-canonical μVT, rigid molecules) and generalized-ensemble methods (Wang-Landau DOS estimation, multicanonical, umbrella sampling with canonical reweighting).
+This revision extends the reusable trial/ensemble/cache foundation from lattice spins to continuous particle systems (NVT, NPT, grand-canonical μVT, rigid molecules) and generalized-ensemble methods (Wang-Landau DOS estimation, multicanonical, umbrella sampling with canonical reweighting), and persistent classical worm updates in an explicit extended configuration space.
 
 ## Layering
 
@@ -137,7 +137,7 @@ The first implementation deliberately uses a cell list rather than a Verlet list
 
 It supports irregular graphs, arbitrary dimension, weighted/disordered interactions, parallel bonds and self-loops without an implicit divide-by-two convention.
 
-## Source module layout (Phases 1-2)
+## Source module layout (Phases 1–5)
 
 | Directory | Contents |
 |-----------|----------|
@@ -147,6 +147,7 @@ It supports irregular graphs, arbitrary dimension, weighted/disordered interacti
 | `observables/` | `energy.rs`, `magnetization.rs`, `correlation.rs`, `common.rs` |
 | `particle/` | cell geometry, configuration, potential, cell list, move, state, kernel, Carlo adapter, batch moves, grand-canonical, move mixture, rigid molecules, volume changes |
 | `generalized/` | axes, biases, histogram, DOS storage, macrostates, multicanonical kernel, Wang-Landau estimator + kernel, exact Ising enumeration, canonical reweighting |
+| `worm/` | generic sector/state/model/kernel contract, Ising high-temperature graph configuration, Carlo adapter and checkpoint |
 | Top-level | `classical_mc.rs`, `multi_spin.rs`, `postprocess.rs` |
 
 All public types are re-exported flat from `lib.rs`.
@@ -190,3 +191,9 @@ New extension surface:
 - `ProposedMove`, `TrialEvaluator`, `Ensemble`, `ThermodynamicDelta`;
 - site/batch move and patch types;
 - reusable visit schedules.
+
+## Persistent classical worm layer
+
+`WormState<C, D>` separates the accepted model configuration from ordered head/tail defects. `WormModel` supplies opening measure, local steps, log-weight ratios, transactional patches and model-specific validation. `WormKernel<M>` owns persistent physical/worm-sector dynamics, complete open/close/step Hastings corrections, log-domain acceptance, endpoint statistics and periodic audit.
+
+The first backend, `IsingGraphWormModel`, stores physical-edge occupations, vertex-parity cache, occupied-edge count and reduced log graph weight. It supports loop-free weighted multigraphs with non-negative effective couplings. The scheduler-ready `IsingGraphWormMC` measures physical graph observables and optional open-sector endpoint pairs and provides a versioned JSON snapshot. Quantum directed-loop/wormhole propagation is intentionally not shared with this classical representation.
