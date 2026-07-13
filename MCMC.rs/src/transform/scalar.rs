@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use super::{check_lengths, log_one_minus_sigmoid, log_sigmoid, sigmoid, Bijector, TransformError};
+use super::{
+    check_lengths, log_one_minus_sigmoid, log_sigmoid, sigmoid, Bijector, DifferentiableBijector,
+    TransformError,
+};
 use crate::McmcError;
 
 /// Identity transform over a fixed positive dimension.
@@ -162,5 +165,95 @@ impl Bijector for Interval {
         Ok(-((self.upper - self.lower).ln()
             + log_sigmoid(unconstrained_value)
             + log_one_minus_sigmoid(unconstrained_value)))
+    }
+}
+
+impl DifferentiableBijector for Identity {
+    fn pullback(
+        &mut self,
+        unconstrained: &[f64],
+        constrained: &[f64],
+        constrained_gradient: &[f64],
+        unconstrained_gradient: &mut [f64],
+    ) -> Result<(), TransformError> {
+        check_lengths(unconstrained, self.dimension, constrained, self.dimension)?;
+        check_lengths(
+            constrained_gradient,
+            self.dimension,
+            unconstrained_gradient,
+            self.dimension,
+        )?;
+        unconstrained_gradient.copy_from_slice(constrained_gradient);
+        Ok(())
+    }
+
+    fn log_jacobian_gradient(
+        &mut self,
+        unconstrained: &[f64],
+        output: &mut [f64],
+    ) -> Result<(), TransformError> {
+        check_lengths(unconstrained, self.dimension, output, self.dimension)?;
+        output.fill(0.0);
+        Ok(())
+    }
+}
+
+impl DifferentiableBijector for Positive {
+    fn pullback(
+        &mut self,
+        unconstrained: &[f64],
+        constrained: &[f64],
+        constrained_gradient: &[f64],
+        unconstrained_gradient: &mut [f64],
+    ) -> Result<(), TransformError> {
+        check_lengths(unconstrained, 1, constrained, 1)?;
+        check_lengths(constrained_gradient, 1, unconstrained_gradient, 1)?;
+        unconstrained_gradient[0] = constrained_gradient[0] * constrained[0];
+        if unconstrained_gradient[0].is_finite() {
+            Ok(())
+        } else {
+            Err(TransformError::NonFinite)
+        }
+    }
+
+    fn log_jacobian_gradient(
+        &mut self,
+        unconstrained: &[f64],
+        output: &mut [f64],
+    ) -> Result<(), TransformError> {
+        check_lengths(unconstrained, 1, output, 1)?;
+        output[0] = 1.0;
+        Ok(())
+    }
+}
+
+impl DifferentiableBijector for Interval {
+    fn pullback(
+        &mut self,
+        unconstrained: &[f64],
+        constrained: &[f64],
+        constrained_gradient: &[f64],
+        unconstrained_gradient: &mut [f64],
+    ) -> Result<(), TransformError> {
+        check_lengths(unconstrained, 1, constrained, 1)?;
+        check_lengths(constrained_gradient, 1, unconstrained_gradient, 1)?;
+        let probability = sigmoid(unconstrained[0]);
+        let derivative = (self.upper - self.lower) * probability * (1.0 - probability);
+        unconstrained_gradient[0] = constrained_gradient[0] * derivative;
+        if unconstrained_gradient[0].is_finite() {
+            Ok(())
+        } else {
+            Err(TransformError::NonFinite)
+        }
+    }
+
+    fn log_jacobian_gradient(
+        &mut self,
+        unconstrained: &[f64],
+        output: &mut [f64],
+    ) -> Result<(), TransformError> {
+        check_lengths(unconstrained, 1, output, 1)?;
+        output[0] = 1.0 - 2.0 * sigmoid(unconstrained[0]);
+        Ok(())
     }
 }

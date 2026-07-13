@@ -1,6 +1,6 @@
 [package]
 name = "mcmc-rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Statistical MCMC kernels, traces, and multi-chain diagnostics for Scuttle"
@@ -12,7 +12,7 @@ rand_core = { workspace = true }
 rand_xoshiro = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror = { workspace = true }
 hdf5 = { workspace = true, optional = true }
 

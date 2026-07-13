@@ -1,5 +1,4 @@
-use carlo_rs::{accept_log_probability, RngPhase, RngStreamKey};
-use rand::Rng;
+use rand::{Rng, RngExt};
 use rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
@@ -175,9 +174,8 @@ where
             acceptances: 0,
         })
         .collect::<Vec<_>>();
-    let mut exchange_rng: Xoshiro256PlusPlus = RngStreamKey::new(config.base_seed)
-        .with_phase(RngPhase::Exchange)
-        .seeded();
+    let mut exchange_rng =
+        Xoshiro256PlusPlus::seed_from_u64(config.base_seed ^ 0xA076_1D64_78BD_642F);
     let mut exchange_round = 0_u64;
     let mut transitions_since_exchange = 0_u64;
 
@@ -331,7 +329,8 @@ where
                 value: log_acceptance,
             });
         }
-        let accepted = accept_log_probability(log_acceptance, rng);
+        let accepted = log_acceptance >= 0.0
+            || rng.random::<f64>().max(f64::MIN_POSITIVE).ln() < log_acceptance;
         if accepted {
             left.state
                 .exchange_position_with(&mut right.state, left_cross, right_cross);

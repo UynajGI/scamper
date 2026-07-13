@@ -1,50 +1,78 @@
-# MCMC.rs v0.2 Validation Report
+# MCMC.rs v0.3 Validation Report
 
-## Review performed
+## v0.2 review result
 
-- Confirmed the uploaded workspace contains the v0.1.1 target module, atomic
-  component/slice fixes and state-invariant regression tests.
-- Reviewed every MCMC source and test module after the target-typed
-  `TransitionKernel<T>` refactor.
-- Checked balanced Rust delimiters, comments and strings across all 190
-  workspace Rust source files.
-- Checked that every declared Rust module resolves, every struct has unique
-  field names, the workspace includes MCMC.rs, and both the package manifest
-  and root lockfile identify `mcmc-rs` as 0.2.0.
-- Checked changed Rust files for trailing whitespace and lines longer than 100
-  columns.
-- Numerically checked dense covariance/Cholesky reconstruction, correlated
-  proposal geometry, simplex normalization and finite-difference Jacobians,
-  and the generic replica-exchange acceptance ratio independently.
-- Audited v0.1 checkpoint compatibility for every newly serialized field.
-- Added tests for Gibbs error atomicity, composition report aggregation,
-  legacy/empty report normalization, dense covariance, correlated proposal
-  generation, transform round trips, transformed-density correction,
-  replica-exchange diagnostics and deterministic replay.
-- Rechecked component-wise Metropolis and slice sampling input-state validation
-  and consistent one-transition iteration semantics.
-- Rechecked accepted and rejected replica exchanges so state/log-density caches
-  remain synchronized and iteration counts advance deterministically.
+The uploaded workspace contained the v0.2 kernel composition, Gibbs update,
+dense covariance, transform and replica-exchange implementation. No
+architecture-level blocker was found. The HMC-readiness gaps documented in
+`REVIEW_V02.md` were small enough to fix while proceeding directly to v0.3.
 
-## Important validation limitation
+## v0.3 implementation checks
 
-The execution container used for this revision has no `cargo`, `rustc`,
-`rustfmt`, `clippy`, local Cargo registry or network access for installing crate
-dependencies. Consequently this report does **not** claim an actual Rust build
-or test pass. Run the following in a Rust-enabled checkout before merging:
+- Added static HMC with private trajectory workspace and atomic state commit.
+- Added unit, diagonal and dense inverse-mass metrics.
+- Added a reusable leapfrog integrator.
+- Added dual averaging and expanding fast/slow/fast warmup windows with
+  diagonal or dense metric adaptation.
+- Added accepted-state gradient synchronization and cache reuse after
+  rejection.
+- Added invalid-trajectory and absolute energy-error divergence handling.
+- Added analytic gradient pullback and log-Jacobian gradients for every v0.2
+  built-in transform.
+- Made `TransformedTarget` implement `DifferentiableLogDensity` when both the
+  constrained target and bijector are differentiable.
+- Added HMC scalar measurements to the Carlo.rs adapter.
+- Excluded reconstructible HMC trajectory workspaces from serde checkpoints so
+  non-finite divergent paths cannot poison JSON serialization.
+- Enabled serde_json `float_roundtrip` for exact f64 checkpoint continuation.
+- Added v0.3 tests for HMC moments, divergence atomicity, gradient-cache reuse,
+  warmup checkpoint trajectory equivalence, post-divergence serialization,
+  metrics, leapfrog reversibility and energy scaling, dual averaging, windowed
+  metric adaptation, incomplete warmup rejection and transformed gradients.
+- Updated package and lockfile `mcmc-rs` version to `0.3.0`.
+
+## Actual Rust validation
+
+Validation used Rust 1.90.0. The following commands completed successfully:
 
 ```bash
 cargo fmt --all --check
+cargo check -p mcmc-rs --all-targets
 cargo clippy -p mcmc-rs --all-targets
 cargo test -p mcmc-rs
-cargo clippy -p mcmc-rs --all-targets --features hdf5
-cargo test -p mcmc-rs --features hdf5
 ```
 
-## Workspace note
+The default-feature test run completed with **41 passed, 0 failed**. This
+includes all retained v0.1/v0.2 tests, the new v0.3 tests and exact checkpoint
+continuation tests.
 
-MCMC.rs's HDF5 code has been updated for hdf5 0.8. Carlo.rs still contains its
-pre-existing `create_dataset_simple` calls behind Carlo's own `hdf5` feature.
-Therefore a full workspace `--all-features` build may still require a separate
-Carlo.rs HDF5 migration; the default workspace and MCMC-only HDF5 feature do
-not enable Carlo's HDF5 feature.
+## Structural and numerical validation
+
+- Parsed all 211 Rust source files in the workspace with the tree-sitter Rust
+  grammar: no syntax-error nodes.
+- Resolved every `mod name;` declaration in MCMC.rs to a source file/module.
+- Checked Rust struct declarations for duplicate field names: none found.
+- Checked the workspace still includes `MCMC.rs` and Carlo.rs still exposes
+  `Run::from_parts` / `Run::finalize_with_mc`.
+- Dense Cholesky reconstruction maximum error: approximately `4.44e-16`.
+- Dense metric velocity/kinetic-energy reference check passed.
+- Empirical dense-momentum covariance maximum error: approximately `1.96e-3`.
+- Leapfrog reversibility error: approximately `5.55e-17`.
+- Simplex transformed-gradient finite-difference maximum error: approximately
+  `2.58e-10`.
+- Independent fixed-HMC standard-normal run produced mean approximately
+  `0.00895` and variance approximately `1.0033`.
+
+## Optional HDF5 feature
+
+The command below did not reach MCMC.rs source compilation:
+
+```bash
+cargo check -p mcmc-rs --all-targets --features hdf5
+```
+
+`hdf5-sys 0.8.1` rejected the installed HDF5 `1.14.5` header because that
+crate version's build-time parser recognizes the 1.8/1.10/1.12 version lines.
+Therefore the default feature set is fully validated, while the optional HDF5
+feature remains unverified in this environment due to dependency/system-library
+compatibility.

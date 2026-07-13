@@ -60,6 +60,12 @@ impl<S, C> ChainState<S, C> {
         self.iteration = self.iteration.saturating_add(1);
     }
 
+    /// Refresh cached information for the same accepted position without
+    /// counting a Markov transition.
+    pub(crate) fn synchronize_log_density(&mut self, log_density: f64) {
+        self.log_density = log_density;
+    }
+
     pub(crate) fn exchange_position_with(
         &mut self,
         other: &mut Self,

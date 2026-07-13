@@ -85,9 +85,17 @@ where
             f64::from(self.last_report.target_evaluations),
         );
         context.measure(
+            "GradientEvaluations",
+            f64::from(self.last_report.gradient_evaluations),
+        );
+        context.measure("LeapfrogSteps", f64::from(self.last_report.leapfrog_steps));
+        context.measure(
             "Divergent",
             if self.last_report.divergent { 1.0 } else { 0.0 },
         );
+        if let Some(error) = self.last_report.energy_error {
+            context.measure("EnergyError", error);
+        }
         if let Some(scale) = self.last_report.proposal_scale {
             context.measure("ProposalScale", scale);
         }

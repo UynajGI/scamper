@@ -1,12 +1,14 @@
 mod component;
 mod compose;
 mod gibbs;
+mod hmc;
 mod metropolis;
 mod slice;
 
 pub use component::ComponentWiseMetropolis;
 pub use compose::{Mixture, Repeat, Then};
 pub use gibbs::{GibbsKernel, GibbsUpdate, GibbsUpdateResult};
+pub use hmc::StaticHmc;
 pub use metropolis::RandomWalkMetropolis;
 pub use slice::SliceSampler;
 

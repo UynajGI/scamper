@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::target::{validate_log_density, LogDensity};
 use crate::{ChainState, McmcError};
 
-/// Cache reserved for future gradient-based Euclidean kernels.
+/// Cached gradient for gradient-based Euclidean kernels.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EuclideanCache {
     gradient: Vec<f64>,
@@ -33,6 +33,23 @@ impl EuclideanCache {
 
     pub fn invalidate_gradient(&mut self) {
         self.gradient_valid = false;
+    }
+
+    pub(crate) fn set_gradient(&mut self, gradient: &[f64]) -> Result<(), McmcError> {
+        if gradient.len() != self.gradient.len() {
+            return Err(McmcError::DimensionMismatch {
+                expected: self.gradient.len(),
+                actual: gradient.len(),
+            });
+        }
+        if gradient.iter().any(|value| !value.is_finite()) {
+            return Err(McmcError::InvalidConfig(
+                "gradient cache must contain only finite values".to_string(),
+            ));
+        }
+        self.gradient.copy_from_slice(gradient);
+        self.gradient_valid = true;
+        Ok(())
     }
 }
 
@@ -69,6 +86,50 @@ impl EuclideanState {
 
     pub fn dimension(&self) -> usize {
         self.position().len()
+    }
+
+    pub(crate) fn synchronize_gradient(
+        &mut self,
+        log_density: f64,
+        gradient: &[f64],
+    ) -> Result<(), McmcError> {
+        let log_density = validate_log_density(log_density)?;
+        if log_density == f64::NEG_INFINITY {
+            return Err(McmcError::InvalidConfig(
+                "accepted state cannot lie outside target support".to_string(),
+            ));
+        }
+        self.cache_mut().set_gradient(gradient)?;
+        self.synchronize_log_density(log_density);
+        Ok(())
+    }
+
+    pub(crate) fn commit_hamiltonian_proposal(
+        &mut self,
+        proposed_position: &mut Vec<f64>,
+        proposed_log_density: f64,
+        proposed_gradient: &[f64],
+    ) -> Result<(), McmcError> {
+        let proposed_log_density = validate_log_density(proposed_log_density)?;
+        if proposed_log_density == f64::NEG_INFINITY {
+            return Err(McmcError::InvalidConfig(
+                "Hamiltonian proposal lies outside target support".to_string(),
+            ));
+        }
+        if proposed_position.len() != self.dimension() {
+            return Err(McmcError::DimensionMismatch {
+                expected: self.dimension(),
+                actual: proposed_position.len(),
+            });
+        }
+        if proposed_position.iter().any(|value| !value.is_finite()) {
+            return Err(McmcError::InvalidConfig(
+                "Hamiltonian proposal position must be finite".to_string(),
+            ));
+        }
+        self.cache_mut().set_gradient(proposed_gradient)?;
+        self.swap_position(proposed_position, proposed_log_density);
+        Ok(())
     }
 
     /// Validate invariants required by every Euclidean transition kernel.

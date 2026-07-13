@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "mcmc-rs"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "carlo-rs",
  "hdf5",

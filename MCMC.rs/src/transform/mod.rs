@@ -46,6 +46,24 @@ pub trait Bijector: Send {
     ) -> Result<f64, TransformError>;
 }
 
+/// Derivative operations required to pull a constrained target gradient back
+/// into unconstrained coordinates.
+pub trait DifferentiableBijector: Bijector {
+    fn pullback(
+        &mut self,
+        unconstrained: &[f64],
+        constrained: &[f64],
+        constrained_gradient: &[f64],
+        unconstrained_gradient: &mut [f64],
+    ) -> Result<(), TransformError>;
+
+    fn log_jacobian_gradient(
+        &mut self,
+        unconstrained: &[f64],
+        output: &mut [f64],
+    ) -> Result<(), TransformError>;
+}
+
 pub(crate) fn check_lengths(
     input: &[f64],
     expected_input: usize,

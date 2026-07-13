@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use super::{check_lengths, log_one_minus_sigmoid, log_sigmoid, sigmoid, Bijector, TransformError};
+use super::{
+    check_lengths, log_one_minus_sigmoid, log_sigmoid, sigmoid, Bijector, DifferentiableBijector,
+    TransformError,
+};
 use crate::McmcError;
 
 /// Stick-breaking transform from `R^(K-1)` to the interior of a K-simplex.
@@ -113,5 +116,63 @@ impl Bijector for Simplex {
             log_remaining = remaining.ln();
         }
         Ok(-forward_log_jacobian)
+    }
+}
+
+impl DifferentiableBijector for Simplex {
+    fn pullback(
+        &mut self,
+        unconstrained: &[f64],
+        constrained: &[f64],
+        constrained_gradient: &[f64],
+        unconstrained_gradient: &mut [f64],
+    ) -> Result<(), TransformError> {
+        check_lengths(
+            unconstrained,
+            self.dimension - 1,
+            constrained,
+            self.dimension,
+        )?;
+        check_lengths(
+            constrained_gradient,
+            self.dimension,
+            unconstrained_gradient,
+            self.dimension - 1,
+        )?;
+        let mut weighted_tail =
+            constrained_gradient[self.dimension - 1] * constrained[self.dimension - 1];
+        for index in (0..self.dimension - 1).rev() {
+            let fraction = sigmoid(unconstrained[index]);
+            let own = constrained_gradient[index] * constrained[index] * (1.0 - fraction);
+            unconstrained_gradient[index] = own - fraction * weighted_tail;
+            weighted_tail += constrained_gradient[index] * constrained[index];
+        }
+        if unconstrained_gradient.iter().all(|value| value.is_finite()) {
+            Ok(())
+        } else {
+            Err(TransformError::NonFinite)
+        }
+    }
+
+    fn log_jacobian_gradient(
+        &mut self,
+        unconstrained: &[f64],
+        output: &mut [f64],
+    ) -> Result<(), TransformError> {
+        check_lengths(
+            unconstrained,
+            self.dimension - 1,
+            output,
+            self.dimension - 1,
+        )?;
+        for (index, (value, output)) in unconstrained
+            .iter()
+            .copied()
+            .zip(output.iter_mut())
+            .enumerate()
+        {
+            *output = 1.0 - (self.dimension - index) as f64 * sigmoid(value);
+        }
+        Ok(())
     }
 }

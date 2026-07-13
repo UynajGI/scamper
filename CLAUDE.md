@@ -121,37 +121,39 @@ Key patterns:
 
 ### MCMC.rs Architecture
 
-Statistical inference layer with Euclidean-state kernels:
+Statistical inference layer with Euclidean-state and Hamiltonian kernels:
 
 | Module | Directory | Purpose |
 |--------|-----------|---------|
-| `LogDensity` trait | `target.rs` | `log_density(&mut self, &[f64]) -> f64` — closures via `FnLogDensity` |
-| `ChainState` | `state/` | Position + cached log-density + gradient cache + `exchange_position_with` for PT |
-| `TransitionKernel<T>` | `kernel/` | Target-typed trait (T on trait) — 3 built-in + `Then`/`Repeat`/`Mixture` composition + `GibbsKernel` for exact conditionals |
-| `GibbsUpdate<T>` | `kernel/gibbs.rs` | Target-specific exact conditional/block update with atomic workspace commit |
-| `adaptation` | `adaptation/` | `RobbinsMonroScale` (global), `DiagonalCovarianceAdaptation`, `DenseCovarianceAdaptation` (matrix Welford + regularized Cholesky) |
-| `GaussianScale::Dense` | `proposal/gaussian.rs` | Row-major lower Cholesky factor, `fill_displacement()` for correlated proposals |
-| `Bijector` trait | `transform/` | `forward`/`inverse` with log-Jacobian — `Identity`, `Positive`, `Interval`, `Ordered`, `Simplex`, `Product` |
-| `TransformedTarget` | `transform/target.rs` | Wraps constrained target + bijector, auto Jacobian correction in unconstrained space |
-| `tempering` | `tempering.rs` | `run_parallel_tempering` — Rayon local transitions + alternating neighbor exchange, generic cross-target ratio |
-| `MemoryTrace` | `trace/` | Contiguous row-major posterior storage with thinning, HDF5 via hdf5 0.8 dataset-builder API |
+| `LogDensity` / `DifferentiableLogDensity` | `target.rs` | Value-only and combined value/gradient target contracts; closure adapters for both |
+| `ChainState` | `state/` | Position + cached log density + synchronized accepted-state gradient + PT exchange |
+| `TransitionKernel<T>` | `kernel/` | Target-typed trait — RW/component/slice/Gibbs, static composition and `StaticHmc<M>` |
+| `metric` | `metric/` | Unit, diagonal and dense inverse-mass geometries; momentum, velocity and kinetic energy |
+| `LeapfrogIntegrator` | `integrator.rs` | Private `PhasePoint` integration workspace and invalid-trajectory reporting |
+| `adaptation` | `adaptation/` | RW covariance/scale adaptation plus HMC dual averaging and windowed metric adaptation |
+| `Bijector` / `DifferentiableBijector` | `transform/` | Value transforms, gradient pullback and log-Jacobian gradients |
+| `TransformedTarget` | `transform/target.rs` | Constrained target wrapper implementing value-only or differentiable unconstrained density |
+| `tempering` | `tempering.rs` | Rayon local transitions + alternating generic neighboring exchange |
+| `MemoryTrace` | `trace/` | Contiguous posterior storage, thinning, divergence/energy error, JSON/HDF5 |
 | `diagnostics` | `diagnostics/` | Rank-normalized R-hat, bulk/tail ESS, MCSE |
-| `ChainCheckpoint` | `checkpoint.rs` | JSON serde envelope for kernel+RNG+state+trace |
-| `McmcSampler` | `carlo_adapter.rs` | Implements `MonteCarlo` — drop-in for `Scheduler.run_one()` |
+| `ChainCheckpoint` | `checkpoint.rs` | Serde envelope for kernel workspace, warmup, RNG, state and trace |
+| `McmcSampler` | `carlo_adapter.rs` | Carlo lifecycle adapter including HMC scalar diagnostics |
 
 Key patterns:
 - `McmcSampler<T, K, Tr>` implements `MonteCarlo`; use `Run::from_parts()` to avoid `FromParams`
-- `TransitionKernel<T>` is target-typed (T on trait, not just on method) — enables model-specific Gibbs/block kernels
+- `TransitionKernel<T>` remains target-typed, enabling model-specific Gibbs kernels and compile-time HMC gradient capability
+- `StaticHmc<M>` integrates only private workspace and atomically commits position/log-density/gradient after acceptance
+- Metrics store inverse mass `G=M^-1`; dense momentum sampling solves `L^T p=z` for `G=L L^T`
+- HMC divergence is an invalid trajectory or absolute energy error above the configured threshold
+- `HmcWarmup` uses dual averaging plus fast/slow/fast windows; metric changes reset dual averaging and terminal warmup retunes step size
+- Configured HMC warmup length must match the runner/scheduler warmup transition count; incomplete warmup is rejected
+- Differentiable transforms provide analytic pullback and Jacobian gradients for Positive/Interval/Ordered/Simplex/Product
 - `TransitionReport.subtransitions` counts elementary transitions in composed kernels; `merge()` aggregates across children
-- Adaptation freezes on phase transition to `Sampling`; `on_phase_end(Warmup)` also freezes
 - Traces never mix chain IDs; multi-chain uses Rayon with deterministic per-chain seeds
-- Component-wise and slice kernels use private workspace (`#[serde(default)]`) for atomic commit: copy position once (O(d)), work on workspace, `swap_position` at end (single iteration per transition)
-- `EuclideanState::validate()` checks finite position/density and gradient cache consistency
-- Gibbs updaters write to private proposal workspace; error or invalid state → accepted state unchanged
-- Replica exchange: targets/kernels/RNGs/traces fixed to ladder slots; only states swap. Generic cross-target log-ratio, no β convention hard-coded
-- Dense and diagonal covariance adaptation are mutually exclusive on one kernel
-- Known issue: hdf5 feature broken workspace-wide (hdf5 0.8.1 API — Carlo.rs still uses `create_dataset_simple`)
-- Known issue: `json_checkpoint_preserves_exact_future_trajectory` pre-existing failure (f64 serde round-trip ULP differences in MemoryTrace)
+- Component-wise, slice, Gibbs and HMC kernels preserve accepted-state validity on proposal/integration errors
+- Replica exchange keeps targets/kernels/RNGs/traces fixed to ladder slots and swaps only synchronized states
+- Default-feature MCMC.rs v0.3 validation passes fmt, check, Clippy and all 41 tests on Rust 1.90.0
+- Optional HDF5 validation is currently blocked before MCMC.rs source compilation: `hdf5-sys 0.8.1` does not recognize the installed HDF5 1.14.5 header format
 
 
 ## Behavioral Guidelines

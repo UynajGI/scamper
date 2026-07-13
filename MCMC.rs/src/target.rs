@@ -37,6 +37,49 @@ where
     }
 }
 
+/// Adapter from a combined mutable value/gradient closure.
+pub struct FnDifferentiableLogDensity<F> {
+    function: F,
+    gradient_workspace: Vec<f64>,
+}
+
+impl<F> FnDifferentiableLogDensity<F> {
+    pub const fn new(function: F) -> Self {
+        Self {
+            function,
+            gradient_workspace: Vec::new(),
+        }
+    }
+
+    pub fn into_inner(self) -> F {
+        self.function
+    }
+}
+
+impl<F> LogDensity<[f64]> for FnDifferentiableLogDensity<F>
+where
+    F: FnMut(&[f64], &mut [f64]) -> f64 + Send,
+{
+    fn log_density(&mut self, state: &[f64]) -> f64 {
+        if self.gradient_workspace.len() != state.len() {
+            self.gradient_workspace.resize(state.len(), 0.0);
+        }
+        (self.function)(state, &mut self.gradient_workspace)
+    }
+}
+
+impl<F> DifferentiableLogDensity for FnDifferentiableLogDensity<F>
+where
+    F: FnMut(&[f64], &mut [f64]) -> f64 + Send,
+{
+    fn log_density_and_gradient(&mut self, position: &[f64], gradient: &mut [f64]) -> f64 {
+        if gradient.len() != position.len() {
+            return f64::NAN;
+        }
+        (self.function)(position, gradient)
+    }
+}
+
 /// Validate the target-density convention used throughout the crate.
 pub(crate) fn validate_log_density(value: f64) -> Result<f64, crate::McmcError> {
     if value.is_nan() || value == f64::INFINITY {
