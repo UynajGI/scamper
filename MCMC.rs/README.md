@@ -47,5 +47,4 @@ assert!(report.passed, "{report:?}");
 # Ok::<(), mcmc_rs::McmcError>(())
 ```
 
-See `examples/nuts_gaussian.rs`, `examples/gradient_check.rs`, `REVIEW_V04.md`
-and `VALIDATION_REPORT.md`.
+See `examples/nuts_gaussian.rs` and `examples/gradient_check.rs`.

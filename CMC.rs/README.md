@@ -119,7 +119,7 @@ let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
 
 `OrthorhombicCell<D>` supports periodic minimum-image geometry in two, three, or other const-generic dimensions. `LennardJones` supports truncated, shifted-potential and shifted-force cutoffs plus Lorentz-Berthelot species mixing. `CellList<D>` stores packed particle buckets and applies accepted membership changes in O(1), without rebuilding on each trial. Translation scale adaptation is restricted to thermalization and frozen before production measurements.
 
-See [`PARTICLE_CORE.md`](PARTICLE_CORE.md) for the transaction and parameter contract.
+The transaction and parameter contract follows the same five-part sampling foundation described above.
 
 ## Batch updates and energy caches
 
@@ -141,7 +141,7 @@ use cmc_rs::MetropolisCore;
 let algorithm = MetropolisCore::new().with_energy_check_interval(1_000);
 ```
 
-Debug/test builds audit automatically every 1024 completed sweeps. Optimized builds can enable the same cross-kernel policy with the `cache-audit` feature. Audits detect rather than repair lattice energy drift, particle cell-list inconsistencies, and generalized-ensemble macrostate cache mismatches. See [`CACHE_AUDIT.md`](CACHE_AUDIT.md).
+Debug/test builds audit automatically every 1024 completed sweeps. Optimized builds can enable the same cross-kernel policy with the `cache-audit` feature. Audits detect rather than repair lattice energy drift, particle cell-list inconsistencies, and generalized-ensemble macrostate cache mismatches.
 
 ## Explicit Carlo.rs lifecycle
 
@@ -174,7 +174,7 @@ let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
     .run_one::<IsingGraphWormMC>(&params);
 ```
 
-The reusable `WormModel`/`WormKernel` boundary is intended for future integer-current, dimer and loop-gas representations without pretending that their defect constraints are identical. See [`CLASSICAL_WORM.md`](CLASSICAL_WORM.md).
+The reusable `WormModel`/`WormKernel` boundary is intended for future integer-current, dimer and loop-gas representations without pretending that their defect constraints are identical.
 
 ## Classical dynamics and event time
 
@@ -184,7 +184,7 @@ Stage 6 adds three distinct dynamic paths:
 - `GillespieKernel` and `BklIsingKernel` for continuous-time rejection-free events;
 - `HardSphereEventChain<D>` for lifted rejection-free hard-sphere chains.
 
-Carlo.rs now records sweeps, attempts, accepted/executed moves and event time as separate clocks. `KineticIsingBklMC` advances fixed event-time observation windows, while event-chain lifted distance remains a separate geometric quantity. See [`CLASSICAL_DYNAMICS.md`](CLASSICAL_DYNAMICS.md).
+Carlo.rs now records sweeps, attempts, accepted/executed moves and event time as separate clocks. `KineticIsingBklMC` advances fixed event-time observation windows, while event-chain lifted distance remains a separate geometric quantity.
 
 ## Arbitrary weighted graph
 
@@ -232,5 +232,3 @@ impl PairInteraction for MyModel {
 ```
 
 Models with genuine multi-site/factor interactions can implement `Hamiltonian` directly and inherit the correct scratch-backed batch path.
-
-See [`ARCHITECTURE.md`](ARCHITECTURE.md), [`CLASSICAL_WORM.md`](CLASSICAL_WORM.md), [`CLASSICAL_DYNAMICS.md`](CLASSICAL_DYNAMICS.md), [`MIGRATION.md`](MIGRATION.md), [`CACHE_AUDIT.md`](CACHE_AUDIT.md), [`BENCHMARKS.md`](BENCHMARKS.md), and [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md).

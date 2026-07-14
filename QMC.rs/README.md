@@ -5,8 +5,8 @@ provides scheduling, deterministic RNG setup, thermalization/measurement
 phases, accumulation, parallel backends, and result analysis. QMC.rs provides
 representations, model catalogs, update kernels, invariants, and estimators.
 
-The module boundary and extension rules are documented in
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+The module boundary and extension rules are documented in the workspace
+`CLAUDE.md`.
 
 ## Continuous-time lattice QMC
 
@@ -90,6 +90,7 @@ wormhole move.
 Set parameter `model` to:
 
 - `jc` / `jaynes_cummings`;
+- `rw_crw` / `weber`;
 - `xxz`;
 - `xyz`;
 - `rabi` / `impurity` / `rotated_impurity`.
@@ -157,7 +158,7 @@ The JC retarded flip weight is `lambda`; the XXZ exchange-vertex weight is
 
 ```text
 beta                    required inverse temperature
-model                   jc | xxz | xyz | rabi
+model                   jc | rw_crw | xxz | xyz | rabi
 bath                    single | powerlaw | tabulated
 C                       optional positive diagonal shift
 h_z                     diagonal field in the sampled basis

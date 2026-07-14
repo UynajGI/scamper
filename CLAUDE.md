@@ -10,7 +10,7 @@ Hooks via **lefthook** (`lefthook.yml` + `.lefthook/` scripts). pre-commit runs 
 | Crate | Role | Description |
 |-------|------|-------------|
 | Carlo.rs | Core framework | `MonteCarlo` trait, `Scheduler`, `Context`, `Measurements`, `Merge`, `Backend` |
-| QMC.rs | Quantum MC | General continuous-time lattice QMC (`LatticeSpinQmc` implements `MonteCarlo` + `FromParams`), impurity wormhole QMC
+| QMC.rs | Quantum MC | General continuous-time lattice QMC (`LatticeSpinQmc` implements `MonteCarlo` + `FromParams`), impurity wormhole QMC (JC, RW-CRW, XXZ, XYZ, Rabi; single-mode/power-law/tabulated baths; transverse improved estimators)
 | CMC.rs | Classical MC | Lattice + particle + generalized ensembles + classical worm (Ising HT graph) + classical dynamics (Kawasaki, Gillespie/BKL, hard-sphere event-chain). `ClassicalMC` wrapper, `IsingGraphWormMC`, `KineticIsingMC`, `HardSphereEventChainMC` Carlo.rs adapters |
 | MCMC.rs | Statistical MC | Euclidean-state kernels (RW/component/slice/Gibbs/composed, StaticHMC, NUTS), dual-averaging step-size tuning, windowed metric adaptation, unit/diagonal/dense metrics, constrained transforms, replica exchange, multi-chain diagnostics (R-hat, ESS, E-BFMI), Carlo.rs adapter |
 
@@ -90,11 +90,13 @@ Two production backends:
 | `lattice::observables` | `lattice/observables.rs` | Magnetization, staggered magnetization, susceptibility, energy, vertex orders, edge SzSz correlation |
 | `lattice::mc` | `lattice/mc.rs` | `LatticeSpinQmc` — Carlo.rs adapter (`MonteCarlo` + `FromParams`); warmup schedule adaptation |
 
-### Spin-Boson QMC
+### Impurity QMC
 
 | Module | File | Purpose |
 |--------|------|---------|
-| `impurity` | `impurity/` | Continuous-time retarded-interaction wormhole QMC (quantum impurity, bath samplers, scattering table, diagonal/loop updates, observables) |
+| `impurity::core` | `impurity/core/` | Shared impurity primitives: imaginary-time helpers, `Spin` type, `VertexKind`, `BasisTransform` (sampled↔physical axis map), `KernelDirection`, `SignFreeMetadata`/`PairFlipGauge` (multi-channel validation), `connected_susceptibility`, `TransverseLoopAccumulator` |
+| `impurity::spin_boson` | `impurity/spin_boson/` | Spin-1/2 impurity coupled to Gaussian bosonic baths: `Bath` (single mode, power-law, tabulated), `ImpurityModel` (JC, RW-CRW, XXZ, XYZ, rotated Rabi), `CouplingNormalization`, sampled/physical-basis observables |
+| `impurity::spin_boson::wormhole` | `impurity/spin_boson/wormhole/` | Retarded-interaction wormhole engine: `WormholeConfiguration` (doubly-linked endpoint list + BTreeMap time index), `ScatteringTable` (LowBounce/Metropolis), `WormholeEngine` (diagonal add/remove + directed-loop blocks), `ImpurityQmc` (Carlo.rs adapter) |
 
 ### Shared
 

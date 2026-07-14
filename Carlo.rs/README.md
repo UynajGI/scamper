@@ -109,7 +109,7 @@ For convergence-driven warmup, `Scheduler::run_controlled` accepts an `AdaptiveR
 | `mpi` | MPI distributed backend | `libopenmpi-dev` |
 | `strict-repro` | Strict reproducibility mode | None |
 
-Random streams are derived from logical task/run/chain/replica/phase identities through `RngStreamKey`; see [`RNG_STREAMS.md`](RNG_STREAMS.md).
+Random streams are derived from logical task/run/chain/replica/phase identities through `RngStreamKey`.
 
 ## Installation
 
