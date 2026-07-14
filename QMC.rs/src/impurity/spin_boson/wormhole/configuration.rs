@@ -10,9 +10,109 @@ use std::collections::BTreeMap;
 use rand::Rng;
 use rand::RngExt;
 
-use super::error::ImpurityError;
-use super::model::ImpurityModel;
-use super::vertex::{EndpointId, LegId, LegSide, Spin, Vertex, VertexId, LEGS_PER_VERTEX};
+use crate::impurity::core::local_hilbert::Spin;
+use crate::impurity::core::operators::{A_IN, A_OUT, B_IN, B_OUT, LEGS_PER_VERTEX};
+use crate::impurity::spin_boson::model::ImpurityModel;
+use crate::impurity::ImpurityError;
+
+/// Stable slot identifier for a vertex in the configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VertexId(pub usize);
+
+/// Identifies one endpoint of a retarded vertex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EndpointId {
+    pub vertex: VertexId,
+    /// `0` for endpoint A and `1` for endpoint B.
+    pub endpoint: u8,
+}
+
+/// Which side of an endpoint a leg belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LegSide {
+    Incoming,
+    Outgoing,
+}
+
+/// Fully qualified identifier for one of the four legs of a retarded vertex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LegId {
+    pub endpoint: EndpointId,
+    pub side: LegSide,
+}
+
+impl LegId {
+    pub fn from_local(vertex: VertexId, local_leg: usize) -> Self {
+        match local_leg {
+            A_IN => Self {
+                endpoint: EndpointId {
+                    vertex,
+                    endpoint: 0,
+                },
+                side: LegSide::Incoming,
+            },
+            A_OUT => Self {
+                endpoint: EndpointId {
+                    vertex,
+                    endpoint: 0,
+                },
+                side: LegSide::Outgoing,
+            },
+            B_IN => Self {
+                endpoint: EndpointId {
+                    vertex,
+                    endpoint: 1,
+                },
+                side: LegSide::Incoming,
+            },
+            B_OUT => Self {
+                endpoint: EndpointId {
+                    vertex,
+                    endpoint: 1,
+                },
+                side: LegSide::Outgoing,
+            },
+            _ => panic!("invalid local leg index: {local_leg}"),
+        }
+    }
+
+    pub fn local_leg(self) -> usize {
+        match (self.endpoint.endpoint, self.side) {
+            (0, LegSide::Incoming) => A_IN,
+            (0, LegSide::Outgoing) => A_OUT,
+            (1, LegSide::Incoming) => B_IN,
+            (1, LegSide::Outgoing) => B_OUT,
+            _ => unreachable!("invalid endpoint value: {}", self.endpoint.endpoint),
+        }
+    }
+}
+
+/// One sampled retarded interaction vertex.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Vertex {
+    pub tau_a: f64,
+    pub tau_b: f64,
+    pub omega: f64,
+    pub interaction: usize,
+    pub kind: usize,
+}
+
+/// One time-ordered endpoint in the legacy/test worldline index.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Event {
+    pub time: f64,
+    pub vertex: usize,
+    pub endpoint: usize,
+}
+
+impl Event {
+    pub fn incoming_leg(self) -> usize {
+        LEGS_PER_VERTEX * self.vertex + 2 * self.endpoint
+    }
+    pub fn outgoing_leg(self) -> usize {
+        self.incoming_leg() + 1
+    }
+}
 
 /// Sortable key for the time-ordered BTreeMap.
 ///
@@ -478,6 +578,11 @@ impl WormholeConfiguration {
             ));
         }
         Ok(self.diagonal_vertices[rng.random_range(0..self.diagonal_vertices.len())])
+    }
+
+    /// Imaginary time of one endpoint.
+    pub fn endpoint_time(&self, endpoint: EndpointId) -> Result<f64, ImpurityError> {
+        Ok(self.endpoint_links(endpoint)?.key.time)
     }
 
     /// Iterator over endpoints in time order.
@@ -946,7 +1051,6 @@ impl WormholeConfiguration {
 
 #[cfg(test)]
 mod legacy {
-    use super::super::vertex::Event;
     use super::*;
 
     /// Cached sorted events and worldline leg links for one update.

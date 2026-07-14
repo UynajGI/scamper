@@ -1,18 +1,19 @@
 //! Carlo.rs adapter for the generic impurity wormhole engine.
 
-use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, Params};
+use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, Params, RunPhase};
 use rand::RngExt;
 
 use crate::algorithm::{QmcKernel, UpdateSchedule};
 
-use super::bath::{Bath, PowerLawBath, SingleModeBath, TabulatedBath};
-use super::configuration::WormholeConfiguration;
-use super::error::ImpurityError;
-use super::model::{CouplingNormalization, ImpurityModel};
-use super::observables::measure_observables;
-use super::updates::{LoopStartPolicy, WormholeEngine};
+use crate::impurity::core::operators::PhysicalAxis;
+use crate::impurity::spin_boson::bath::{Bath, PowerLawBath, SingleModeBath, TabulatedBath};
+use crate::impurity::spin_boson::model::{CouplingNormalization, ImpurityModel};
+use crate::impurity::spin_boson::observables::measure_observables;
+use crate::impurity::spin_boson::wormhole::configuration::WormholeConfiguration;
+use crate::impurity::spin_boson::wormhole::updates::{LoopStartPolicy, WormholeEngine};
+use crate::impurity::ImpurityError;
 
-/// Runnable quantum-impurity QMC simulation.
+/// Runnable single-impurity impurity QMC simulation.
 ///
 /// Carlo.rs calls [`MonteCarlo::sweep`] and [`MonteCarlo::measure`]; this type
 /// delegates physics updates to [`WormholeEngine`] and records observables in
@@ -104,17 +105,105 @@ impl MonteCarlo for ImpurityQmc {
             &mut ctx.rng,
         )
         .unwrap_or_else(|error| panic!("impurity measurement failed: {error}"));
+        let transverse = self
+            .engine
+            .take_transverse_sample(self.configuration.beta());
 
+        // Historical labels remain available. ChiZ is explicitly the raw
+        // second-moment estimator; use ChiZConnected/ChiPhysical*Connected in
+        // post-processing for finite-field linear response.
         ctx.measure("MagnetizationSigmaZ", observables.magnetization_sigma_z);
         ctx.measure("MagnetizationSz", observables.magnetization_s_z);
         ctx.measure("M2SigmaZ", observables.magnetization_sigma_z_squared);
+        ctx.measure(
+            "M2Sz",
+            observables.magnetization_s_z * observables.magnetization_s_z,
+        );
         ctx.measure("M4SigmaZ", observables.magnetization_sigma_z_fourth);
-        ctx.measure("ChiZ", observables.susceptibility_z);
+        ctx.measure("ChiZ", observables.susceptibility_z_raw);
         ctx.measure(
             "CorrelationSigmaZHalf",
             observables.correlation_sigma_z_half,
         );
         ctx.measure("CorrelationSzHalf", observables.correlation_s_z_half);
+
+        ctx.measure(
+            "SampledMagnetizationSigmaZ",
+            observables.magnetization_sigma_z,
+        );
+        ctx.measure("SampledMagnetizationSz", observables.magnetization_s_z);
+        ctx.measure(
+            "SampledM2Sz",
+            observables.magnetization_s_z * observables.magnetization_s_z,
+        );
+        ctx.measure("ChiSampledZRaw", observables.susceptibility_z_raw);
+        ctx.measure("SampledCorrelationSzHalf", observables.correlation_s_z_half);
+
+        let physical_axis = observables.physical_axis_for_sampled_z.axis;
+        let physical_label = physical_axis.label();
+        ctx.measure(
+            &format!("PhysicalMagnetizationS{physical_label}"),
+            observables.physical_magnetization_s,
+        );
+        ctx.measure(
+            &format!("PhysicalM2S{physical_label}"),
+            observables.physical_magnetization_s * observables.physical_magnetization_s,
+        );
+        ctx.measure(
+            &format!("ChiPhysical{physical_label}Raw"),
+            self.configuration.beta()
+                * observables.physical_magnetization_s
+                * observables.physical_magnetization_s,
+        );
+        ctx.measure(
+            &format!("PhysicalCorrelationS{physical_label}Half"),
+            observables.physical_correlation_s_half,
+        );
+
+        ctx.measure_array("SampledCorrelationSx", &transverse.sampled_x);
+        ctx.measure_array("SampledCorrelationSy", &transverse.sampled_y);
+        ctx.measure_array("SampledCorrelationNormal", &transverse.normal);
+        ctx.measure_array("SampledCorrelationAnomalous", &transverse.anomalous);
+        ctx.measure("SampledCorrelationSxHalf", transverse.sampled_x_half);
+        ctx.measure("SampledCorrelationSyHalf", transverse.sampled_y_half);
+        ctx.measure("ChiSampledXImproved", transverse.susceptibility_x);
+        ctx.measure("ChiSampledYImproved", transverse.susceptibility_y);
+
+        for (sampled_axis, correlations, half, susceptibility) in [
+            (
+                PhysicalAxis::X,
+                transverse.sampled_x.as_slice(),
+                transverse.sampled_x_half,
+                transverse.susceptibility_x,
+            ),
+            (
+                PhysicalAxis::Y,
+                transverse.sampled_y.as_slice(),
+                transverse.sampled_y_half,
+                transverse.susceptibility_y,
+            ),
+        ] {
+            let physical = self
+                .engine
+                .model()
+                .basis_transform()
+                .physical_for_sampled(sampled_axis);
+            let label = physical.axis.label();
+            // The sign cancels in same-axis two-point functions.
+            ctx.measure_array(&format!("PhysicalCorrelationS{label}"), correlations);
+            ctx.measure(&format!("PhysicalCorrelationS{label}Half"), half);
+            ctx.measure(&format!("ChiPhysical{label}Improved"), susceptibility);
+        }
+
+        ctx.measure(
+            "TransverseEstimatorLoops",
+            transverse.completed_loops as f64,
+        );
+        ctx.measure(
+            "MeanTransverseLoopLengthBeta",
+            transverse.mean_path_length_beta,
+        );
+
         ctx.measure("ExpansionOrder", observables.expansion_order);
         ctx.measure("DiagonalOrder", observables.diagonal_order);
         ctx.measure("OffDiagonalOrder", observables.offdiagonal_order);
@@ -122,6 +211,8 @@ impl MonteCarlo for ImpurityQmc {
             "ShiftedInteractionEnergy",
             observables.shifted_interaction_energy,
         );
+        ctx.measure("ExpansionOrderEnergy", observables.expansion_order_energy);
+        ctx.measure("SpinCouplingEnergy", observables.spin_coupling_energy);
 
         let stats = self.engine.stats();
         ctx.measure("DiagonalAcceptance", stats.diagonal_acceptance());
@@ -129,6 +220,13 @@ impl MonteCarlo for ImpurityQmc {
         ctx.measure("BounceFraction", stats.bounce_fraction());
         ctx.measure("WormholeFraction", stats.wormhole_fraction());
         ctx.measure("LoopAbortFraction", stats.loop_abort_fraction());
+    }
+
+    fn on_phase_start(&mut self, phase: RunPhase, _ctx: &mut Context<Self::Rng>) {
+        if phase == RunPhase::Measurement {
+            // Warmup loop paths are not production measurements.
+            self.engine.clear_transverse_estimator();
+        }
     }
 
     fn name(&self) -> &'static str {
@@ -220,6 +318,9 @@ impl FromParams for ImpurityQmc {
         simulation
             .engine
             .set_loop_start_policy(loop_start_policy_from_params(params)?);
+        simulation
+            .engine
+            .set_transverse_bins(params.get::<usize>("transverse_bins").unwrap_or(64));
         simulation.set_adaptive_schedule(
             params.get::<bool>("adaptive_schedule").unwrap_or(true),
             params.get::<usize>("adaptation_interval").unwrap_or(100),

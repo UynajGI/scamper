@@ -1,11 +1,15 @@
-//! Sign-free impurity model catalogs for wormhole QMC.
+//! Sign-free spin-boson impurity model catalogs for wormhole QMC.
 
 use std::collections::HashMap;
 
-use super::bath::{Bath, KernelDirection};
-use super::error::ImpurityError;
-use super::scattering::{ScatteringPolicy, ScatteringTable};
-use super::vertex::{Spin, VertexKind, LEGS_PER_VERTEX};
+use crate::impurity::core::kernel::{
+    validate_sign_free_channels, KernelDirection, PairFlipGauge, SignFreeMetadata, SignFreeReport,
+};
+use crate::impurity::core::local_hilbert::Spin;
+use crate::impurity::core::operators::{BasisTransform, VertexKind, LEGS_PER_VERTEX};
+use crate::impurity::spin_boson::bath::Bath;
+use crate::impurity::spin_boson::wormhole::scattering::{ScatteringPolicy, ScatteringTable};
+use crate::impurity::ImpurityError;
 
 /// Normalization convention for rotating- and counter-rotating amplitudes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -36,20 +40,14 @@ impl CouplingNormalization {
     }
 }
 
-/// Supported impurity Hamiltonian families.
+/// Supported spin-boson Hamiltonian families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImpurityModelKind {
-    /// Rotating-wave coupling `a^dagger S_- + S_+ a`.
     JaynesCummings,
-    /// Directed rotating/counter-rotating impurity coupling.
     RwCrw,
-    /// U(1)-symmetric coordinate coupling with `lambda_x = lambda_y`.
     Xxz,
-    /// Fully anisotropic coordinate coupling.
     Xyz,
-    /// Original longitudinal impurity/Rabi model after a spin-axis rotation.
     RotatedImpurity,
-    /// User-composed positive interaction channels.
     Custom,
 }
 
@@ -62,10 +60,14 @@ pub struct InteractionChannel {
     kinds: Vec<VertexKind>,
     diagonal_lookup: HashMap<(Spin, Spin), usize>,
     scattering: ScatteringTable,
+    diagonal_shift: f64,
+    sign_free: SignFreeMetadata,
 }
 
 impl InteractionChannel {
-    /// Construct a channel and precompute its scattering table.
+    /// Construct a backward-compatible custom channel. Pair-flip channels are
+    /// marked as having an unspecified gauge and therefore cannot be composed
+    /// with another interaction until metadata is supplied explicitly.
     pub fn new(
         name: impl Into<String>,
         bath: Bath,
@@ -75,7 +77,6 @@ impl InteractionChannel {
         Self::with_scattering_policy(name, bath, direction, kinds, ScatteringPolicy::LowBounce)
     }
 
-    /// Construct a channel with an explicit local scattering policy.
     pub fn with_scattering_policy(
         name: impl Into<String>,
         bath: Bath,
@@ -83,11 +84,63 @@ impl InteractionChannel {
         kinds: Vec<VertexKind>,
         scattering_policy: ScatteringPolicy,
     ) -> Result<Self, ImpurityError> {
+        let pair_flip = catalog_has_pair_flips(&kinds);
+        let metadata = SignFreeMetadata::new(
+            BasisTransform::identity(),
+            if pair_flip {
+                PairFlipGauge::Unspecified
+            } else {
+                PairFlipGauge::NotPresent
+            },
+        );
+        Self::with_metadata_and_policy(
+            name,
+            bath,
+            direction,
+            kinds,
+            0.0,
+            metadata,
+            scattering_policy,
+        )
+    }
+
+    /// Construct a channel with an explicit constant shift and sign-free basis.
+    pub fn with_metadata(
+        name: impl Into<String>,
+        bath: Bath,
+        direction: KernelDirection,
+        kinds: Vec<VertexKind>,
+        diagonal_shift: f64,
+        sign_free: SignFreeMetadata,
+    ) -> Result<Self, ImpurityError> {
+        Self::with_metadata_and_policy(
+            name,
+            bath,
+            direction,
+            kinds,
+            diagonal_shift,
+            sign_free,
+            ScatteringPolicy::LowBounce,
+        )
+    }
+
+    pub fn with_metadata_and_policy(
+        name: impl Into<String>,
+        bath: Bath,
+        direction: KernelDirection,
+        kinds: Vec<VertexKind>,
+        diagonal_shift: f64,
+        sign_free: SignFreeMetadata,
+        scattering_policy: ScatteringPolicy,
+    ) -> Result<Self, ImpurityError> {
         if kinds.is_empty() {
             return Err(ImpurityError::parameter(
                 "vertex catalog",
                 "an interaction channel needs at least one vertex kind",
             ));
+        }
+        if !diagonal_shift.is_finite() {
+            return Err(ImpurityError::parameter("C", "must be finite"));
         }
 
         let mut pattern_lookup: HashMap<[Spin; LEGS_PER_VERTEX], usize> = HashMap::new();
@@ -133,78 +186,63 @@ impl InteractionChannel {
             kinds,
             diagonal_lookup,
             scattering,
+            diagonal_shift,
+            sign_free,
         })
     }
 
-    /// Channel name.
     pub fn name(&self) -> &str {
         &self.name
     }
-
-    /// Normalized bath shape.
     pub fn bath(&self) -> &Bath {
         &self.bath
     }
-
-    /// Directed or symmetric kernel.
     pub fn direction(&self) -> KernelDirection {
         self.direction
     }
-
-    /// Local vertex kinds.
     pub fn kinds(&self) -> &[VertexKind] {
         &self.kinds
     }
-
-    /// One local vertex kind.
     pub fn kind(&self, kind: usize) -> &VertexKind {
         &self.kinds[kind]
     }
-
-    /// Diagonal kind matching the two endpoint worldline spins.
     pub fn diagonal_kind(&self, spin_a: Spin, spin_b: Spin) -> usize {
         self.diagonal_lookup[&(spin_a, spin_b)]
     }
-
-    /// Local scattering table.
     pub fn scattering(&self) -> &ScatteringTable {
         &self.scattering
     }
+    pub fn diagonal_shift(&self) -> f64 {
+        self.diagonal_shift
+    }
+    pub fn sign_free_metadata(&self) -> SignFreeMetadata {
+        self.sign_free
+    }
 }
 
-/// Complete single-impurity model sampled by the generic engine.
+/// Complete single-spin impurity model sampled by the wormhole engine.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImpurityModel {
     kind: ImpurityModelKind,
     name: String,
     interactions: Vec<InteractionChannel>,
+    sign_free: SignFreeReport,
 }
 
 impl ImpurityModel {
-    /// Compose a custom sign-free impurity model from positive interaction channels.
-    ///
-    /// This is the extension point for additional retarded impurity models: the
-    /// generic update engine only depends on the channel catalogs and does not
-    /// need model-specific branches.
     pub fn from_interactions(
         name: impl Into<String>,
         interactions: Vec<InteractionChannel>,
     ) -> Result<Self, ImpurityError> {
-        if interactions.is_empty() {
-            return Err(ImpurityError::parameter(
-                "interactions",
-                "a model requires at least one interaction channel",
-            ));
-        }
+        let sign_free = validate_model_channels(&interactions)?;
         Ok(Self {
             kind: ImpurityModelKind::Custom,
             name: name.into(),
             interactions,
+            sign_free,
         })
     }
 
-    /// Jaynes-Cummings model with effective retarded weight
-    /// `lambda = integral J(omega)/(pi omega) d omega`.
     pub fn jaynes_cummings(
         bath: Bath,
         lambda: f64,
@@ -217,22 +255,24 @@ impl ImpurityModel {
         } else {
             Vec::new()
         };
-        let kinds = build_catalog(0.0, h_z, constant, &offdiagonal)?;
-        let interaction = InteractionChannel::new("jc", bath, KernelDirection::Directed, kinds)?;
-        Ok(Self {
-            kind: ImpurityModelKind::JaynesCummings,
-            name: "JaynesCummings".into(),
-            interactions: vec![interaction],
-        })
+        let (kinds, shift) = build_catalog(0.0, h_z, constant, &offdiagonal)?;
+        let interaction = InteractionChannel::with_metadata(
+            "jc",
+            bath,
+            KernelDirection::Directed,
+            kinds,
+            shift,
+            SignFreeMetadata::default(),
+        )?;
+        Self::from_single(
+            ImpurityModelKind::JaynesCummings,
+            "JaynesCummings",
+            interaction,
+        )
     }
 
-    /// Directed rotating/counter-rotating impurity model.
-    ///
-    /// The retarded operator is `rho^dagger(tau_a) rho(tau_b)` with
-    /// `rho = g (r sigma_- + c sigma_+)`. `vertex_scale` is the integrated bath
-    /// activity, for example `2 alpha omega_c / s` for a sharp-cutoff power law
-    /// or `g^2 / omega_0` for one oscillator. The diagonal vertex is
-    /// `C + tunnelling (q_a + q_b) / 4` in the sampled spin basis.
+    /// Directed `rho^dagger(tau_a) rho(tau_b)` interaction with
+    /// `rho = g (r S_- + c S_+)`.
     pub fn rw_crw(
         bath: Bath,
         vertex_scale: f64,
@@ -246,22 +286,19 @@ impl ImpurityModel {
         if !tunnelling.is_finite() {
             return Err(ImpurityError::parameter("tunnelling", "must be finite"));
         }
-        let kinds =
+        let (kinds, shift) =
             build_rw_crw_catalog(vertex_scale, crw_ratio, tunnelling, normalization, constant)?;
-        let interaction =
-            InteractionChannel::new("rw_crw", bath, KernelDirection::Directed, kinds)?;
-        Ok(Self {
-            kind: ImpurityModelKind::RwCrw,
-            name: "RwCrwImpurity".into(),
-            interactions: vec![interaction],
-        })
+        let interaction = InteractionChannel::with_metadata(
+            "rw_crw",
+            bath,
+            KernelDirection::Directed,
+            kinds,
+            shift,
+            SignFreeMetadata::default(),
+        )?;
+        Self::from_single(ImpurityModelKind::RwCrw, "RwCrwImpurity", interaction)
     }
 
-    /// U(1)-symmetric XXZ impurity model.
-    ///
-    /// `lambda_xy` and `lambda_z` are the normalized retarded couplings. For
-    /// Weber's power law they are `2 alpha_l omega_c / s`; for one coordinate
-    /// mode they are `g_l^2 / omega_0`.
     pub fn xxz(
         bath: Bath,
         lambda_xy: f64,
@@ -271,27 +308,24 @@ impl ImpurityModel {
     ) -> Result<Self, ImpurityError> {
         validate_nonnegative("lambda_xy", lambda_xy)?;
         validate_nonnegative("lambda_z", lambda_z)?;
-        let mut offdiagonal = Vec::new();
         let exchange = 0.5 * lambda_xy;
+        let mut offdiagonal = Vec::new();
         if exchange > 0.0 {
             offdiagonal.push(("Sminus_A_Splus_B", [1, -1, -1, 1], exchange));
             offdiagonal.push(("Splus_A_Sminus_B", [-1, 1, 1, -1], exchange));
         }
-        let kinds = build_catalog(lambda_z, h_z, constant, &offdiagonal)?;
-        let interaction = InteractionChannel::new("xxz", bath, KernelDirection::Symmetric, kinds)?;
-        Ok(Self {
-            kind: ImpurityModelKind::Xxz,
-            name: "XxzImpurity".into(),
-            interactions: vec![interaction],
-        })
+        let (kinds, shift) = build_catalog(lambda_z, h_z, constant, &offdiagonal)?;
+        let interaction = InteractionChannel::with_metadata(
+            "xxz",
+            bath,
+            KernelDirection::Symmetric,
+            kinds,
+            shift,
+            SignFreeMetadata::default(),
+        )?;
+        Self::from_single(ImpurityModelKind::Xxz, "XxzImpurity", interaction)
     }
 
-    /// Fully anisotropic XYZ coordinate-coupled impurity model.
-    ///
-    /// The pair-flip coefficient is sampled with its absolute value. If
-    /// `lambda_x < lambda_y`, a global `z`-axis phase rotation exchanges the
-    /// sign; closed partition-function configurations contain pair vertices in
-    /// parity-compatible combinations, so the sign-free catalog is unchanged.
     pub fn xyz(
         bath: Bath,
         lambda_x: f64,
@@ -314,54 +348,134 @@ impl ImpurityModel {
             offdiagonal.push(("Splus_A_Splus_B", [-1, 1, -1, 1], pair));
             offdiagonal.push(("Sminus_A_Sminus_B", [1, -1, 1, -1], pair));
         }
-        let kinds = build_catalog(lambda_z, h_z, constant, &offdiagonal)?;
-        let interaction = InteractionChannel::new("xyz", bath, KernelDirection::Symmetric, kinds)?;
-        Ok(Self {
-            kind: ImpurityModelKind::Xyz,
-            name: "XyzImpurity".into(),
-            interactions: vec![interaction],
-        })
+        let (kinds, shift) = build_catalog(lambda_z, h_z, constant, &offdiagonal)?;
+        let (basis, gauge) = if pair == 0.0 {
+            (BasisTransform::identity(), PairFlipGauge::NotPresent)
+        } else if lambda_x >= lambda_y {
+            (BasisTransform::identity(), PairFlipGauge::Positive)
+        } else {
+            (BasisTransform::swap_xy_gauge(), PairFlipGauge::Negative)
+        };
+        let interaction = InteractionChannel::with_metadata(
+            "xyz",
+            bath,
+            KernelDirection::Symmetric,
+            kinds,
+            shift,
+            SignFreeMetadata::new(basis, gauge),
+        )?;
+        Self::from_single(ImpurityModelKind::Xyz, "XyzImpurity", interaction)
     }
 
-    /// Original impurity/Rabi model in the rotated basis where the bath
-    /// couples to `S_x` and the tunnelling field becomes a diagonal `h_z`.
+    /// Original longitudinal Rabi/spin-boson model represented in a basis where
+    /// sampled `S_z` is physical `S_x`.
     pub fn rotated_impurity(
         bath: Bath,
         lambda: f64,
         tunnelling: f64,
         constant: Option<f64>,
     ) -> Result<Self, ImpurityError> {
-        let mut model = Self::xyz(bath, lambda, 0.0, 0.0, tunnelling, constant)?;
-        model.kind = ImpurityModelKind::RotatedImpurity;
-        model.name = "RotatedImpurity".into();
-        model.interactions[0].name = "rotated_impurity".into();
-        Ok(model)
+        validate_nonnegative("lambda", lambda)?;
+        let exchange = 0.25 * lambda;
+        let pair = 0.25 * lambda;
+        let mut offdiagonal = Vec::new();
+        if exchange > 0.0 {
+            offdiagonal.push(("Sminus_A_Splus_B", [1, -1, -1, 1], exchange));
+            offdiagonal.push(("Splus_A_Sminus_B", [-1, 1, 1, -1], exchange));
+            offdiagonal.push(("Splus_A_Splus_B", [-1, 1, -1, 1], pair));
+            offdiagonal.push(("Sminus_A_Sminus_B", [1, -1, 1, -1], pair));
+        }
+        let (kinds, shift) = build_catalog(0.0, tunnelling, constant, &offdiagonal)?;
+        let metadata = SignFreeMetadata::new(
+            BasisTransform::rotated_rabi(),
+            if pair > 0.0 {
+                PairFlipGauge::Positive
+            } else {
+                PairFlipGauge::NotPresent
+            },
+        );
+        let interaction = InteractionChannel::with_metadata(
+            "rotated_impurity",
+            bath,
+            KernelDirection::Symmetric,
+            kinds,
+            shift,
+            metadata,
+        )?;
+        Self::from_single(
+            ImpurityModelKind::RotatedImpurity,
+            "RotatedImpurity",
+            interaction,
+        )
     }
 
-    /// Model kind.
+    fn from_single(
+        kind: ImpurityModelKind,
+        name: impl Into<String>,
+        interaction: InteractionChannel,
+    ) -> Result<Self, ImpurityError> {
+        let interactions = vec![interaction];
+        let sign_free = validate_model_channels(&interactions)?;
+        Ok(Self {
+            kind,
+            name: name.into(),
+            interactions,
+            sign_free,
+        })
+    }
+
     pub fn kind(&self) -> ImpurityModelKind {
         self.kind
     }
-
-    /// Model name used by Carlo.rs metadata.
     pub fn name(&self) -> &str {
         &self.name
     }
-
-    /// Independently sampled interaction channels.
     pub fn interactions(&self) -> &[InteractionChannel] {
         &self.interactions
     }
-
-    /// One interaction channel.
     pub fn interaction(&self, interaction: usize) -> &InteractionChannel {
         &self.interactions[interaction]
     }
-
-    /// Number of interaction channels eligible for diagonal insertion.
     pub fn interaction_count(&self) -> usize {
         self.interactions.len()
     }
+    pub fn basis_transform(&self) -> BasisTransform {
+        self.sign_free.basis
+    }
+    pub fn sign_free_report(&self) -> SignFreeReport {
+        self.sign_free
+    }
+    pub fn total_diagonal_shift(&self) -> f64 {
+        self.interactions
+            .iter()
+            .map(InteractionChannel::diagonal_shift)
+            .sum()
+    }
+    /// Correct `-<n>/beta`, which is measured in the shifted expansion, back
+    /// to the spin-plus-coupling energy by adding the model's constant shifts.
+    pub fn corrected_spin_coupling_energy(&self, expansion_order: f64, beta: f64) -> f64 {
+        -expansion_order / beta + self.total_diagonal_shift()
+    }
+}
+
+fn validate_model_channels(
+    interactions: &[InteractionChannel],
+) -> Result<SignFreeReport, ImpurityError> {
+    let metadata: Vec<_> = interactions
+        .iter()
+        .map(|channel| (channel.name(), channel.sign_free_metadata()))
+        .collect();
+    validate_sign_free_channels(&metadata)
+}
+
+fn catalog_has_pair_flips(kinds: &[VertexKind]) -> bool {
+    kinds.iter().any(|kind| {
+        !kind.is_diagonal()
+            && kind.spin(0) != kind.spin(1)
+            && kind.spin(2) != kind.spin(3)
+            && kind.spin(0) == kind.spin(2)
+            && kind.spin(1) == kind.spin(3)
+    })
 }
 
 type OffDiagonalSpec<'a> = (&'a str, [Spin; LEGS_PER_VERTEX], f64);
@@ -371,7 +485,7 @@ fn build_catalog(
     h_z: f64,
     constant: Option<f64>,
     offdiagonal: &[OffDiagonalSpec<'_>],
-) -> Result<Vec<VertexKind>, ImpurityError> {
+) -> Result<(Vec<VertexKind>, f64), ImpurityError> {
     let maximum_offdiagonal = offdiagonal
         .iter()
         .map(|(_, _, weight)| *weight)
@@ -414,7 +528,7 @@ fn build_catalog(
             kinds.push(VertexKind::new(*name, *legs, *weight, false)?);
         }
     }
-    Ok(kinds)
+    Ok((kinds, shift))
 }
 
 fn build_rw_crw_catalog(
@@ -423,7 +537,7 @@ fn build_rw_crw_catalog(
     tunnelling: f64,
     normalization: CouplingNormalization,
     constant: Option<f64>,
-) -> Result<Vec<VertexKind>, ImpurityError> {
+) -> Result<(Vec<VertexKind>, f64), ImpurityError> {
     let diagonal_constant =
         constant.unwrap_or_else(|| 0.5 * tunnelling.abs() + 16.0 * f64::EPSILON);
     if !diagonal_constant.is_finite() {
@@ -446,12 +560,13 @@ fn build_rw_crw_catalog(
     let (rotating, counter_rotating) = normalization.amplitudes(crw_ratio);
     for spin_a in [-1, 1] {
         for spin_b in [-1, 1] {
-            let amplitude_a = if spin_a == 1 {
+            // rho^dagger at A = r S+ + c S-, rho at B = r S- + c S+.
+            let amplitude_a = if spin_a == -1 {
                 rotating
             } else {
                 counter_rotating
             };
-            let amplitude_b = if spin_b == -1 {
+            let amplitude_b = if spin_b == 1 {
                 rotating
             } else {
                 counter_rotating
@@ -467,7 +582,7 @@ fn build_rw_crw_catalog(
             }
         }
     }
-    Ok(kinds)
+    Ok((kinds, diagonal_constant))
 }
 
 fn validate_nonnegative(field: &str, value: f64) -> Result<(), ImpurityError> {
@@ -483,7 +598,7 @@ fn validate_nonnegative(field: &str, value: f64) -> Result<(), ImpurityError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::impurity::bath::SingleModeBath;
+    use crate::impurity::spin_boson::bath::SingleModeBath;
 
     fn mode() -> Bath {
         Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"))
@@ -499,55 +614,30 @@ mod tests {
     }
 
     #[test]
-    fn custom_model_accepts_positive_channels() {
-        let kinds = build_catalog(0.0, 0.0, None, &[]).expect("catalog");
-        let channel =
-            InteractionChannel::new("identity", mode(), KernelDirection::Symmetric, kinds)
-                .expect("channel");
-        let model =
-            ImpurityModel::from_interactions("custom", vec![channel]).expect("custom model");
-        assert_eq!(model.kind(), ImpurityModelKind::Custom);
+    fn pure_rotating_rw_crw_catalog_matches_jaynes_cummings() {
+        let rw = ImpurityModel::rw_crw(
+            mode(),
+            0.4,
+            0.0,
+            0.1,
+            CouplingNormalization::FixedRw,
+            Some(0.6),
+        )
+        .expect("rw");
+        let jc = ImpurityModel::jaynes_cummings(mode(), 0.4, 0.1, Some(0.6)).expect("jc");
+        let rw_kinds = rw.interaction(0).kinds();
+        let jc_kinds = jc.interaction(0).kinds();
+        assert_eq!(rw_kinds.len(), jc_kinds.len());
+        for (left, right) in rw_kinds.iter().zip(jc_kinds) {
+            assert_eq!(left.legs(), right.legs());
+            assert_eq!(left.is_diagonal(), right.is_diagonal());
+            assert!((left.weight() - right.weight()).abs() < 1.0e-14);
+        }
+        assert_eq!(rw.interaction(0).direction(), KernelDirection::Directed);
     }
 
     #[test]
-    fn duplicate_vertex_patterns_are_rejected() {
-        let kinds = vec![
-            VertexKind::new("first", [1, 1, 1, 1], 1.0, true).expect("kind"),
-            VertexKind::new("second", [1, 1, 1, 1], 2.0, true).expect("kind"),
-        ];
-        assert!(InteractionChannel::new("bad", mode(), KernelDirection::Directed, kinds).is_err());
-    }
-
-    #[test]
-    fn jc_has_one_flip_kind() {
-        let model = ImpurityModel::jaynes_cummings(mode(), 0.4, 0.2, None).expect("model");
-        let offdiag = model
-            .interaction(0)
-            .kinds()
-            .iter()
-            .filter(|kind| !kind.is_diagonal());
-        assert_eq!(offdiag.count(), 1);
-    }
-
-    #[test]
-    fn pure_rw_catalog_selects_only_the_rotating_channel() {
-        let model =
-            ImpurityModel::rw_crw(mode(), 0.4, 0.0, 0.1, CouplingNormalization::FixedRw, None)
-                .expect("model");
-        let offdiagonal: Vec<_> = model
-            .interaction(0)
-            .kinds()
-            .iter()
-            .filter(|kind| !kind.is_diagonal())
-            .collect();
-        assert_eq!(offdiagonal.len(), 1);
-        assert_eq!(offdiagonal[0].legs(), &[1, -1, -1, 1]);
-        assert!((offdiagonal[0].weight() - 0.4).abs() < 1.0e-14);
-        assert_eq!(model.interaction(0).direction(), KernelDirection::Directed);
-    }
-
-    #[test]
-    fn rw_crw_weights_match_reference_formula() {
+    fn rw_crw_weights_follow_rho_dagger_rho_orientation() {
         let scale = 0.7;
         let ratio = 0.2;
         let model = ImpurityModel::rw_crw(
@@ -561,8 +651,8 @@ mod tests {
         .expect("model");
         for spin_a in [-1, 1] {
             for spin_b in [-1, 1] {
-                let first = if spin_a == 1 { 1.0 } else { ratio };
-                let second = if spin_b == -1 { 1.0 } else { ratio };
+                let first = if spin_a == -1 { 1.0 } else { ratio };
+                let second = if spin_b == 1 { 1.0 } else { ratio };
                 let expected = scale * first * second;
                 let legs = [spin_a, -spin_a, spin_b, -spin_b];
                 let actual = kind_weight(&model, legs).expect("off-diagonal kind");
@@ -572,11 +662,11 @@ mod tests {
     }
 
     #[test]
-    fn fixed_total_diagonal_point_matches_rotated_rabi_catalog() {
+    fn fixed_total_equal_rw_crw_matches_rotated_rabi_weights() {
         let scale = 0.8;
         let tunnelling = 0.15;
         let constant = Some(0.6);
-        let rw_crw = ImpurityModel::rw_crw(
+        let rw = ImpurityModel::rw_crw(
             mode(),
             scale,
             1.0,
@@ -584,36 +674,37 @@ mod tests {
             CouplingNormalization::FixedTotal,
             constant,
         )
-        .expect("RW-CRW model");
-        let rabi = ImpurityModel::rotated_impurity(mode(), scale, tunnelling, constant)
-            .expect("Rabi model");
-        for kind in rw_crw.interaction(0).kinds() {
-            let matching = kind_weight(&rabi, *kind.legs()).expect("matching Rabi kind");
+        .expect("rw");
+        let rabi =
+            ImpurityModel::rotated_impurity(mode(), scale, tunnelling, constant).expect("rabi");
+        for kind in rw.interaction(0).kinds() {
+            let matching = kind_weight(&rabi, *kind.legs()).expect("matching kind");
             assert!((matching - kind.weight()).abs() < 1.0e-14);
         }
     }
 
     #[test]
-    fn xxz_has_two_exchange_kinds() {
-        let model = ImpurityModel::xxz(mode(), 0.4, 0.1, 0.0, None).expect("model");
-        let offdiag = model
-            .interaction(0)
-            .kinds()
-            .iter()
-            .filter(|kind| !kind.is_diagonal());
-        assert_eq!(offdiag.count(), 2);
+    fn rotated_model_reports_physical_axis_map() {
+        let model = ImpurityModel::rotated_impurity(mode(), 0.5, 0.2, Some(0.4)).expect("model");
+        assert_eq!(model.basis_transform(), BasisTransform::rotated_rabi());
     }
 
     #[test]
-    fn xyz_has_pair_flips() {
-        let model = ImpurityModel::xyz(mode(), 0.5, 0.1, 0.2, 0.0, None).expect("model");
-        let names: Vec<_> = model
-            .interaction(0)
-            .kinds()
-            .iter()
-            .map(VertexKind::name)
-            .collect();
-        assert!(names.contains(&"Splus_A_Splus_B"));
-        assert!(names.contains(&"Sminus_A_Sminus_B"));
+    fn shifted_energy_is_corrected_by_catalog_constant() {
+        let model = ImpurityModel::xxz(mode(), 0.2, 0.1, 0.0, Some(0.7)).expect("model");
+        assert!((model.corrected_spin_coupling_energy(10.0, 5.0) + 1.3).abs() < 1e-14);
+    }
+
+    #[test]
+    fn multi_channel_unspecified_pair_flip_gauge_is_rejected() {
+        let (kinds, _) =
+            build_catalog(0.0, 0.0, Some(1.0), &[("pair", [-1, 1, -1, 1], 0.2)]).expect("catalog");
+        let pair = InteractionChannel::new("pair", mode(), KernelDirection::Symmetric, kinds)
+            .expect("channel");
+        let (diag_kinds, _) = build_catalog(0.0, 0.0, Some(1.0), &[]).expect("catalog");
+        let diagonal =
+            InteractionChannel::new("diagonal", mode(), KernelDirection::Symmetric, diag_kinds)
+                .expect("channel");
+        assert!(ImpurityModel::from_interactions("bad", vec![pair, diagonal]).is_err());
     }
 }

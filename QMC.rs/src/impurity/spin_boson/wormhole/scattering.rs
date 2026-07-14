@@ -17,8 +17,9 @@ use std::collections::{HashMap, VecDeque};
 use rand::Rng;
 use rand::RngExt;
 
-use super::error::ImpurityError;
-use super::vertex::{Spin, VertexKind, LEGS_PER_VERTEX};
+use crate::impurity::core::local_hilbert::Spin;
+use crate::impurity::core::operators::{VertexKind, LEGS_PER_VERTEX};
+use crate::impurity::ImpurityError;
 
 /// Strategy used to construct local directed-loop rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

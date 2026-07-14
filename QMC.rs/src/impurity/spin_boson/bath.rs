@@ -11,18 +11,8 @@
 use rand::Rng;
 use rand::RngExt;
 
-use super::error::ImpurityError;
-
-/// Whether a retarded operator uses the directed propagator `D` or the
-/// symmetrized propagator `D_+`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KernelDirection {
-    /// Keep the orientation of imaginary-time propagation.  Used by JC.
-    Directed,
-    /// Sample the two orientations with equal probability.  Used by Hermitian
-    /// coordinate couplings such as XXZ, XYZ, and rotated impurity models.
-    Symmetric,
-}
+pub use crate::impurity::core::kernel::KernelDirection;
+use crate::impurity::ImpurityError;
 
 /// A sampled bath frequency and directed time difference.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1,54 +1,120 @@
-//! Continuous-time wormhole QMC for quantum impurity models.
+//! Quantum-impurity solvers built on QMC.rs and Carlo.rs.
 //!
-//! # Representation
-//!
-//! Quadratic bosons are integrated out exactly.  The remaining partition
-//! function is sampled as a stochastic expansion in retarded four-leg spin
-//! vertices `nu = (interaction, kind, omega, tau, tau')`.  A diagonal update
-//! changes the expansion order and samples the bath variables.  A directed
-//! loop changes diagonal and off-diagonal vertex kinds; crossing from one
-//! endpoint to the other is the nonlocal wormhole move.
-//!
-//! # Included model catalogs
-//!
-//! - Jaynes-Cummings (directed `S_+ D S_-` vertex)
-//! - directed rotating/counter-rotating (RW-CRW) impurity
-//! - U(1)-symmetric XXZ impurity
-//! - fully anisotropic XYZ impurity
-//! - original impurity / single-mode Rabi after a spin-axis rotation
-//!
-//! # Included bath samplers
-//!
-//! - single mode
-//! - sharp-cutoff power law
-//! - arbitrary positive discrete/tabulated spectrum
-//!
-//! [`ImpurityQmc`] is the Carlo.rs-facing entry point.  Lower-level users can
-//! combine [`ImpurityModel`], [`WormholeConfiguration`], and
-//! [`WormholeEngine`] directly.
+//! The production implementation currently provided here is the spin-boson
+//! retarded-interaction wormhole solver.  The module boundary is intentionally
+//! wider than that solver so fermionic, bosonic, and Bose-Fermi impurity
+//! backends can be added without forcing them into the same configuration or
+//! update representation.
 
-pub mod bath;
-pub mod configuration;
-pub mod error;
-pub mod mc;
-pub mod model;
-pub mod observables;
-pub mod scattering;
-pub mod updates;
-pub mod vertex;
+use thiserror::Error;
 
-pub use bath::{Bath, BathSample, KernelDirection, PowerLawBath, SingleModeBath, TabulatedBath};
-pub use configuration::WormholeConfiguration;
-pub use error::ImpurityError;
-pub use mc::ImpurityQmc;
-pub use model::{CouplingNormalization, ImpurityModel, ImpurityModelKind, InteractionChannel};
-pub use observables::{
-    correlation_sigma_z, integrated_sigma_z, measure_observables, ImpurityObservables,
+pub mod core;
+pub mod spin_boson;
+
+/// Impurity-solver construction and runtime errors.
+#[derive(Debug, Error, Clone, PartialEq)]
+pub enum ImpurityError {
+    /// A physical or algorithmic parameter is outside its valid domain.
+    #[error("invalid parameter `{field}`: {reason}")]
+    InvalidParameter {
+        /// Parameter name.
+        field: String,
+        /// Human-readable reason.
+        reason: String,
+    },
+
+    /// A sampled operator configuration violates worldline invariants.
+    #[error("invalid wormhole configuration: {0}")]
+    InvalidConfiguration(String),
+
+    /// The directed loop exceeded its safety limit without closing.
+    #[error("directed loop did not close after {steps} steps (limit {limit})")]
+    LoopDidNotClose {
+        /// Steps executed.
+        steps: usize,
+        /// Configured safety limit.
+        limit: usize,
+    },
+
+    /// A tabulated bath was malformed.
+    #[error("invalid tabulated bath: {0}")]
+    InvalidBathTable(String),
+}
+
+impl ImpurityError {
+    /// Convenience constructor for invalid parameters.
+    pub fn parameter(field: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::InvalidParameter {
+            field: field.into(),
+            reason: reason.into(),
+        }
+    }
+}
+
+pub use core::estimator::{
+    connected_susceptibility, register_connected_susceptibility, TransverseCorrelationSample,
 };
-pub use scattering::{
+pub use core::kernel::{KernelDirection, PairFlipGauge, SignFreeMetadata, SignFreeReport};
+pub use core::local_hilbert::Spin;
+pub use core::operators::{
+    BasisTransform, PhysicalAxis, SignedAxis, VertexKind, A_IN, A_OUT, B_IN, B_OUT, LEGS_PER_VERTEX,
+};
+pub use spin_boson::bath::{Bath, BathSample, PowerLawBath, SingleModeBath, TabulatedBath};
+pub use spin_boson::model::{
+    CouplingNormalization, ImpurityModel, ImpurityModelKind, InteractionChannel,
+};
+pub use spin_boson::observables::{
+    correlation_sigma_z, integrated_sigma_z, measure_observables, register_impurity_evaluables,
+    ImpurityObservables,
+};
+pub use spin_boson::wormhole::configuration::{
+    EndpointId, Event, LegId, LegSide, Vertex, VertexId, WormholeConfiguration,
+};
+pub use spin_boson::wormhole::mc::ImpurityQmc;
+pub use spin_boson::wormhole::scattering::{
     kind_after_flips, ScatteringChoice, ScatteringDiagnostics, ScatteringPolicy, ScatteringTable,
 };
-pub use updates::{LoopStartPolicy, WormholeEngine, WormholeUpdateStats};
-pub use vertex::{
-    EndpointId, Event, LegId, LegSide, Spin, Vertex, VertexId, VertexKind, A_IN, A_OUT, B_IN, B_OUT,
-};
+pub use spin_boson::wormhole::updates::{LoopStartPolicy, WormholeEngine, WormholeUpdateStats};
+
+// Compatibility modules preserve the old `crate::impurity::<module>::...`
+// paths while the implementation lives in the more precise hierarchy above.
+pub mod error {
+    pub use super::ImpurityError;
+}
+
+pub mod bath {
+    pub use super::core::kernel::KernelDirection;
+    pub use super::spin_boson::bath::*;
+}
+
+pub mod model {
+    pub use super::spin_boson::model::*;
+}
+
+pub mod observables {
+    pub use super::spin_boson::observables::*;
+}
+
+pub mod configuration {
+    pub use super::spin_boson::wormhole::configuration::*;
+}
+
+pub mod scattering {
+    pub use super::spin_boson::wormhole::scattering::*;
+}
+
+pub mod updates {
+    pub use super::spin_boson::wormhole::updates::*;
+}
+
+pub mod mc {
+    pub use super::spin_boson::wormhole::mc::*;
+}
+
+pub mod vertex {
+    pub use super::core::local_hilbert::Spin;
+    pub use super::core::operators::{VertexKind, A_IN, A_OUT, B_IN, B_OUT, LEGS_PER_VERTEX};
+    pub use super::spin_boson::wormhole::configuration::{
+        EndpointId, Event, LegId, LegSide, Vertex, VertexId,
+    };
+}

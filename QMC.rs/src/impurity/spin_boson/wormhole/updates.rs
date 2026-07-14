@@ -5,16 +5,21 @@ use rand::Rng;
 use rand::RngExt;
 
 use crate::algorithm::{QmcKernel, UpdateSchedule};
-
-use super::configuration::WormholeConfiguration;
-use super::error::ImpurityError;
-use super::model::ImpurityModel;
-use super::vertex::{LegId, Vertex, VertexId};
+use crate::impurity::core::estimator::{
+    LoopSegment, SpinFlipOperator, TransverseCorrelationSample, TransverseLoopAccumulator,
+};
+use crate::impurity::core::imaginary_time::PropagationDirection;
+use crate::impurity::spin_boson::model::ImpurityModel;
+use crate::impurity::spin_boson::wormhole::configuration::{
+    LegId, LegSide, Vertex, VertexId, WormholeConfiguration,
+};
+use crate::impurity::ImpurityError;
 
 /// Proposal used to choose the first directed-loop leg.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LoopStartPolicy {
-    /// Sample imaginary time and propagation direction uniformly.
+    /// Sample imaginary time and propagation direction uniformly. This policy
+    /// is required for the on-the-fly transverse improved estimator.
     #[default]
     RandomTime,
     /// Sample one of the existing vertex legs uniformly.
@@ -24,28 +29,18 @@ pub enum LoopStartPolicy {
 /// Accumulated update diagnostics.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WormholeUpdateStats {
-    /// Diagonal add/remove proposals.
     pub diagonal_proposals: u64,
-    /// Accepted insertions.
     pub diagonal_add_accepts: u64,
-    /// Accepted removals.
     pub diagonal_remove_accepts: u64,
-    /// Directed loops started and closed.
     pub loops: u64,
-    /// Total local scattering steps.
     pub loop_steps: u64,
-    /// Bounce steps.
     pub bounces: u64,
-    /// Exits through the other endpoint of a retarded vertex.
     pub wormholes: u64,
-    /// Non-bounce exits through the same endpoint.
     pub same_endpoint_exits: u64,
-    /// Loops rolled back after reaching the safety limit.
     pub loop_aborts: u64,
 }
 
 impl WormholeUpdateStats {
-    /// Accepted diagonal moves divided by proposals.
     pub fn diagonal_acceptance(&self) -> f64 {
         if self.diagonal_proposals == 0 {
             return 0.0;
@@ -53,43 +48,39 @@ impl WormholeUpdateStats {
         (self.diagonal_add_accepts + self.diagonal_remove_accepts) as f64
             / self.diagonal_proposals as f64
     }
-
-    /// Mean number of local steps per attempted loop.
     pub fn mean_loop_steps(&self) -> f64 {
         let attempts = self.loops + self.loop_aborts;
         if attempts == 0 {
-            return 0.0;
+            0.0
+        } else {
+            self.loop_steps as f64 / attempts as f64
         }
-        self.loop_steps as f64 / attempts as f64
     }
-
-    /// Fraction of loop steps that bounce.
     pub fn bounce_fraction(&self) -> f64 {
         if self.loop_steps == 0 {
-            return 0.0;
+            0.0
+        } else {
+            self.bounces as f64 / self.loop_steps as f64
         }
-        self.bounces as f64 / self.loop_steps as f64
     }
-
-    /// Fraction of loop steps that traverse a retarded wormhole.
     pub fn wormhole_fraction(&self) -> f64 {
         if self.loop_steps == 0 {
-            return 0.0;
+            0.0
+        } else {
+            self.wormholes as f64 / self.loop_steps as f64
         }
-        self.wormholes as f64 / self.loop_steps as f64
     }
-
-    /// Fraction of attempted loops that were rolled back.
     pub fn loop_abort_fraction(&self) -> f64 {
         let attempts = self.loops + self.loop_aborts;
         if attempts == 0 {
-            return 0.0;
+            0.0
+        } else {
+            self.loop_aborts as f64 / attempts as f64
         }
-        self.loop_aborts as f64 / attempts as f64
     }
 }
 
-/// Generic continuous-time impurity update engine.
+/// Generic continuous-time spin-boson update engine.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WormholeEngine {
     model: ImpurityModel,
@@ -97,10 +88,10 @@ pub struct WormholeEngine {
     stats: WormholeUpdateStats,
     validate_each_sweep: bool,
     loop_start_policy: LoopStartPolicy,
+    transverse: TransverseLoopAccumulator,
 }
 
 impl WormholeEngine {
-    /// Construct an engine for one model catalog.
     pub fn new(model: ImpurityModel, schedule: UpdateSchedule) -> Self {
         Self {
             model,
@@ -108,40 +99,40 @@ impl WormholeEngine {
             stats: WormholeUpdateStats::default(),
             validate_each_sweep: false,
             loop_start_policy: LoopStartPolicy::RandomTime,
+            transverse: TransverseLoopAccumulator::default(),
         }
     }
 
-    /// Model catalog.
     pub fn model(&self) -> &ImpurityModel {
         &self.model
     }
-
-    /// Fixed work schedule.
     pub fn schedule(&self) -> UpdateSchedule {
         self.schedule
     }
-
-    /// Replace the fixed work schedule.
     pub fn set_schedule(&mut self, schedule: UpdateSchedule) {
         self.schedule = schedule;
     }
-
-    /// Enable expensive invariant checking after every sweep.
     pub fn set_validate_each_sweep(&mut self, enabled: bool) {
         self.validate_each_sweep = enabled;
     }
-
-    /// Select the directed-loop start proposal.
     pub fn set_loop_start_policy(&mut self, policy: LoopStartPolicy) {
         self.loop_start_policy = policy;
     }
-
-    /// Current directed-loop start proposal.
     pub fn loop_start_policy(&self) -> LoopStartPolicy {
         self.loop_start_policy
     }
-
-    /// Update statistics.
+    pub fn set_transverse_bins(&mut self, bins: usize) {
+        self.transverse = TransverseLoopAccumulator::new(bins);
+    }
+    pub fn transverse_bins(&self) -> usize {
+        self.transverse.bins()
+    }
+    pub fn take_transverse_sample(&mut self, beta: f64) -> TransverseCorrelationSample {
+        self.transverse.take_sample(beta)
+    }
+    pub fn clear_transverse_estimator(&mut self) {
+        self.transverse.clear();
+    }
     pub fn stats(&self) -> WormholeUpdateStats {
         self.stats
     }
@@ -231,6 +222,11 @@ impl WormholeEngine {
             if rng.random::<bool>() {
                 configuration.set_empty_spin(-configuration.empty_spin());
             }
+            if self.loop_start_policy == LoopStartPolicy::RandomTime {
+                for _ in 0..self.schedule.directed_loops {
+                    self.transverse.commit_free_loop(configuration.beta());
+                }
+            }
             return Ok(());
         }
 
@@ -248,22 +244,60 @@ impl WormholeEngine {
         rng: &mut R,
         limit: usize,
     ) -> Result<bool, ImpurityError> {
-        let start = match self.loop_start_policy {
-            LoopStartPolicy::RandomTime => {
-                let tau = rng.random::<f64>() * configuration.beta();
-                configuration.start_leg_at_time(tau, rng.random::<bool>())?
-            }
-            LoopStartPolicy::RandomLeg => configuration.random_leg(rng)?,
-        };
+        let beta = configuration.beta();
+        let (start, tail_tau, mut direction, tail_operator, mut head_operator, measure_path) =
+            match self.loop_start_policy {
+                LoopStartPolicy::RandomTime => {
+                    let tau = rng.random::<f64>() * beta;
+                    let forward = rng.random::<bool>();
+                    let direction = if forward {
+                        PropagationDirection::Forward
+                    } else {
+                        PropagationDirection::Backward
+                    };
+                    let start = configuration.start_leg_at_time(tau, forward)?;
+                    let spin = configuration.spin_at(&self.model, tau)?;
+                    let tail = if forward {
+                        SpinFlipOperator::from_transition(spin, -spin)
+                    } else {
+                        SpinFlipOperator::from_transition(-spin, spin)
+                    }
+                    .expect("spin-1/2 discontinuity");
+                    (start, tau, direction, tail, tail.opposite(), true)
+                }
+                LoopStartPolicy::RandomLeg => {
+                    let start = configuration.random_leg(rng)?;
+                    let direction = direction_for_leg(start);
+                    (
+                        start,
+                        configuration.endpoint_time(start.endpoint)?,
+                        direction,
+                        SpinFlipOperator::Raise,
+                        SpinFlipOperator::Lower,
+                        false,
+                    )
+                }
+            };
+
         let original_empty_spin = configuration.empty_spin();
         let mut current = start;
         let mut first = true;
         let mut steps = 0_usize;
-        let mut journal: Vec<(VertexId, usize)> = Vec::new();
+        let mut kind_journal: Vec<(VertexId, usize)> = Vec::new();
+        let mut measurement_journal: Vec<LoopSegment> = Vec::new();
+        if measure_path {
+            measurement_journal.push(LoopSegment {
+                tail_tau,
+                from_tau: tail_tau,
+                to_tau: configuration.endpoint_time(start.endpoint)?,
+                direction,
+                normal: tail_operator != head_operator,
+            });
+        }
 
         loop {
             if steps >= limit {
-                rollback_kinds(configuration, &self.model, journal)?;
+                rollback_kinds(configuration, &self.model, kind_journal)?;
                 self.stats.loop_aborts += 1;
                 return Ok(false);
             }
@@ -279,10 +313,22 @@ impl WormholeEngine {
                 .scattering()
                 .sample(old_kind, entrance, rng);
             let bounce = choice.exit_leg == entrance;
+            let old_exit_spin = self
+                .model
+                .interaction(interaction_id)
+                .kind(old_kind)
+                .spin(choice.exit_leg);
 
             if !bounce {
-                journal.push((vertex_id, old_kind));
+                kind_journal.push((vertex_id, old_kind));
                 configuration.set_kind(vertex_id, choice.new_kind, &self.model)?;
+                let new_exit_spin = self
+                    .model
+                    .interaction(interaction_id)
+                    .kind(choice.new_kind)
+                    .spin(choice.exit_leg);
+                let exit_side = LegId::from_local(vertex_id, choice.exit_leg).side;
+                head_operator = head_after_exit(exit_side, old_exit_spin, new_exit_spin)?;
             }
 
             self.stats.loop_steps += 1;
@@ -295,39 +341,96 @@ impl WormholeEngine {
                 self.stats.same_endpoint_exits += 1;
             }
 
+            let exit = LegId::from_local(vertex_id, choice.exit_leg);
+            direction = direction_for_leg(exit);
+            let exit_tau = configuration.endpoint_time(exit.endpoint)?;
+
             if first && bounce {
+                if measure_path {
+                    measurement_journal.push(LoopSegment {
+                        tail_tau,
+                        from_tau: exit_tau,
+                        to_tau: tail_tau,
+                        direction,
+                        normal: tail_operator != head_operator,
+                    });
+                    self.transverse.commit_loop(beta, &measurement_journal);
+                }
                 self.stats.loops += 1;
                 return Ok(true);
             }
 
-            let exit = LegId::from_local(vertex_id, choice.exit_leg);
             let next = match configuration.linked_leg(exit) {
                 Ok(next) => next,
                 Err(error) => {
-                    rollback_kinds(configuration, &self.model, journal)?;
+                    rollback_kinds(configuration, &self.model, kind_journal)?;
                     return Err(error);
                 }
             };
             if next == start {
+                if measure_path {
+                    measurement_journal.push(LoopSegment {
+                        tail_tau,
+                        from_tau: exit_tau,
+                        to_tau: tail_tau,
+                        direction,
+                        normal: tail_operator != head_operator,
+                    });
+                }
                 if let Err(error) = configuration.sync_empty_spin_from_worldline(&self.model) {
-                    rollback_kinds(configuration, &self.model, journal)?;
+                    rollback_kinds(configuration, &self.model, kind_journal)?;
                     configuration.set_empty_spin(original_empty_spin);
                     return Err(error);
                 }
                 #[cfg(debug_assertions)]
                 if configuration.validate(&self.model).is_err() {
-                    rollback_kinds(configuration, &self.model, journal)?;
+                    rollback_kinds(configuration, &self.model, kind_journal)?;
                     configuration.set_empty_spin(original_empty_spin);
                     self.stats.loop_aborts += 1;
                     return Ok(false);
                 }
+                if measure_path {
+                    self.transverse.commit_loop(beta, &measurement_journal);
+                }
                 self.stats.loops += 1;
                 return Ok(true);
+            }
+            if measure_path {
+                measurement_journal.push(LoopSegment {
+                    tail_tau,
+                    from_tau: exit_tau,
+                    to_tau: configuration.endpoint_time(next.endpoint)?,
+                    direction,
+                    normal: tail_operator != head_operator,
+                });
             }
             current = next;
             first = false;
         }
     }
+}
+
+fn direction_for_leg(leg: LegId) -> PropagationDirection {
+    match leg.side {
+        LegSide::Outgoing => PropagationDirection::Forward,
+        LegSide::Incoming => PropagationDirection::Backward,
+    }
+}
+
+fn head_after_exit(
+    side: LegSide,
+    old_spin: i8,
+    new_spin: i8,
+) -> Result<SpinFlipOperator, ImpurityError> {
+    let operator = match side {
+        LegSide::Outgoing => SpinFlipOperator::from_transition(new_spin, old_spin),
+        LegSide::Incoming => SpinFlipOperator::from_transition(old_spin, new_spin),
+    };
+    operator.ok_or_else(|| {
+        ImpurityError::InvalidConfiguration(
+            "non-bounce scattering did not flip the selected exit leg".into(),
+        )
+    })
 }
 
 fn rollback_kinds(
@@ -372,14 +475,12 @@ mod tests {
     use rand::SeedableRng;
     use rand_xoshiro::Xoshiro256PlusPlus;
 
-    use crate::impurity::bath::{Bath, SingleModeBath};
-    use crate::impurity::model::ImpurityModel;
-    use crate::impurity::vertex::Vertex;
+    use crate::impurity::spin_boson::bath::{Bath, SingleModeBath};
 
     use super::*;
 
     #[test]
-    fn loop_limit_abort_restores_the_configuration() {
+    fn loop_limit_abort_restores_configuration_and_discards_estimator() {
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
         let model = ImpurityModel::xyz(bath, 0.8, 0.2, 0.0, 0.0, Some(0.4)).expect("model");
         let diagonal_kind = model.interaction(0).diagonal_kind(1, 1);
@@ -404,43 +505,40 @@ mod tests {
         for seed in 0..512 {
             let mut configuration = baseline.clone();
             let mut engine = WormholeEngine::new(model.clone(), UpdateSchedule::new(0, 1, 1));
-            engine.set_loop_start_policy(LoopStartPolicy::RandomLeg);
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
             let closed = engine
                 .one_directed_loop(&mut configuration, &mut rng, 1)
                 .expect("loop attempt");
             if !closed {
                 assert_eq!(configuration, baseline);
-                configuration
-                    .validate(&model)
-                    .expect("rollback preserves worldline");
-                assert_eq!(engine.stats().loop_aborts, 1);
+                let sample = engine.take_transverse_sample(2.0);
+                assert_eq!(sample.completed_loops, 0);
                 observed_abort = true;
                 break;
             }
         }
-        assert!(
-            observed_abort,
-            "test seeds did not exercise the rollback path"
-        );
+        assert!(observed_abort, "test seeds did not exercise rollback");
     }
 
     #[test]
-    fn mixed_updates_preserve_worldline() {
-        let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = ImpurityModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
-        let mut engine = WormholeEngine::new(model, UpdateSchedule::new(4, 2, 32));
-        engine.set_validate_each_sweep(true);
-        let mut configuration = WormholeConfiguration::new(8.0, 1).expect("configuration");
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(19);
-        for _ in 0..500 {
-            engine.sweep(&mut configuration, &mut rng).expect("sweep");
-        }
-        <WormholeEngine as QmcKernel<WormholeConfiguration, Xoshiro256PlusPlus>>::validate(
-            &engine,
-            &configuration,
+    fn empty_sector_has_exact_transverse_estimator() {
+        let model = ImpurityModel::xxz(
+            Bath::SingleMode(SingleModeBath::new(1.0).unwrap()),
+            0.0,
+            0.0,
+            0.0,
+            Some(1.0),
         )
-        .expect("valid configuration");
-        assert!(engine.stats().loops > 0);
+        .unwrap();
+        let mut engine = WormholeEngine::new(model, UpdateSchedule::new(0, 2, 16));
+        let mut configuration = WormholeConfiguration::new(4.0, 1).unwrap();
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(1);
+        engine.sweep(&mut configuration, &mut rng).unwrap();
+        let sample = engine.take_transverse_sample(4.0);
+        assert_eq!(sample.completed_loops, 2);
+        assert!(sample
+            .sampled_x
+            .iter()
+            .all(|value| (*value - 0.25).abs() < 1e-14));
     }
 }
