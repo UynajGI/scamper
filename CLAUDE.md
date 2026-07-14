@@ -10,7 +10,7 @@ Hooks via **lefthook** (`lefthook.yml` + `.lefthook/` scripts). pre-commit runs 
 | Crate | Role | Description |
 |-------|------|-------------|
 | Carlo.rs | Core framework | `MonteCarlo` trait, `Scheduler`, `Context`, `Measurements`, `Merge`, `Backend` |
-| QMC.rs | Quantum MC | General continuous-time lattice QMC (`LatticeSpinQmc` implements `MonteCarlo` + `FromParams`), spin-boson wormhole QMC
+| QMC.rs | Quantum MC | General continuous-time lattice QMC (`LatticeSpinQmc` implements `MonteCarlo` + `FromParams`), impurity wormhole QMC
 | CMC.rs | Classical MC | Lattice: `core/` → `lattice/` → `algorithms/` → `observables/` + `ClassicalMC` wrapper. Particle: `particle/` — NVT/NPT/μVT ensembles, Lennard-Jones, cell lists, rigid molecules, volume changes, grand-canonical insertion/deletion. Generalized: `generalized/` — Wang-Landau DOS estimation, multicanonical, umbrella sampling, canonical reweighting |
 | MCMC.rs | Statistical MC | Euclidean-state transition kernels (RW-Metropolis, component-wise, slice, Gibbs, composed), dense covariance adaptation, constrained transforms, replica exchange, multi-chain diagnostics, Carlo.rs adapter |
 
@@ -91,7 +91,7 @@ Two production backends:
 
 | Module | File | Purpose |
 |--------|------|---------|
-| `spin_boson` | `spin_boson/` | Continuous-time retarded-interaction wormhole QMC (spin-boson impurity, bath samplers, scattering table, diagonal/loop updates, observables) |
+| `impurity` | `impurity/` | Continuous-time retarded-interaction wormhole QMC (quantum impurity, bath samplers, scattering table, diagonal/loop updates, observables) |
 
 ### Shared
 

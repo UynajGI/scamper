@@ -1,4 +1,4 @@
-//! Carlo.rs adapter for the generic spin-boson wormhole engine.
+//! Carlo.rs adapter for the generic impurity wormhole engine.
 
 use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, Params};
 use rand::RngExt;
@@ -7,17 +7,17 @@ use crate::algorithm::{QmcKernel, UpdateSchedule};
 
 use super::bath::{Bath, PowerLawBath, SingleModeBath, TabulatedBath};
 use super::configuration::WormholeConfiguration;
-use super::error::SpinBosonError;
-use super::model::{CouplingNormalization, SpinBosonModel};
+use super::error::ImpurityError;
+use super::model::{CouplingNormalization, ImpurityModel};
 use super::observables::measure_observables;
 use super::updates::{LoopStartPolicy, WormholeEngine};
 
-/// Runnable single-impurity spin-boson QMC simulation.
+/// Runnable quantum-impurity QMC simulation.
 ///
 /// Carlo.rs calls [`MonteCarlo::sweep`] and [`MonteCarlo::measure`]; this type
 /// delegates physics updates to [`WormholeEngine`] and records observables in
 /// the Carlo.rs measurement context.
-pub struct SpinBosonQmc {
+pub struct ImpurityQmc {
     configuration: WormholeConfiguration,
     engine: WormholeEngine,
     correlation_samples: usize,
@@ -27,15 +27,15 @@ pub struct SpinBosonQmc {
     adaptation_order_sum: usize,
 }
 
-impl SpinBosonQmc {
+impl ImpurityQmc {
     /// Construct a runnable simulation from an already-built model.
     pub fn new(
-        model: SpinBosonModel,
+        model: ImpurityModel,
         beta: f64,
         empty_spin: i8,
         schedule: UpdateSchedule,
         correlation_samples: usize,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         Ok(Self {
             configuration: WormholeConfiguration::new(beta, empty_spin)?,
             engine: WormholeEngine::new(model, schedule),
@@ -86,13 +86,13 @@ impl SpinBosonQmc {
     }
 }
 
-impl MonteCarlo for SpinBosonQmc {
+impl MonteCarlo for ImpurityQmc {
     type Rng = rand_xoshiro::Xoshiro256PlusPlus;
 
     fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
         self.engine
             .sweep(&mut self.configuration, &mut ctx.rng)
-            .unwrap_or_else(|error| panic!("spin-boson wormhole sweep failed: {error}"));
+            .unwrap_or_else(|error| panic!("impurity wormhole sweep failed: {error}"));
         self.adapt_during_warmup(ctx.is_thermalized());
     }
 
@@ -103,7 +103,7 @@ impl MonteCarlo for SpinBosonQmc {
             self.correlation_samples,
             &mut ctx.rng,
         )
-        .unwrap_or_else(|error| panic!("spin-boson measurement failed: {error}"));
+        .unwrap_or_else(|error| panic!("impurity measurement failed: {error}"));
 
         ctx.measure("MagnetizationSigmaZ", observables.magnetization_sigma_z);
         ctx.measure("MagnetizationSz", observables.magnetization_s_z);
@@ -132,11 +132,11 @@ impl MonteCarlo for SpinBosonQmc {
     }
 
     fn name(&self) -> &'static str {
-        "SpinBosonQmc"
+        "ImpurityQmc"
     }
 }
 
-impl FromParams for SpinBosonQmc {
+impl FromParams for ImpurityQmc {
     fn from_params(params: &Params, rng: &mut Self::Rng) -> Result<Self, CarloError> {
         Self::validate_params(params)?;
         let beta = required::<f64>(params, "beta")?;
@@ -151,7 +151,7 @@ impl FromParams for SpinBosonQmc {
         let model = match model_name.as_str() {
             "jc" | "jaynes_cummings" | "jaynes-cummings" => {
                 let lambda = effective_coupling(params, &bath, "lambda", "g", "alpha")?;
-                SpinBosonModel::jaynes_cummings(bath, lambda, h_z, constant)
+                ImpurityModel::jaynes_cummings(bath, lambda, h_z, constant)
             }
             "rw_crw" | "rw-crw" | "weber" => {
                 let vertex_scale = effective_rw_crw_scale(params, &bath)?;
@@ -165,7 +165,7 @@ impl FromParams for SpinBosonQmc {
                     .unwrap_or(0.0);
                 let normalization = coupling_normalization_from_params(params)?;
                 let rw_crw_constant = rw_crw_constant_from_params(params, tunnelling)?;
-                SpinBosonModel::rw_crw(
+                ImpurityModel::rw_crw(
                     bath,
                     vertex_scale,
                     crw_ratio,
@@ -177,23 +177,23 @@ impl FromParams for SpinBosonQmc {
             "xxz" => {
                 let lambda_xy = effective_coupling(params, &bath, "lambda_xy", "g_xy", "alpha_xy")?;
                 let lambda_z = effective_coupling(params, &bath, "lambda_z", "g_z", "alpha_z")?;
-                SpinBosonModel::xxz(bath, lambda_xy, lambda_z, h_z, constant)
+                ImpurityModel::xxz(bath, lambda_xy, lambda_z, h_z, constant)
             }
             "xyz" => {
                 let lambda_x = effective_coupling(params, &bath, "lambda_x", "g_x", "alpha_x")?;
                 let lambda_y = effective_coupling(params, &bath, "lambda_y", "g_y", "alpha_y")?;
                 let lambda_z = effective_coupling(params, &bath, "lambda_z", "g_z", "alpha_z")?;
-                SpinBosonModel::xyz(bath, lambda_x, lambda_y, lambda_z, h_z, constant)
+                ImpurityModel::xyz(bath, lambda_x, lambda_y, lambda_z, h_z, constant)
             }
-            "spin_boson" | "spin-boson" | "rabi" | "rotated_spin_boson" => {
+            "impurity" | "rabi" | "rotated_impurity" => {
                 let lambda = effective_rabi_coupling(params, &bath)?;
                 let tunnelling = params
                     .get::<f64>("tunnelling")
                     .or_else(|| params.get::<f64>("h_x"))
                     .unwrap_or(h_z);
-                SpinBosonModel::rotated_spin_boson(bath, lambda, tunnelling, constant)
+                ImpurityModel::rotated_impurity(bath, lambda, tunnelling, constant)
             }
-            other => Err(SpinBosonError::parameter(
+            other => Err(ImpurityError::parameter(
                 "model",
                 format!("unsupported model `{other}`"),
             )),
@@ -239,7 +239,7 @@ impl FromParams for SpinBosonQmc {
     }
 }
 
-fn bath_from_params(params: &Params) -> Result<Bath, SpinBosonError> {
+fn bath_from_params(params: &Params) -> Result<Bath, ImpurityError> {
     let bath_name = params
         .get::<String>("bath")
         .unwrap_or_else(|| "powerlaw".into())
@@ -259,7 +259,7 @@ fn bath_from_params(params: &Params) -> Result<Bath, SpinBosonError> {
             let weights = parse_csv(params, "bath_weights")?;
             Ok(Bath::Tabulated(TabulatedBath::new(frequencies, weights)?))
         }
-        other => Err(SpinBosonError::parameter(
+        other => Err(ImpurityError::parameter(
             "bath",
             format!("unsupported bath `{other}`"),
         )),
@@ -393,14 +393,14 @@ fn effective_coupling(
     }
 }
 
-fn parse_csv(params: &Params, key: &str) -> Result<Vec<f64>, SpinBosonError> {
+fn parse_csv(params: &Params, key: &str) -> Result<Vec<f64>, ImpurityError> {
     let raw = params
         .get::<String>(key)
-        .ok_or_else(|| SpinBosonError::parameter(key, "comma-separated values are required"))?;
+        .ok_or_else(|| ImpurityError::parameter(key, "comma-separated values are required"))?;
     raw.split(',')
         .map(|part| {
             part.trim().parse::<f64>().map_err(|_| {
-                SpinBosonError::parameter(key, format!("cannot parse `{}` as f64", part.trim()))
+                ImpurityError::parameter(key, format!("cannot parse `{}` as f64", part.trim()))
             })
         })
         .collect()
@@ -418,9 +418,9 @@ where
         })
 }
 
-fn to_carlo_error(error: SpinBosonError) -> CarloError {
+fn to_carlo_error(error: ImpurityError) -> CarloError {
     CarloError::InvalidConfig {
-        field: "spin_boson".into(),
+        field: "impurity".into(),
         reason: error.to_string(),
     }
 }
@@ -446,7 +446,7 @@ mod tests {
             params.set("crw_ratio", 0.2);
             params.set("tunnelling", 0.1);
             let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(1);
-            let simulation = SpinBosonQmc::from_params(&params, &mut rng);
+            let simulation = ImpurityQmc::from_params(&params, &mut rng);
             assert!(simulation.is_ok(), "failed to build {model}");
         }
     }
@@ -487,7 +487,7 @@ mod tests {
             base_seed: 123,
             ..Default::default()
         };
-        let results = Scheduler::new(RayonBackend::new(1), config).run_one::<SpinBosonQmc>(&params);
+        let results = Scheduler::new(RayonBackend::new(1), config).run_one::<ImpurityQmc>(&params);
         assert!(results.get("ExpansionOrder").is_some());
         assert!(results.get("MagnetizationSz").is_some());
     }

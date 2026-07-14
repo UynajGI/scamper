@@ -1,5 +1,5 @@
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
-use qmc_rs::SpinBosonQmc;
+use qmc_rs::ImpurityQmc;
 
 fn main() {
     let mut params = Params::new();
@@ -18,7 +18,7 @@ fn main() {
         base_seed: 2_026,
         ..Default::default()
     };
-    let results = Scheduler::new(RayonBackend::new(1), run).run_one::<SpinBosonQmc>(&params);
+    let results = Scheduler::new(RayonBackend::new(1), run).run_one::<ImpurityQmc>(&params);
 
     for name in [
         "MagnetizationSz",

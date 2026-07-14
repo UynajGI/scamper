@@ -104,7 +104,7 @@ edge `Sz Sz` correlation and update diagnostics.
 
 ## Spin-boson pipeline
 
-`src/spin_boson` remains the continuous-time retarded-interaction wormhole
+`src/impurity` remains the continuous-time retarded-interaction wormhole
 backend. It is a sibling to `lattice`, not a special case inside the lattice
 engine, because its two-time bath vertices and bath proposals have different
 configuration semantics.

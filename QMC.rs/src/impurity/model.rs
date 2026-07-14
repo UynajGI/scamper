@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::bath::{Bath, KernelDirection};
-use super::error::SpinBosonError;
+use super::error::ImpurityError;
 use super::scattering::{ScatteringPolicy, ScatteringTable};
 use super::vertex::{Spin, VertexKind, LEGS_PER_VERTEX};
 
@@ -38,17 +38,17 @@ impl CouplingNormalization {
 
 /// Supported impurity Hamiltonian families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpinBosonModelKind {
+pub enum ImpurityModelKind {
     /// Rotating-wave coupling `a^dagger S_- + S_+ a`.
     JaynesCummings,
-    /// Directed rotating/counter-rotating spin-boson coupling.
+    /// Directed rotating/counter-rotating impurity coupling.
     RwCrw,
     /// U(1)-symmetric coordinate coupling with `lambda_x = lambda_y`.
     Xxz,
     /// Fully anisotropic coordinate coupling.
     Xyz,
-    /// Original longitudinal spin-boson/Rabi model after a spin-axis rotation.
-    RotatedSpinBoson,
+    /// Original longitudinal impurity/Rabi model after a spin-axis rotation.
+    RotatedImpurity,
     /// User-composed positive interaction channels.
     Custom,
 }
@@ -71,7 +71,7 @@ impl InteractionChannel {
         bath: Bath,
         direction: KernelDirection,
         kinds: Vec<VertexKind>,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         Self::with_scattering_policy(name, bath, direction, kinds, ScatteringPolicy::LowBounce)
     }
 
@@ -82,9 +82,9 @@ impl InteractionChannel {
         direction: KernelDirection,
         kinds: Vec<VertexKind>,
         scattering_policy: ScatteringPolicy,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         if kinds.is_empty() {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "vertex catalog",
                 "an interaction channel needs at least one vertex kind",
             ));
@@ -94,7 +94,7 @@ impl InteractionChannel {
         let mut diagonal_lookup = HashMap::new();
         for (kind_id, kind) in kinds.iter().enumerate() {
             if let Some(previous) = pattern_lookup.insert(*kind.legs(), kind_id) {
-                return Err(SpinBosonError::parameter(
+                return Err(ImpurityError::parameter(
                     "vertex catalog",
                     format!(
                         "duplicate leg pattern for kinds {previous} and {kind_id}: {:?}",
@@ -105,7 +105,7 @@ impl InteractionChannel {
             if kind.is_diagonal() {
                 let key = (kind.spin(0), kind.spin(2));
                 if let Some(previous) = diagonal_lookup.insert(key, kind_id) {
-                    return Err(SpinBosonError::parameter(
+                    return Err(ImpurityError::parameter(
                         "vertex catalog",
                         format!(
                             "duplicate diagonal seed for ({},{}): kinds {previous} and {kind_id}",
@@ -118,7 +118,7 @@ impl InteractionChannel {
         for spin_a in [-1, 1] {
             for spin_b in [-1, 1] {
                 if !diagonal_lookup.contains_key(&(spin_a, spin_b)) {
-                    return Err(SpinBosonError::parameter(
+                    return Err(ImpurityError::parameter(
                         "vertex catalog",
                         format!("missing diagonal seed for ({spin_a},{spin_b})"),
                     ));
@@ -174,13 +174,13 @@ impl InteractionChannel {
 
 /// Complete single-impurity model sampled by the generic engine.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SpinBosonModel {
-    kind: SpinBosonModelKind,
+pub struct ImpurityModel {
+    kind: ImpurityModelKind,
     name: String,
     interactions: Vec<InteractionChannel>,
 }
 
-impl SpinBosonModel {
+impl ImpurityModel {
     /// Compose a custom sign-free impurity model from positive interaction channels.
     ///
     /// This is the extension point for additional retarded impurity models: the
@@ -189,15 +189,15 @@ impl SpinBosonModel {
     pub fn from_interactions(
         name: impl Into<String>,
         interactions: Vec<InteractionChannel>,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         if interactions.is_empty() {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "interactions",
                 "a model requires at least one interaction channel",
             ));
         }
         Ok(Self {
-            kind: SpinBosonModelKind::Custom,
+            kind: ImpurityModelKind::Custom,
             name: name.into(),
             interactions,
         })
@@ -210,7 +210,7 @@ impl SpinBosonModel {
         lambda: f64,
         h_z: f64,
         constant: Option<f64>,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         validate_nonnegative("lambda", lambda)?;
         let offdiagonal = if lambda > 0.0 {
             vec![("Splus_A_Sminus_B", [-1, 1, 1, -1], lambda)]
@@ -220,13 +220,13 @@ impl SpinBosonModel {
         let kinds = build_catalog(0.0, h_z, constant, &offdiagonal)?;
         let interaction = InteractionChannel::new("jc", bath, KernelDirection::Directed, kinds)?;
         Ok(Self {
-            kind: SpinBosonModelKind::JaynesCummings,
+            kind: ImpurityModelKind::JaynesCummings,
             name: "JaynesCummings".into(),
             interactions: vec![interaction],
         })
     }
 
-    /// Directed rotating/counter-rotating spin-boson model.
+    /// Directed rotating/counter-rotating impurity model.
     ///
     /// The retarded operator is `rho^dagger(tau_a) rho(tau_b)` with
     /// `rho = g (r sigma_- + c sigma_+)`. `vertex_scale` is the integrated bath
@@ -240,24 +240,24 @@ impl SpinBosonModel {
         tunnelling: f64,
         normalization: CouplingNormalization,
         constant: Option<f64>,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         validate_nonnegative("vertex_scale", vertex_scale)?;
         validate_nonnegative("crw_ratio", crw_ratio)?;
         if !tunnelling.is_finite() {
-            return Err(SpinBosonError::parameter("tunnelling", "must be finite"));
+            return Err(ImpurityError::parameter("tunnelling", "must be finite"));
         }
         let kinds =
             build_rw_crw_catalog(vertex_scale, crw_ratio, tunnelling, normalization, constant)?;
         let interaction =
             InteractionChannel::new("rw_crw", bath, KernelDirection::Directed, kinds)?;
         Ok(Self {
-            kind: SpinBosonModelKind::RwCrw,
-            name: "RwCrwSpinBoson".into(),
+            kind: ImpurityModelKind::RwCrw,
+            name: "RwCrwImpurity".into(),
             interactions: vec![interaction],
         })
     }
 
-    /// U(1)-symmetric XXZ spin-boson model.
+    /// U(1)-symmetric XXZ impurity model.
     ///
     /// `lambda_xy` and `lambda_z` are the normalized retarded couplings. For
     /// Weber's power law they are `2 alpha_l omega_c / s`; for one coordinate
@@ -268,7 +268,7 @@ impl SpinBosonModel {
         lambda_z: f64,
         h_z: f64,
         constant: Option<f64>,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         validate_nonnegative("lambda_xy", lambda_xy)?;
         validate_nonnegative("lambda_z", lambda_z)?;
         let mut offdiagonal = Vec::new();
@@ -280,13 +280,13 @@ impl SpinBosonModel {
         let kinds = build_catalog(lambda_z, h_z, constant, &offdiagonal)?;
         let interaction = InteractionChannel::new("xxz", bath, KernelDirection::Symmetric, kinds)?;
         Ok(Self {
-            kind: SpinBosonModelKind::Xxz,
-            name: "XxzSpinBoson".into(),
+            kind: ImpurityModelKind::Xxz,
+            name: "XxzImpurity".into(),
             interactions: vec![interaction],
         })
     }
 
-    /// Fully anisotropic XYZ coordinate-coupled spin-boson model.
+    /// Fully anisotropic XYZ coordinate-coupled impurity model.
     ///
     /// The pair-flip coefficient is sampled with its absolute value. If
     /// `lambda_x < lambda_y`, a global `z`-axis phase rotation exchanges the
@@ -299,7 +299,7 @@ impl SpinBosonModel {
         lambda_z: f64,
         h_z: f64,
         constant: Option<f64>,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         validate_nonnegative("lambda_x", lambda_x)?;
         validate_nonnegative("lambda_y", lambda_y)?;
         validate_nonnegative("lambda_z", lambda_z)?;
@@ -317,29 +317,29 @@ impl SpinBosonModel {
         let kinds = build_catalog(lambda_z, h_z, constant, &offdiagonal)?;
         let interaction = InteractionChannel::new("xyz", bath, KernelDirection::Symmetric, kinds)?;
         Ok(Self {
-            kind: SpinBosonModelKind::Xyz,
-            name: "XyzSpinBoson".into(),
+            kind: ImpurityModelKind::Xyz,
+            name: "XyzImpurity".into(),
             interactions: vec![interaction],
         })
     }
 
-    /// Original spin-boson/Rabi model in the rotated basis where the bath
+    /// Original impurity/Rabi model in the rotated basis where the bath
     /// couples to `S_x` and the tunnelling field becomes a diagonal `h_z`.
-    pub fn rotated_spin_boson(
+    pub fn rotated_impurity(
         bath: Bath,
         lambda: f64,
         tunnelling: f64,
         constant: Option<f64>,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         let mut model = Self::xyz(bath, lambda, 0.0, 0.0, tunnelling, constant)?;
-        model.kind = SpinBosonModelKind::RotatedSpinBoson;
-        model.name = "RotatedSpinBoson".into();
-        model.interactions[0].name = "rotated_spin_boson".into();
+        model.kind = ImpurityModelKind::RotatedImpurity;
+        model.name = "RotatedImpurity".into();
+        model.interactions[0].name = "rotated_impurity".into();
         Ok(model)
     }
 
     /// Model kind.
-    pub fn kind(&self) -> SpinBosonModelKind {
+    pub fn kind(&self) -> ImpurityModelKind {
         self.kind
     }
 
@@ -371,7 +371,7 @@ fn build_catalog(
     h_z: f64,
     constant: Option<f64>,
     offdiagonal: &[OffDiagonalSpec<'_>],
-) -> Result<Vec<VertexKind>, SpinBosonError> {
+) -> Result<Vec<VertexKind>, ImpurityError> {
     let maximum_offdiagonal = offdiagonal
         .iter()
         .map(|(_, _, weight)| *weight)
@@ -392,7 +392,7 @@ fn build_catalog(
             .max(1.0e-8);
     let shift = constant.unwrap_or(automatic);
     if !shift.is_finite() {
-        return Err(SpinBosonError::parameter("C", "must be finite"));
+        return Err(ImpurityError::parameter("C", "must be finite"));
     }
 
     let mut kinds = Vec::with_capacity(4 + offdiagonal.len());
@@ -423,11 +423,11 @@ fn build_rw_crw_catalog(
     tunnelling: f64,
     normalization: CouplingNormalization,
     constant: Option<f64>,
-) -> Result<Vec<VertexKind>, SpinBosonError> {
+) -> Result<Vec<VertexKind>, ImpurityError> {
     let diagonal_constant =
         constant.unwrap_or_else(|| 0.5 * tunnelling.abs() + 16.0 * f64::EPSILON);
     if !diagonal_constant.is_finite() {
-        return Err(SpinBosonError::parameter("C", "must be finite"));
+        return Err(ImpurityError::parameter("C", "must be finite"));
     }
 
     let mut kinds = Vec::with_capacity(8);
@@ -470,9 +470,9 @@ fn build_rw_crw_catalog(
     Ok(kinds)
 }
 
-fn validate_nonnegative(field: &str, value: f64) -> Result<(), SpinBosonError> {
+fn validate_nonnegative(field: &str, value: f64) -> Result<(), ImpurityError> {
     if !value.is_finite() || value < 0.0 {
-        return Err(SpinBosonError::parameter(
+        return Err(ImpurityError::parameter(
             field,
             format!("must be finite and non-negative, got {value}"),
         ));
@@ -483,13 +483,13 @@ fn validate_nonnegative(field: &str, value: f64) -> Result<(), SpinBosonError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spin_boson::bath::SingleModeBath;
+    use crate::impurity::bath::SingleModeBath;
 
     fn mode() -> Bath {
         Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"))
     }
 
-    fn kind_weight(model: &SpinBosonModel, legs: [Spin; LEGS_PER_VERTEX]) -> Option<f64> {
+    fn kind_weight(model: &ImpurityModel, legs: [Spin; LEGS_PER_VERTEX]) -> Option<f64> {
         model
             .interaction(0)
             .kinds()
@@ -505,8 +505,8 @@ mod tests {
             InteractionChannel::new("identity", mode(), KernelDirection::Symmetric, kinds)
                 .expect("channel");
         let model =
-            SpinBosonModel::from_interactions("custom", vec![channel]).expect("custom model");
-        assert_eq!(model.kind(), SpinBosonModelKind::Custom);
+            ImpurityModel::from_interactions("custom", vec![channel]).expect("custom model");
+        assert_eq!(model.kind(), ImpurityModelKind::Custom);
     }
 
     #[test]
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn jc_has_one_flip_kind() {
-        let model = SpinBosonModel::jaynes_cummings(mode(), 0.4, 0.2, None).expect("model");
+        let model = ImpurityModel::jaynes_cummings(mode(), 0.4, 0.2, None).expect("model");
         let offdiag = model
             .interaction(0)
             .kinds()
@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn pure_rw_catalog_selects_only_the_rotating_channel() {
         let model =
-            SpinBosonModel::rw_crw(mode(), 0.4, 0.0, 0.1, CouplingNormalization::FixedRw, None)
+            ImpurityModel::rw_crw(mode(), 0.4, 0.0, 0.1, CouplingNormalization::FixedRw, None)
                 .expect("model");
         let offdiagonal: Vec<_> = model
             .interaction(0)
@@ -550,7 +550,7 @@ mod tests {
     fn rw_crw_weights_match_reference_formula() {
         let scale = 0.7;
         let ratio = 0.2;
-        let model = SpinBosonModel::rw_crw(
+        let model = ImpurityModel::rw_crw(
             mode(),
             scale,
             ratio,
@@ -576,7 +576,7 @@ mod tests {
         let scale = 0.8;
         let tunnelling = 0.15;
         let constant = Some(0.6);
-        let rw_crw = SpinBosonModel::rw_crw(
+        let rw_crw = ImpurityModel::rw_crw(
             mode(),
             scale,
             1.0,
@@ -585,7 +585,7 @@ mod tests {
             constant,
         )
         .expect("RW-CRW model");
-        let rabi = SpinBosonModel::rotated_spin_boson(mode(), scale, tunnelling, constant)
+        let rabi = ImpurityModel::rotated_impurity(mode(), scale, tunnelling, constant)
             .expect("Rabi model");
         for kind in rw_crw.interaction(0).kinds() {
             let matching = kind_weight(&rabi, *kind.legs()).expect("matching Rabi kind");
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn xxz_has_two_exchange_kinds() {
-        let model = SpinBosonModel::xxz(mode(), 0.4, 0.1, 0.0, None).expect("model");
+        let model = ImpurityModel::xxz(mode(), 0.4, 0.1, 0.0, None).expect("model");
         let offdiag = model
             .interaction(0)
             .kinds()
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn xyz_has_pair_flips() {
-        let model = SpinBosonModel::xyz(mode(), 0.5, 0.1, 0.2, 0.0, None).expect("model");
+        let model = ImpurityModel::xyz(mode(), 0.5, 0.1, 0.2, 0.0, None).expect("model");
         let names: Vec<_> = model
             .interaction(0)
             .kinds()

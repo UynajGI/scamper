@@ -7,8 +7,8 @@ use rand::RngExt;
 use crate::algorithm::{QmcKernel, UpdateSchedule};
 
 use super::configuration::WormholeConfiguration;
-use super::error::SpinBosonError;
-use super::model::SpinBosonModel;
+use super::error::ImpurityError;
+use super::model::ImpurityModel;
 use super::vertex::{LegId, Vertex, VertexId};
 
 /// Proposal used to choose the first directed-loop leg.
@@ -89,10 +89,10 @@ impl WormholeUpdateStats {
     }
 }
 
-/// Generic continuous-time spin-boson update engine.
+/// Generic continuous-time impurity update engine.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WormholeEngine {
-    model: SpinBosonModel,
+    model: ImpurityModel,
     schedule: UpdateSchedule,
     stats: WormholeUpdateStats,
     validate_each_sweep: bool,
@@ -101,7 +101,7 @@ pub struct WormholeEngine {
 
 impl WormholeEngine {
     /// Construct an engine for one model catalog.
-    pub fn new(model: SpinBosonModel, schedule: UpdateSchedule) -> Self {
+    pub fn new(model: ImpurityModel, schedule: UpdateSchedule) -> Self {
         Self {
             model,
             schedule,
@@ -112,7 +112,7 @@ impl WormholeEngine {
     }
 
     /// Model catalog.
-    pub fn model(&self) -> &SpinBosonModel {
+    pub fn model(&self) -> &ImpurityModel {
         &self.model
     }
 
@@ -150,7 +150,7 @@ impl WormholeEngine {
         &mut self,
         configuration: &mut WormholeConfiguration,
         rng: &mut R,
-    ) -> Result<(), SpinBosonError> {
+    ) -> Result<(), ImpurityError> {
         for _ in 0..self.schedule.diagonal_proposals {
             self.stats.diagonal_proposals += 1;
             let diagonal_order = configuration.diagonal_order();
@@ -168,7 +168,7 @@ impl WormholeEngine {
         configuration: &mut WormholeConfiguration,
         diagonal_order: usize,
         rng: &mut R,
-    ) -> Result<(), SpinBosonError> {
+    ) -> Result<(), ImpurityError> {
         let interaction_id = rng.random_range(0..self.model.interaction_count());
         let interaction = self.model.interaction(interaction_id);
         let tau_a = rng.random::<f64>() * configuration.beta();
@@ -206,7 +206,7 @@ impl WormholeEngine {
         configuration: &mut WormholeConfiguration,
         diagonal_order: usize,
         rng: &mut R,
-    ) -> Result<(), SpinBosonError> {
+    ) -> Result<(), ImpurityError> {
         let selected = configuration.random_diagonal_vertex(rng)?;
         let vertex = configuration.vertex(selected)?;
         let interaction = self.model.interaction(vertex.interaction);
@@ -226,7 +226,7 @@ impl WormholeEngine {
         &mut self,
         configuration: &mut WormholeConfiguration,
         rng: &mut R,
-    ) -> Result<(), SpinBosonError> {
+    ) -> Result<(), ImpurityError> {
         if configuration.expansion_order() == 0 {
             if rng.random::<bool>() {
                 configuration.set_empty_spin(-configuration.empty_spin());
@@ -247,7 +247,7 @@ impl WormholeEngine {
         configuration: &mut WormholeConfiguration,
         rng: &mut R,
         limit: usize,
-    ) -> Result<bool, SpinBosonError> {
+    ) -> Result<bool, ImpurityError> {
         let start = match self.loop_start_policy {
             LoopStartPolicy::RandomTime => {
                 let tau = rng.random::<f64>() * configuration.beta();
@@ -332,9 +332,9 @@ impl WormholeEngine {
 
 fn rollback_kinds(
     configuration: &mut WormholeConfiguration,
-    model: &SpinBosonModel,
+    model: &ImpurityModel,
     journal: Vec<(VertexId, usize)>,
-) -> Result<(), SpinBosonError> {
+) -> Result<(), ImpurityError> {
     for (vertex, old_kind) in journal.into_iter().rev() {
         configuration.set_kind(vertex, old_kind, model)?;
     }
@@ -342,7 +342,7 @@ fn rollback_kinds(
 }
 
 impl<R: Rng + ?Sized> QmcKernel<WormholeConfiguration, R> for WormholeEngine {
-    type Error = SpinBosonError;
+    type Error = ImpurityError;
     type Diagnostics = WormholeUpdateStats;
 
     fn sweep(
@@ -372,16 +372,16 @@ mod tests {
     use rand::SeedableRng;
     use rand_xoshiro::Xoshiro256PlusPlus;
 
-    use crate::spin_boson::bath::{Bath, SingleModeBath};
-    use crate::spin_boson::model::SpinBosonModel;
-    use crate::spin_boson::vertex::Vertex;
+    use crate::impurity::bath::{Bath, SingleModeBath};
+    use crate::impurity::model::ImpurityModel;
+    use crate::impurity::vertex::Vertex;
 
     use super::*;
 
     #[test]
     fn loop_limit_abort_restores_the_configuration() {
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = SpinBosonModel::xyz(bath, 0.8, 0.2, 0.0, 0.0, Some(0.4)).expect("model");
+        let model = ImpurityModel::xyz(bath, 0.8, 0.2, 0.0, 0.0, Some(0.4)).expect("model");
         let diagonal_kind = model.interaction(0).diagonal_kind(1, 1);
         let mut baseline = WormholeConfiguration::new(2.0, 1).expect("configuration");
         for (tau_a, tau_b) in [(0.2, 0.7), (1.1, 1.6)] {
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn mixed_updates_preserve_worldline() {
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
+        let model = ImpurityModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
         let mut engine = WormholeEngine::new(model, UpdateSchedule::new(4, 2, 32));
         engine.set_validate_each_sweep(true);
         let mut configuration = WormholeConfiguration::new(8.0, 1).expect("configuration");

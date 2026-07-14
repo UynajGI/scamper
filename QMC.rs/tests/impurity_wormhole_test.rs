@@ -1,5 +1,5 @@
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
-use qmc_rs::spin_boson::SpinBosonQmc;
+use qmc_rs::impurity::ImpurityQmc;
 
 fn run_model(model: &str) -> carlo_rs::Results {
     let mut params = Params::new();
@@ -23,7 +23,7 @@ fn run_model(model: &str) -> carlo_rs::Results {
         base_seed: 2026,
         ..Default::default()
     };
-    Scheduler::new(RayonBackend::new(1), run).run_one::<SpinBosonQmc>(&params)
+    Scheduler::new(RayonBackend::new(1), run).run_one::<ImpurityQmc>(&params)
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn free_limit_has_bounded_magnetization() {
         base_seed: 77,
         ..Default::default()
     };
-    let results = Scheduler::new(RayonBackend::new(1), run).run_one::<SpinBosonQmc>(&params);
+    let results = Scheduler::new(RayonBackend::new(1), run).run_one::<ImpurityQmc>(&params);
     let magnetization = results
         .get("MagnetizationSigmaZ")
         .expect("MagnetizationSigmaZ missing");

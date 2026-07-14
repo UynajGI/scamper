@@ -11,7 +11,7 @@
 use rand::Rng;
 use rand::RngExt;
 
-use super::error::SpinBosonError;
+use super::error::ImpurityError;
 
 /// Whether a retarded operator uses the directed propagator `D` or the
 /// symmetrized propagator `D_+`.
@@ -20,7 +20,7 @@ pub enum KernelDirection {
     /// Keep the orientation of imaginary-time propagation.  Used by JC.
     Directed,
     /// Sample the two orientations with equal probability.  Used by Hermitian
-    /// coordinate couplings such as XXZ, XYZ, and rotated spin-boson models.
+    /// coordinate couplings such as XXZ, XYZ, and rotated impurity models.
     Symmetric,
 }
 
@@ -41,9 +41,9 @@ pub struct SingleModeBath {
 
 impl SingleModeBath {
     /// Construct a single mode of positive frequency.
-    pub fn new(omega: f64) -> Result<Self, SpinBosonError> {
+    pub fn new(omega: f64) -> Result<Self, ImpurityError> {
         if !omega.is_finite() || omega <= 0.0 {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "omega",
                 format!("must be finite and positive, got {omega}"),
             ));
@@ -67,15 +67,15 @@ pub struct PowerLawBath {
 
 impl PowerLawBath {
     /// Construct a normalized power-law proposal.
-    pub fn new(exponent: f64, cutoff: f64) -> Result<Self, SpinBosonError> {
+    pub fn new(exponent: f64, cutoff: f64) -> Result<Self, ImpurityError> {
         if !exponent.is_finite() || exponent <= 0.0 {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "s",
                 format!("must be finite and positive, got {exponent}"),
             ));
         }
         if !cutoff.is_finite() || cutoff <= 0.0 {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "omega_c",
                 format!("must be finite and positive, got {cutoff}"),
             ));
@@ -108,14 +108,14 @@ pub struct TabulatedBath {
 
 impl TabulatedBath {
     /// Construct a tabulated bath from frequencies and positive masses.
-    pub fn new(frequencies: Vec<f64>, weights: Vec<f64>) -> Result<Self, SpinBosonError> {
+    pub fn new(frequencies: Vec<f64>, weights: Vec<f64>) -> Result<Self, ImpurityError> {
         if frequencies.is_empty() {
-            return Err(SpinBosonError::InvalidBathTable(
+            return Err(ImpurityError::InvalidBathTable(
                 "at least one frequency is required".into(),
             ));
         }
         if frequencies.len() != weights.len() {
-            return Err(SpinBosonError::InvalidBathTable(format!(
+            return Err(ImpurityError::InvalidBathTable(format!(
                 "frequency count {} differs from weight count {}",
                 frequencies.len(),
                 weights.len()
@@ -125,7 +125,7 @@ impl TabulatedBath {
             .iter()
             .any(|omega| !omega.is_finite() || *omega <= 0.0)
         {
-            return Err(SpinBosonError::InvalidBathTable(
+            return Err(ImpurityError::InvalidBathTable(
                 "all frequencies must be finite and positive".into(),
             ));
         }
@@ -133,13 +133,13 @@ impl TabulatedBath {
             .iter()
             .any(|weight| !weight.is_finite() || *weight < 0.0)
         {
-            return Err(SpinBosonError::InvalidBathTable(
+            return Err(ImpurityError::InvalidBathTable(
                 "all weights must be finite and non-negative".into(),
             ));
         }
         let total: f64 = weights.iter().sum();
         if total <= 0.0 || !total.is_finite() {
-            return Err(SpinBosonError::InvalidBathTable(
+            return Err(ImpurityError::InvalidBathTable(
                 "the total spectral mass must be positive and finite".into(),
             ));
         }
@@ -169,7 +169,7 @@ impl TabulatedBath {
     }
 }
 
-/// Bath shapes supported by the generic spin-boson engine.
+/// Bath shapes supported by the generic impurity engine.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Bath {
     /// One oscillator.
@@ -187,9 +187,9 @@ impl Bath {
         beta: f64,
         direction: KernelDirection,
         rng: &mut R,
-    ) -> Result<BathSample, SpinBosonError> {
+    ) -> Result<BathSample, ImpurityError> {
         if !beta.is_finite() || beta <= 0.0 {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "beta",
                 format!("must be finite and positive, got {beta}"),
             ));

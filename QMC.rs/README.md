@@ -76,9 +76,9 @@ diagonal_proposals      per measured sweep
 directed_loops          per measured sweep
 ```
 
-## Continuous-time spin-boson wormhole QMC
+## Continuous-time impurity wormhole QMC
 
-`qmc_rs::spin_boson` implements a generic retarded-interaction directed-loop
+`qmc_rs::impurity` implements a generic retarded-interaction directed-loop
 engine for one spin-1/2 impurity. Quadratic bosons are integrated out and
 represented by two-time four-leg vertices. Diagonal updates sample
 `(interaction, omega, tau, tau')`; directed loops convert diagonal and
@@ -92,7 +92,7 @@ Set parameter `model` to:
 - `jc` / `jaynes_cummings`;
 - `xxz`;
 - `xyz`;
-- `rabi` / `spin_boson` / `rotated_spin_boson`.
+- `rabi` / `impurity` / `rotated_impurity`.
 
 ### Implemented bath proposals
 
@@ -106,7 +106,7 @@ Set parameter `bath` to:
 
 ```rust
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
-use qmc_rs::SpinBosonQmc;
+use qmc_rs::ImpurityQmc;
 
 let mut params = Params::new();
 params.set("model", "jc");
@@ -117,11 +117,11 @@ params.set("g", 0.35);
 params.set("h_z", 0.4);
 
 let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
-    .run_one::<SpinBosonQmc>(&params);
+    .run_one::<ImpurityQmc>(&params);
 ```
 
 A complete runnable example is in
-[`examples/spin_boson_wormhole.rs`](examples/spin_boson_wormhole.rs).
+[`examples/impurity_wormhole.rs`](examples/impurity_wormhole.rs).
 
 ## Coupling conventions
 
@@ -187,5 +187,5 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features
 cargo test --workspace --all-features
 cargo run -p qmc-rs --example lattice_continuous
-cargo run -p qmc-rs --example spin_boson_wormhole
+cargo run -p qmc-rs --example impurity_wormhole
 ```

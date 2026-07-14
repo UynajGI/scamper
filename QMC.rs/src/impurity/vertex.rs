@@ -1,6 +1,6 @@
 //! Retarded four-leg vertices.
 
-use super::error::SpinBosonError;
+use super::error::ImpurityError;
 
 /// Stable slot identifier for a vertex in the configuration.
 ///
@@ -105,7 +105,7 @@ pub const B_OUT: usize = 3;
 /// Number of legs on a retarded vertex.
 pub const LEGS_PER_VERTEX: usize = 4;
 
-/// Immutable local vertex type supplied by a spin-boson model.
+/// Immutable local vertex type supplied by a impurity model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VertexKind {
     name: String,
@@ -121,22 +121,22 @@ impl VertexKind {
         legs: [Spin; LEGS_PER_VERTEX],
         weight: f64,
         diagonal: bool,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         if legs.iter().any(|spin| !matches!(spin, -1 | 1)) {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "vertex legs",
                 "spin-1/2 legs must be encoded as -1 or +1",
             ));
         }
         if !weight.is_finite() || weight <= 0.0 {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "vertex weight",
                 format!("must be finite and positive, got {weight}"),
             ));
         }
         let inferred_diagonal = legs[A_IN] == legs[A_OUT] && legs[B_IN] == legs[B_OUT];
         if inferred_diagonal != diagonal {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "diagonal",
                 "diagonal flag does not match the leg pattern",
             ));

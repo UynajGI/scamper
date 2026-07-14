@@ -8,4 +8,4 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features
 cargo test --workspace --all-features
 cargo run -p qmc-rs --example lattice_continuous
-cargo run -p qmc-rs --example spin_boson_wormhole
+cargo run -p qmc-rs --example impurity_wormhole

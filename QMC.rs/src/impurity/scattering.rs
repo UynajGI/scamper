@@ -17,7 +17,7 @@ use std::collections::{HashMap, VecDeque};
 use rand::Rng;
 use rand::RngExt;
 
-use super::error::SpinBosonError;
+use super::error::ImpurityError;
 use super::vertex::{Spin, VertexKind, LEGS_PER_VERTEX};
 
 /// Strategy used to construct local directed-loop rows.
@@ -61,7 +61,7 @@ pub struct ScatteringTable {
 
 impl ScatteringTable {
     /// Build a table using the selected policy.
-    pub fn build(kinds: &[VertexKind], policy: ScatteringPolicy) -> Result<Self, SpinBosonError> {
+    pub fn build(kinds: &[VertexKind], policy: ScatteringPolicy) -> Result<Self, ImpurityError> {
         validate_catalog(kinds)?;
         match policy {
             ScatteringPolicy::LowBounce => Self::low_bounce(kinds),
@@ -70,7 +70,7 @@ impl ScatteringTable {
     }
 
     /// Build the analytic minimum-bounce table where the local graph permits it.
-    pub fn low_bounce(kinds: &[VertexKind]) -> Result<Self, SpinBosonError> {
+    pub fn low_bounce(kinds: &[VertexKind]) -> Result<Self, ImpurityError> {
         validate_catalog(kinds)?;
         let state_count = kinds.len() * LEGS_PER_VERTEX;
         let weights: Vec<f64> = (0..state_count)
@@ -101,7 +101,7 @@ impl ScatteringTable {
     }
 
     /// Build the generic symmetric-proposal Metropolis reference table.
-    pub fn metropolis(kinds: &[VertexKind]) -> Result<Self, SpinBosonError> {
+    pub fn metropolis(kinds: &[VertexKind]) -> Result<Self, ImpurityError> {
         validate_catalog(kinds)?;
         let mut rows = Vec::with_capacity(kinds.len() * LEGS_PER_VERTEX);
         for (kind_id, kind) in kinds.iter().enumerate() {
@@ -142,10 +142,10 @@ impl ScatteringTable {
         kinds: &[VertexKind],
         rows: Vec<Vec<ScatteringChoice>>,
         policy: ScatteringPolicy,
-    ) -> Result<Self, SpinBosonError> {
+    ) -> Result<Self, ImpurityError> {
         let expected_rows = kinds.len() * LEGS_PER_VERTEX;
         if rows.len() != expected_rows {
-            return Err(SpinBosonError::InvalidConfiguration(format!(
+            return Err(ImpurityError::InvalidConfiguration(format!(
                 "scattering table has {} rows, expected {expected_rows}",
                 rows.len()
             )));
@@ -158,18 +158,18 @@ impl ScatteringTable {
 
         for (state, row) in rows.iter().enumerate() {
             if row.is_empty() {
-                return Err(SpinBosonError::InvalidConfiguration(format!(
+                return Err(ImpurityError::InvalidConfiguration(format!(
                     "empty scattering row for extended state {state}"
                 )));
             }
             for choice in row {
                 if choice.new_kind >= kinds.len() || choice.exit_leg >= LEGS_PER_VERTEX {
-                    return Err(SpinBosonError::InvalidConfiguration(format!(
+                    return Err(ImpurityError::InvalidConfiguration(format!(
                         "out-of-range scattering target in row {state}"
                     )));
                 }
                 if !choice.probability.is_finite() || choice.probability < 0.0 {
-                    return Err(SpinBosonError::InvalidConfiguration(format!(
+                    return Err(ImpurityError::InvalidConfiguration(format!(
                         "invalid scattering probability in row {state}"
                     )));
                 }
@@ -178,7 +178,7 @@ impl ScatteringTable {
             let error = (sum - 1.0).abs();
             max_row_error = max_row_error.max(error);
             if error > row_tolerance {
-                return Err(SpinBosonError::InvalidConfiguration(format!(
+                return Err(ImpurityError::InvalidConfiguration(format!(
                     "scattering row {state} sums to {sum}, not one"
                 )));
             }
@@ -186,7 +186,7 @@ impl ScatteringTable {
 
         let max_detailed_balance_error = detailed_balance_error(kinds, &rows);
         if max_detailed_balance_error > detailed_balance_tolerance {
-            return Err(SpinBosonError::InvalidConfiguration(format!(
+            return Err(ImpurityError::InvalidConfiguration(format!(
                 "local detailed-balance residual {max_detailed_balance_error} exceeds \
                  {detailed_balance_tolerance}"
             )));
@@ -261,9 +261,9 @@ pub fn kind_after_flips(
     kinds.iter().position(|candidate| candidate.legs() == &legs)
 }
 
-fn validate_catalog(kinds: &[VertexKind]) -> Result<(), SpinBosonError> {
+fn validate_catalog(kinds: &[VertexKind]) -> Result<(), ImpurityError> {
     if kinds.is_empty() {
-        return Err(SpinBosonError::parameter(
+        return Err(ImpurityError::parameter(
             "vertex catalog",
             "at least one positive vertex kind is required",
         ));
@@ -271,7 +271,7 @@ fn validate_catalog(kinds: &[VertexKind]) -> Result<(), SpinBosonError> {
     let mut patterns: HashMap<[Spin; LEGS_PER_VERTEX], usize> = HashMap::new();
     for (kind_id, kind) in kinds.iter().enumerate() {
         if let Some(previous) = patterns.insert(*kind.legs(), kind_id) {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "vertex catalog",
                 format!(
                     "duplicate leg pattern for kinds {previous} and {kind_id}: {:?}",
@@ -337,20 +337,20 @@ fn append_component_rows(
     weights: &[f64],
     adjacency: &[Vec<bool>],
     flows: &[Vec<f64>],
-) -> Result<(), SpinBosonError> {
+) -> Result<(), ImpurityError> {
     for (left_pos, &state) in component.iter().enumerate() {
         let weight = weights[state];
         let tolerance = 1.0e-10 * weight.max(f64::MIN_POSITIVE);
         let row_sum: f64 = flows[left_pos].iter().sum();
         if (row_sum - weight).abs() > tolerance {
-            return Err(SpinBosonError::InvalidConfiguration(format!(
+            return Err(ImpurityError::InvalidConfiguration(format!(
                 "directed-loop path weights sum to {row_sum}, expected {weight}"
             )));
         }
         for (right_pos, &target) in component.iter().enumerate() {
             let path_weight = flows[left_pos][right_pos];
             if !path_weight.is_finite() || path_weight < -tolerance {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "non-finite or negative directed-loop path weight".into(),
                 ));
             }
@@ -358,7 +358,7 @@ fn append_component_rows(
                 continue;
             }
             if state != target && !adjacency[state][target] {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "directed-loop flow assigned to a forbidden transition".into(),
                 ));
             }

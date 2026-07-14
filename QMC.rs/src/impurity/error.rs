@@ -1,10 +1,10 @@
-//! Errors produced by the continuous-time spin-boson engine.
+//! Errors produced by the continuous-time impurity engine.
 
 use thiserror::Error;
 
 /// Spin-boson QMC construction and runtime errors.
 #[derive(Debug, Error, Clone, PartialEq)]
-pub enum SpinBosonError {
+pub enum ImpurityError {
     /// A physical or algorithmic parameter is outside its valid domain.
     #[error("invalid parameter `{field}`: {reason}")]
     InvalidParameter {
@@ -32,7 +32,7 @@ pub enum SpinBosonError {
     InvalidBathTable(String),
 }
 
-impl SpinBosonError {
+impl ImpurityError {
     /// Convenience constructor for invalid parameters.
     pub fn parameter(field: impl Into<String>, reason: impl Into<String>) -> Self {
         Self::InvalidParameter {

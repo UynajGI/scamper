@@ -1,7 +1,7 @@
-//! Small stochastic checks against analytically soluble spin-boson limits.
+//! Small stochastic checks against analytically soluble impurity limits.
 
-use qmc_rs::spin_boson::{
-    integrated_sigma_z, Bath, CouplingNormalization, SingleModeBath, SpinBosonModel,
+use qmc_rs::impurity::{
+    integrated_sigma_z, Bath, CouplingNormalization, ImpurityModel, SingleModeBath,
     WormholeConfiguration, WormholeEngine,
 };
 use qmc_rs::{QmcKernel, UpdateSchedule};
@@ -13,7 +13,7 @@ fn single_mode() -> Bath {
 }
 
 fn sample_model(
-    model: SpinBosonModel,
+    model: ImpurityModel,
     beta: f64,
     seed: u64,
     warmup: usize,
@@ -63,7 +63,7 @@ fn sample_model(
 fn constant_diagonal_activity_has_poisson_expansion_order() {
     let beta = 3.0;
     let constant = 0.6;
-    let model = SpinBosonModel::xxz(single_mode(), 0.0, 0.0, 0.0, Some(constant))
+    let model = ImpurityModel::xxz(single_mode(), 0.0, 0.0, 0.0, Some(constant))
         .expect("constant diagonal model");
     let (magnetization, mean_order, order_variance) =
         sample_model(model, beta, 7_001, 3_000, 20_000);
@@ -85,7 +85,7 @@ fn diagonal_field_matches_two_state_partition_function() {
     let beta = 2.0;
     let field = 0.5;
     let constant = 0.7;
-    let model = SpinBosonModel::xxz(single_mode(), 0.0, 0.0, field, Some(constant))
+    let model = ImpurityModel::xxz(single_mode(), 0.0, 0.0, field, Some(constant))
         .expect("diagonal field model");
     let (magnetization, mean_order, _) = sample_model(model, beta, 8_002, 4_000, 25_000);
 
@@ -103,7 +103,7 @@ fn diagonal_field_matches_two_state_partition_function() {
 
 #[test]
 fn equal_rw_crw_amplitudes_preserve_spin_inversion_symmetry() {
-    let model = SpinBosonModel::rw_crw(
+    let model = ImpurityModel::rw_crw(
         single_mode(),
         0.25,
         1.0,

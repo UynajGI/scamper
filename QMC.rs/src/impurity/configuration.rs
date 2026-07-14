@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use rand::Rng;
 use rand::RngExt;
 
-use super::error::SpinBosonError;
-use super::model::SpinBosonModel;
+use super::error::ImpurityError;
+use super::model::ImpurityModel;
 use super::vertex::{EndpointId, LegId, LegSide, Spin, Vertex, VertexId, LEGS_PER_VERTEX};
 
 /// Sortable key for the time-ordered BTreeMap.
@@ -91,15 +91,15 @@ pub struct WormholeConfiguration {
 
 impl WormholeConfiguration {
     /// Construct an empty operator string.
-    pub fn new(beta: f64, empty_spin: Spin) -> Result<Self, SpinBosonError> {
+    pub fn new(beta: f64, empty_spin: Spin) -> Result<Self, ImpurityError> {
         if !beta.is_finite() || beta <= 0.0 {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "beta",
                 format!("must be finite and positive, got {beta}"),
             ));
         }
         if !matches!(empty_spin, -1 | 1) {
-            return Err(SpinBosonError::parameter("empty_spin", "must be -1 or +1"));
+            return Err(ImpurityError::parameter("empty_spin", "must be -1 or +1"));
         }
         Ok(Self {
             beta,
@@ -122,9 +122,9 @@ impl WormholeConfiguration {
     ///
     /// This triggers a full rebuild of the time index, which is acceptable
     /// because temperature changes are not on the hot path.
-    pub fn set_beta_rescale(&mut self, beta: f64) -> Result<(), SpinBosonError> {
+    pub fn set_beta_rescale(&mut self, beta: f64) -> Result<(), ImpurityError> {
         if !beta.is_finite() || beta <= 0.0 {
-            return Err(SpinBosonError::parameter(
+            return Err(ImpurityError::parameter(
                 "beta",
                 format!("must be finite and positive, got {beta}"),
             ));
@@ -154,8 +154,8 @@ impl WormholeConfiguration {
     /// vertex times and links remain fixed.
     pub(crate) fn sync_empty_spin_from_worldline(
         &mut self,
-        model: &SpinBosonModel,
-    ) -> Result<(), SpinBosonError> {
+        model: &ImpurityModel,
+    ) -> Result<(), ImpurityError> {
         if let Some(first) = self.first_endpoint {
             let spin = self.endpoint_incoming_spin(first, model)?;
             self.empty_spin = spin;
@@ -179,25 +179,25 @@ impl WormholeConfiguration {
     }
 
     /// Access one vertex by ID.
-    pub fn vertex(&self, id: VertexId) -> Result<&Vertex, SpinBosonError> {
+    pub fn vertex(&self, id: VertexId) -> Result<&Vertex, ImpurityError> {
         self.vertices
             .get(id.0)
             .and_then(|slot| slot.as_ref())
             .map(|linked| &linked.vertex)
             .ok_or_else(|| {
-                SpinBosonError::InvalidConfiguration(format!("invalid vertex id {}", id.0))
+                ImpurityError::InvalidConfiguration(format!("invalid vertex id {}", id.0))
             })
     }
 
     /// Mutable access to one vertex by ID.
     #[allow(dead_code)]
-    pub(crate) fn vertex_mut(&mut self, id: VertexId) -> Result<&mut Vertex, SpinBosonError> {
+    pub(crate) fn vertex_mut(&mut self, id: VertexId) -> Result<&mut Vertex, ImpurityError> {
         self.vertices
             .get_mut(id.0)
             .and_then(|slot| slot.as_mut())
             .map(|linked| &mut linked.vertex)
             .ok_or_else(|| {
-                SpinBosonError::InvalidConfiguration(format!("invalid vertex id {}", id.0))
+                ImpurityError::InvalidConfiguration(format!("invalid vertex id {}", id.0))
             })
     }
 
@@ -207,8 +207,8 @@ impl WormholeConfiguration {
     pub fn insert_vertex(
         &mut self,
         vertex: Vertex,
-        model: &SpinBosonModel,
-    ) -> Result<VertexId, SpinBosonError> {
+        model: &ImpurityModel,
+    ) -> Result<VertexId, ImpurityError> {
         let id = self.allocate_slot();
         let active_position = self.active_vertices.len();
         self.active_vertices.push(id);
@@ -273,7 +273,7 @@ impl WormholeConfiguration {
     /// Remove a vertex from the configuration.
     ///
     /// Returns the removed `Vertex`.
-    pub fn remove_vertex(&mut self, id: VertexId) -> Result<Vertex, SpinBosonError> {
+    pub fn remove_vertex(&mut self, id: VertexId) -> Result<Vertex, ImpurityError> {
         let endpoint_a = EndpointId {
             vertex: id,
             endpoint: 0,
@@ -287,7 +287,7 @@ impl WormholeConfiguration {
         self.unlink_endpoint(endpoint_b)?;
 
         let linked = self.vertices[id.0].take().ok_or_else(|| {
-            SpinBosonError::InvalidConfiguration(format!("vertex {} already removed", id.0))
+            ImpurityError::InvalidConfiguration(format!("vertex {} already removed", id.0))
         })?;
 
         self.remove_from_active(id, linked.active_position);
@@ -305,10 +305,10 @@ impl WormholeConfiguration {
         &mut self,
         id: VertexId,
         new_kind: usize,
-        model: &SpinBosonModel,
-    ) -> Result<(), SpinBosonError> {
+        model: &ImpurityModel,
+    ) -> Result<(), ImpurityError> {
         let linked = self.vertices[id.0].as_ref().ok_or_else(|| {
-            SpinBosonError::InvalidConfiguration(format!("invalid vertex id {}", id.0))
+            ImpurityError::InvalidConfiguration(format!("invalid vertex id {}", id.0))
         })?;
         let old_kind = linked.vertex.kind;
         let interaction = linked.vertex.interaction;
@@ -348,7 +348,7 @@ impl WormholeConfiguration {
     ///   the predecessor endpoint.
     /// - `Outgoing` leg at endpoint E is connected to the `Incoming` leg of
     ///   the successor endpoint.
-    pub fn linked_leg(&self, leg: LegId) -> Result<LegId, SpinBosonError> {
+    pub fn linked_leg(&self, leg: LegId) -> Result<LegId, ImpurityError> {
         let links = self.endpoint_links(leg.endpoint)?;
         match leg.side {
             LegSide::Incoming => Ok(LegId {
@@ -363,7 +363,7 @@ impl WormholeConfiguration {
     }
 
     /// Spin immediately before `tau`.
-    pub fn spin_before(&self, model: &SpinBosonModel, tau: f64) -> Result<Spin, SpinBosonError> {
+    pub fn spin_before(&self, model: &ImpurityModel, tau: f64) -> Result<Spin, ImpurityError> {
         if self.time_order.is_empty() {
             return Ok(self.empty_spin);
         }
@@ -384,7 +384,7 @@ impl WormholeConfiguration {
     }
 
     /// Spin at `tau`, with times interpreted periodically.
-    pub fn spin_at(&self, model: &SpinBosonModel, tau: f64) -> Result<Spin, SpinBosonError> {
+    pub fn spin_at(&self, model: &ImpurityModel, tau: f64) -> Result<Spin, ImpurityError> {
         if self.time_order.is_empty() {
             return Ok(self.empty_spin);
         }
@@ -409,9 +409,9 @@ impl WormholeConfiguration {
     }
 
     /// Random leg for starting a directed loop.
-    pub fn random_leg<R: Rng + ?Sized>(&self, rng: &mut R) -> Result<LegId, SpinBosonError> {
+    pub fn random_leg<R: Rng + ?Sized>(&self, rng: &mut R) -> Result<LegId, ImpurityError> {
         if self.active_vertices.is_empty() {
-            return Err(SpinBosonError::InvalidConfiguration(
+            return Err(ImpurityError::InvalidConfiguration(
                 "cannot pick random leg from empty configuration".into(),
             ));
         }
@@ -426,9 +426,9 @@ impl WormholeConfiguration {
     /// Backward propagation enters the outgoing leg of the previous endpoint.
     /// Vertex times are unchanged by a loop, so this proposal is symmetric
     /// between a loop and its reverse.
-    pub fn start_leg_at_time(&self, tau: f64, forward: bool) -> Result<LegId, SpinBosonError> {
+    pub fn start_leg_at_time(&self, tau: f64, forward: bool) -> Result<LegId, ImpurityError> {
         if self.time_order.is_empty() {
-            return Err(SpinBosonError::InvalidConfiguration(
+            return Err(ImpurityError::InvalidConfiguration(
                 "cannot start a directed loop from an empty configuration".into(),
             ));
         }
@@ -471,9 +471,9 @@ impl WormholeConfiguration {
     pub fn random_diagonal_vertex<R: Rng + ?Sized>(
         &self,
         rng: &mut R,
-    ) -> Result<VertexId, SpinBosonError> {
+    ) -> Result<VertexId, ImpurityError> {
         if self.diagonal_vertices.is_empty() {
-            return Err(SpinBosonError::InvalidConfiguration(
+            return Err(ImpurityError::InvalidConfiguration(
                 "no diagonal vertices to select".into(),
             ));
         }
@@ -490,26 +490,26 @@ impl WormholeConfiguration {
     }
 
     /// Validate vertex bounds and full periodic worldline continuity.
-    pub fn validate(&self, model: &SpinBosonModel) -> Result<(), SpinBosonError> {
+    pub fn validate(&self, model: &ImpurityModel) -> Result<(), ImpurityError> {
         // 1. Basic vertex bounds.
         for (slot_idx, slot) in self.vertices.iter().enumerate() {
             if let Some(linked) = slot {
                 let v = &linked.vertex;
                 if !(0.0..self.beta).contains(&v.tau_a) || !(0.0..self.beta).contains(&v.tau_b) {
-                    return Err(SpinBosonError::InvalidConfiguration(
+                    return Err(ImpurityError::InvalidConfiguration(
                         "vertex time outside [0,beta)".into(),
                     ));
                 }
                 let interaction = model.interactions().get(v.interaction).ok_or_else(|| {
-                    SpinBosonError::InvalidConfiguration("invalid interaction index".into())
+                    ImpurityError::InvalidConfiguration("invalid interaction index".into())
                 })?;
                 if v.kind >= interaction.kinds().len() {
-                    return Err(SpinBosonError::InvalidConfiguration(
+                    return Err(ImpurityError::InvalidConfiguration(
                         "invalid local vertex kind".into(),
                     ));
                 }
                 if !v.omega.is_finite() || v.omega <= 0.0 {
-                    return Err(SpinBosonError::InvalidConfiguration(
+                    return Err(ImpurityError::InvalidConfiguration(
                         "sampled frequency must be finite and positive".into(),
                     ));
                 }
@@ -520,7 +520,7 @@ impl WormholeConfiguration {
         let n = self.expansion_order();
         if n == 0 {
             if !matches!(self.empty_spin, -1 | 1) {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "invalid empty-sector spin".into(),
                 ));
             }
@@ -529,7 +529,7 @@ impl WormholeConfiguration {
 
         // 2. Time index size.
         if self.time_order.len() != 2 * n {
-            return Err(SpinBosonError::InvalidConfiguration(format!(
+            return Err(ImpurityError::InvalidConfiguration(format!(
                 "time_order has {} entries, expected {}",
                 self.time_order.len(),
                 2 * n
@@ -542,12 +542,12 @@ impl WormholeConfiguration {
             let next_links = self.endpoint_links(links.next)?;
             let prev_links = self.endpoint_links(links.prev)?;
             if next_links.prev != endpoint {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "next.prev != self".into(),
                 ));
             }
             if prev_links.next != endpoint {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "prev.next != self".into(),
                 ));
             }
@@ -555,14 +555,14 @@ impl WormholeConfiguration {
 
         // 4. Periodic traversal count.
         let first = self.first_endpoint.ok_or_else(|| {
-            SpinBosonError::InvalidConfiguration("first_endpoint is None with vertices".into())
+            ImpurityError::InvalidConfiguration("first_endpoint is None with vertices".into())
         })?;
         let mut count = 0;
         let mut current = first;
         loop {
             count += 1;
             if count > 2 * n {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "cycle traversal exceeded expected count".into(),
                 ));
             }
@@ -573,7 +573,7 @@ impl WormholeConfiguration {
             }
         }
         if count != 2 * n {
-            return Err(SpinBosonError::InvalidConfiguration(format!(
+            return Err(ImpurityError::InvalidConfiguration(format!(
                 "cycle traversal visited {count} endpoints, expected {}",
                 2 * n
             )));
@@ -587,7 +587,7 @@ impl WormholeConfiguration {
             current = links.next;
             let cur_key = self.endpoint_links(current)?.key;
             if cur_key <= prev_key {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "time not monotonically increasing along cycle".into(),
                 ));
             }
@@ -597,7 +597,7 @@ impl WormholeConfiguration {
         // 6. Worldline spin continuity and the stored tau=0 trace sector.
         let first_incoming = self.endpoint_incoming_spin(first, model)?;
         if first_incoming != self.empty_spin {
-            return Err(SpinBosonError::InvalidConfiguration(format!(
+            return Err(ImpurityError::InvalidConfiguration(format!(
                 "stored empty spin {} differs from the tau=0 worldline spin {first_incoming}",
                 self.empty_spin
             )));
@@ -607,7 +607,7 @@ impl WormholeConfiguration {
         for _ in 0..2 * n {
             let (incoming, outgoing) = self.endpoint_spins(ep, model)?;
             if incoming != propagated {
-                return Err(SpinBosonError::InvalidConfiguration(format!(
+                return Err(ImpurityError::InvalidConfiguration(format!(
                     "worldline discontinuity: expected {propagated}, found {incoming}"
                 )));
             }
@@ -616,7 +616,7 @@ impl WormholeConfiguration {
             ep = links.next;
         }
         if propagated != self.empty_spin {
-            return Err(SpinBosonError::InvalidConfiguration(
+            return Err(ImpurityError::InvalidConfiguration(
                 "worldline is not periodic".into(),
             ));
         }
@@ -628,7 +628,7 @@ impl WormholeConfiguration {
                 let partner = self.linked_leg(leg)?;
                 let back = self.linked_leg(partner)?;
                 if back != leg {
-                    return Err(SpinBosonError::InvalidConfiguration(
+                    return Err(ImpurityError::InvalidConfiguration(
                         "linked_leg is not involutive".into(),
                     ));
                 }
@@ -639,16 +639,16 @@ impl WormholeConfiguration {
         let mut diag_seen = vec![false; self.vertices.len()];
         for &diag_id in &self.diagonal_vertices {
             let linked = self.vertices[diag_id.0].as_ref().ok_or_else(|| {
-                SpinBosonError::InvalidConfiguration("diagonal vertex slot is None".into())
+                ImpurityError::InvalidConfiguration("diagonal vertex slot is None".into())
             })?;
             let v = &linked.vertex;
             if !model.interaction(v.interaction).kind(v.kind).is_diagonal() {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "non-diagonal vertex in diagonal index".into(),
                 ));
             }
             if diag_seen[diag_id.0] {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "duplicate in diagonal index".into(),
                 ));
             }
@@ -659,7 +659,7 @@ impl WormholeConfiguration {
                 let v = &linked.vertex;
                 let is_diag = model.interaction(v.interaction).kind(v.kind).is_diagonal();
                 if is_diag && !diag_seen[slot_idx] {
-                    return Err(SpinBosonError::InvalidConfiguration(
+                    return Err(ImpurityError::InvalidConfiguration(
                         "diagonal vertex missing from diagonal index".into(),
                     ));
                 }
@@ -670,12 +670,12 @@ impl WormholeConfiguration {
         let mut active_seen = vec![false; self.vertices.len()];
         for &active_id in &self.active_vertices {
             if self.vertices[active_id.0].is_none() {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "active vertex slot is None".into(),
                 ));
             }
             if active_seen[active_id.0] {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "duplicate in active index".into(),
                 ));
             }
@@ -683,7 +683,7 @@ impl WormholeConfiguration {
         }
         for (slot_idx, slot) in self.vertices.iter().enumerate() {
             if slot.is_some() && !active_seen[slot_idx] {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "active vertex missing from active index".into(),
                 ));
             }
@@ -742,9 +742,9 @@ impl WormholeConfiguration {
         }
     }
 
-    fn endpoint_links(&self, endpoint: EndpointId) -> Result<&EndpointLinks, SpinBosonError> {
+    fn endpoint_links(&self, endpoint: EndpointId) -> Result<&EndpointLinks, ImpurityError> {
         let linked = self.vertices[endpoint.vertex.0].as_ref().ok_or_else(|| {
-            SpinBosonError::InvalidConfiguration(format!("vertex {} not found", endpoint.vertex.0))
+            ImpurityError::InvalidConfiguration(format!("vertex {} not found", endpoint.vertex.0))
         })?;
         Ok(&linked.endpoints[endpoint.endpoint as usize])
     }
@@ -752,19 +752,19 @@ impl WormholeConfiguration {
     fn endpoint_links_mut(
         &mut self,
         endpoint: EndpointId,
-    ) -> Result<&mut EndpointLinks, SpinBosonError> {
+    ) -> Result<&mut EndpointLinks, ImpurityError> {
         let linked = self.vertices[endpoint.vertex.0].as_mut().ok_or_else(|| {
-            SpinBosonError::InvalidConfiguration(format!("vertex {} not found", endpoint.vertex.0))
+            ImpurityError::InvalidConfiguration(format!("vertex {} not found", endpoint.vertex.0))
         })?;
         Ok(&mut linked.endpoints[endpoint.endpoint as usize])
     }
 
-    fn set_prev(&mut self, endpoint: EndpointId, prev: EndpointId) -> Result<(), SpinBosonError> {
+    fn set_prev(&mut self, endpoint: EndpointId, prev: EndpointId) -> Result<(), ImpurityError> {
         self.endpoint_links_mut(endpoint)?.prev = prev;
         Ok(())
     }
 
-    fn set_next(&mut self, endpoint: EndpointId, next: EndpointId) -> Result<(), SpinBosonError> {
+    fn set_next(&mut self, endpoint: EndpointId, next: EndpointId) -> Result<(), ImpurityError> {
         self.endpoint_links_mut(endpoint)?.next = next;
         Ok(())
     }
@@ -774,7 +774,7 @@ impl WormholeConfiguration {
         &mut self,
         endpoint: EndpointId,
         key: EventKey,
-    ) -> Result<(), SpinBosonError> {
+    ) -> Result<(), ImpurityError> {
         if self.first_endpoint.is_none() {
             // Empty list: self-link.
             self.endpoint_links_mut(endpoint)?.prev = endpoint;
@@ -813,7 +813,7 @@ impl WormholeConfiguration {
     }
 
     /// Remove an endpoint from the doubly-linked time list.
-    fn unlink_endpoint(&mut self, endpoint: EndpointId) -> Result<(), SpinBosonError> {
+    fn unlink_endpoint(&mut self, endpoint: EndpointId) -> Result<(), ImpurityError> {
         let links = self.endpoint_links(endpoint)?.clone();
         let prev = links.prev;
         let next = links.next;
@@ -837,7 +837,7 @@ impl WormholeConfiguration {
     }
 
     /// Full rebuild of time links after beta rescale or checkpoint load.
-    fn rebuild_time_links(&mut self) -> Result<(), SpinBosonError> {
+    fn rebuild_time_links(&mut self) -> Result<(), ImpurityError> {
         self.time_order.clear();
         self.first_endpoint = None;
 
@@ -897,10 +897,10 @@ impl WormholeConfiguration {
     fn endpoint_incoming_spin(
         &self,
         endpoint: EndpointId,
-        model: &SpinBosonModel,
-    ) -> Result<Spin, SpinBosonError> {
+        model: &ImpurityModel,
+    ) -> Result<Spin, ImpurityError> {
         let linked = self.vertices[endpoint.vertex.0].as_ref().ok_or_else(|| {
-            SpinBosonError::InvalidConfiguration(format!("vertex {} not found", endpoint.vertex.0))
+            ImpurityError::InvalidConfiguration(format!("vertex {} not found", endpoint.vertex.0))
         })?;
         let kind = model
             .interaction(linked.vertex.interaction)
@@ -913,10 +913,10 @@ impl WormholeConfiguration {
     pub fn endpoint_outgoing_spin(
         &self,
         endpoint: EndpointId,
-        model: &SpinBosonModel,
-    ) -> Result<Spin, SpinBosonError> {
+        model: &ImpurityModel,
+    ) -> Result<Spin, ImpurityError> {
         let linked = self.vertices[endpoint.vertex.0].as_ref().ok_or_else(|| {
-            SpinBosonError::InvalidConfiguration(format!("vertex {} not found", endpoint.vertex.0))
+            ImpurityError::InvalidConfiguration(format!("vertex {} not found", endpoint.vertex.0))
         })?;
         let kind = model
             .interaction(linked.vertex.interaction)
@@ -929,10 +929,10 @@ impl WormholeConfiguration {
     fn endpoint_spins(
         &self,
         endpoint: EndpointId,
-        model: &SpinBosonModel,
-    ) -> Result<(Spin, Spin), SpinBosonError> {
+        model: &ImpurityModel,
+    ) -> Result<(Spin, Spin), ImpurityError> {
         let linked = self.vertices[endpoint.vertex.0].as_ref().ok_or_else(|| {
-            SpinBosonError::InvalidConfiguration(format!("vertex {} not found", endpoint.vertex.0))
+            ImpurityError::InvalidConfiguration(format!("vertex {} not found", endpoint.vertex.0))
         })?;
         let kind = model
             .interaction(linked.vertex.interaction)
@@ -963,8 +963,8 @@ mod legacy {
         /// Build the time-ordered circular worldline index.
         pub fn build(
             configuration: &WormholeConfiguration,
-            model: &SpinBosonModel,
-        ) -> Result<Self, SpinBosonError> {
+            model: &ImpurityModel,
+        ) -> Result<Self, ImpurityError> {
             let events = Self::collect_events(configuration);
             if events.is_empty() {
                 return Ok(Self {
@@ -979,7 +979,7 @@ mod legacy {
                 links[next.incoming_leg()] = event.outgoing_leg();
             }
             if links.contains(&usize::MAX) {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "incomplete worldline link construction".into(),
                 ));
             }
@@ -1028,7 +1028,7 @@ mod legacy {
         pub fn spin_before(
             &self,
             configuration: &WormholeConfiguration,
-            model: &SpinBosonModel,
+            model: &ImpurityModel,
             tau: f64,
         ) -> Spin {
             if self.events.is_empty() {
@@ -1048,11 +1048,11 @@ mod legacy {
         fn validate_links(
             &self,
             configuration: &WormholeConfiguration,
-            model: &SpinBosonModel,
-        ) -> Result<(), SpinBosonError> {
+            model: &ImpurityModel,
+        ) -> Result<(), ImpurityError> {
             if self.events.is_empty() {
                 if !matches!(configuration.empty_spin, -1 | 1) {
-                    return Err(SpinBosonError::InvalidConfiguration(
+                    return Err(ImpurityError::InvalidConfiguration(
                         "invalid empty-sector spin".into(),
                     ));
                 }
@@ -1065,7 +1065,7 @@ mod legacy {
             for event in &self.events {
                 let (incoming, outgoing) = event_spins(configuration, model, *event);
                 if incoming != propagated {
-                    return Err(SpinBosonError::InvalidConfiguration(format!(
+                    return Err(ImpurityError::InvalidConfiguration(format!(
                         "worldline discontinuity at tau={}: expected {propagated}, found {incoming}",
                         event.time
                     )));
@@ -1073,21 +1073,21 @@ mod legacy {
                 propagated = outgoing;
             }
             if propagated != first_incoming {
-                return Err(SpinBosonError::InvalidConfiguration(
+                return Err(ImpurityError::InvalidConfiguration(
                     "worldline is not periodic".into(),
                 ));
             }
 
             for (leg, partner) in self.links.iter().copied().enumerate() {
                 if self.links[partner] != leg {
-                    return Err(SpinBosonError::InvalidConfiguration(
+                    return Err(ImpurityError::InvalidConfiguration(
                         "worldline links are not involutive".into(),
                     ));
                 }
                 let spin_left = global_leg_spin(configuration, model, leg);
                 let spin_right = global_leg_spin(configuration, model, partner);
                 if spin_left != spin_right {
-                    return Err(SpinBosonError::InvalidConfiguration(
+                    return Err(ImpurityError::InvalidConfiguration(
                         "linked worldline legs carry different spins".into(),
                     ));
                 }
@@ -1099,7 +1099,7 @@ mod legacy {
     /// Incoming and outgoing spins at one endpoint event.
     pub fn event_spins(
         configuration: &WormholeConfiguration,
-        model: &SpinBosonModel,
+        model: &ImpurityModel,
         event: Event,
     ) -> (Spin, Spin) {
         let linked = configuration.vertices[event.vertex].as_ref().unwrap();
@@ -1113,7 +1113,7 @@ mod legacy {
     /// Spin carried by one global leg.
     pub fn global_leg_spin(
         configuration: &WormholeConfiguration,
-        model: &SpinBosonModel,
+        model: &ImpurityModel,
         global_leg: usize,
     ) -> Spin {
         let vertex_id = global_leg / LEGS_PER_VERTEX;
@@ -1128,8 +1128,8 @@ mod legacy {
 
 #[cfg(test)]
 mod tests {
-    use crate::spin_boson::bath::{Bath, SingleModeBath};
-    use crate::spin_boson::model::SpinBosonModel;
+    use crate::impurity::bath::{Bath, SingleModeBath};
+    use crate::impurity::model::ImpurityModel;
 
     use super::legacy::WorldlineIndex;
     use super::*;
@@ -1137,7 +1137,7 @@ mod tests {
     #[test]
     fn empty_configuration_is_valid() {
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = SpinBosonModel::xxz(bath, 0.5, 0.2, 0.0, None).expect("model");
+        let model = ImpurityModel::xxz(bath, 0.5, 0.2, 0.0, None).expect("model");
         let configuration = WormholeConfiguration::new(4.0, 1).expect("configuration");
         configuration.validate(&model).expect("valid worldline");
     }
@@ -1145,7 +1145,7 @@ mod tests {
     #[test]
     fn sync_empty_spin_tracks_the_tau_zero_worldline_sector() {
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = SpinBosonModel::xxz(bath, 0.4, 0.0, 0.0, Some(0.2)).expect("model");
+        let model = ImpurityModel::xxz(bath, 0.4, 0.0, 0.0, Some(0.2)).expect("model");
         let offdiagonal_kind = model
             .interaction(0)
             .kinds()
@@ -1178,7 +1178,7 @@ mod tests {
     #[test]
     fn insert_and_remove_single_diagonal() {
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
+        let model = ImpurityModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
         let mut configuration = WormholeConfiguration::new(8.0, 1).expect("configuration");
 
         let interaction = model.interaction(0);
@@ -1204,7 +1204,7 @@ mod tests {
     #[test]
     fn two_vertices_with_different_spins() {
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
+        let model = ImpurityModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
         let mut configuration = WormholeConfiguration::new(8.0, -1).expect("configuration");
 
         let interaction = model.interaction(0);
@@ -1236,7 +1236,7 @@ mod tests {
     #[test]
     fn linked_leg_is_involutive() {
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
+        let model = ImpurityModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
         let mut configuration = WormholeConfiguration::new(8.0, 1).expect("configuration");
 
         for i in 0..5 {
@@ -1270,7 +1270,7 @@ mod tests {
         use rand_xoshiro::Xoshiro256PlusPlus;
 
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
+        let model = ImpurityModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
         let mut configuration = WormholeConfiguration::new(8.0, 1).expect("configuration");
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(42);
 
@@ -1335,7 +1335,7 @@ mod tests {
         use rand_xoshiro::Xoshiro256PlusPlus;
 
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
+        let model = ImpurityModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
         let mut configuration = WormholeConfiguration::new(8.0, 1).expect("configuration");
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(99);
 
@@ -1374,10 +1374,10 @@ mod tests {
         use rand_xoshiro::Xoshiro256PlusPlus;
 
         use crate::algorithm::{QmcKernel, UpdateSchedule};
-        use crate::spin_boson::updates::WormholeEngine;
+        use crate::impurity::updates::WormholeEngine;
 
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
-        let model = SpinBosonModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
+        let model = ImpurityModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
         let mut engine = WormholeEngine::new(model.clone(), UpdateSchedule::new(4, 4, 64));
         engine.set_validate_each_sweep(true);
         let mut configuration = WormholeConfiguration::new(8.0, 1).expect("configuration");

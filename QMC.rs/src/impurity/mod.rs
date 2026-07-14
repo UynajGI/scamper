@@ -1,4 +1,4 @@
-//! Continuous-time wormhole QMC for spin-boson impurity models.
+//! Continuous-time wormhole QMC for quantum impurity models.
 //!
 //! # Representation
 //!
@@ -12,10 +12,10 @@
 //! # Included model catalogs
 //!
 //! - Jaynes-Cummings (directed `S_+ D S_-` vertex)
-//! - directed rotating/counter-rotating (RW-CRW) spin-boson
-//! - U(1)-symmetric XXZ spin-boson
-//! - fully anisotropic XYZ spin-boson
-//! - original spin-boson / single-mode Rabi after a spin-axis rotation
+//! - directed rotating/counter-rotating (RW-CRW) impurity
+//! - U(1)-symmetric XXZ impurity
+//! - fully anisotropic XYZ impurity
+//! - original impurity / single-mode Rabi after a spin-axis rotation
 //!
 //! # Included bath samplers
 //!
@@ -23,8 +23,8 @@
 //! - sharp-cutoff power law
 //! - arbitrary positive discrete/tabulated spectrum
 //!
-//! [`SpinBosonQmc`] is the Carlo.rs-facing entry point.  Lower-level users can
-//! combine [`SpinBosonModel`], [`WormholeConfiguration`], and
+//! [`ImpurityQmc`] is the Carlo.rs-facing entry point.  Lower-level users can
+//! combine [`ImpurityModel`], [`WormholeConfiguration`], and
 //! [`WormholeEngine`] directly.
 
 pub mod bath;
@@ -39,11 +39,11 @@ pub mod vertex;
 
 pub use bath::{Bath, BathSample, KernelDirection, PowerLawBath, SingleModeBath, TabulatedBath};
 pub use configuration::WormholeConfiguration;
-pub use error::SpinBosonError;
-pub use mc::SpinBosonQmc;
-pub use model::{CouplingNormalization, InteractionChannel, SpinBosonModel, SpinBosonModelKind};
+pub use error::ImpurityError;
+pub use mc::ImpurityQmc;
+pub use model::{CouplingNormalization, ImpurityModel, ImpurityModelKind, InteractionChannel};
 pub use observables::{
-    correlation_sigma_z, integrated_sigma_z, measure_observables, SpinBosonObservables,
+    correlation_sigma_z, integrated_sigma_z, measure_observables, ImpurityObservables,
 };
 pub use scattering::{
     kind_after_flips, ScatteringChoice, ScatteringDiagnostics, ScatteringPolicy, ScatteringTable,

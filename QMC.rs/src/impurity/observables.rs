@@ -1,15 +1,15 @@
-//! Worldline estimators for the spin-boson impurity.
+//! Worldline estimators for quantum impurity models.
 
 use rand::Rng;
 use rand::RngExt;
 
 use super::configuration::WormholeConfiguration;
-use super::error::SpinBosonError;
-use super::model::SpinBosonModel;
+use super::error::ImpurityError;
+use super::model::ImpurityModel;
 
 /// One set of scalar measurements from a wormhole configuration.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SpinBosonObservables {
+pub struct ImpurityObservables {
     /// Imaginary-time averaged `sigma_z`.
     pub magnetization_sigma_z: f64,
     /// Imaginary-time averaged `S_z = sigma_z/2`.
@@ -41,10 +41,10 @@ pub struct SpinBosonObservables {
 /// Measure all built-in scalar observables.
 pub fn measure_observables<R: Rng + ?Sized>(
     configuration: &WormholeConfiguration,
-    model: &SpinBosonModel,
+    model: &ImpurityModel,
     correlation_samples: usize,
     rng: &mut R,
-) -> Result<SpinBosonObservables, SpinBosonError> {
+) -> Result<ImpurityObservables, ImpurityError> {
     let magnetization_sigma_z = integrated_sigma_z(configuration, model)?;
     let magnetization_s_z = 0.5 * magnetization_sigma_z;
     let correlation_sigma_z_half = correlation_sigma_z(
@@ -55,7 +55,7 @@ pub fn measure_observables<R: Rng + ?Sized>(
         rng,
     )?;
     let expansion_order = configuration.expansion_order() as f64;
-    Ok(SpinBosonObservables {
+    Ok(ImpurityObservables {
         magnetization_sigma_z,
         magnetization_s_z,
         magnetization_sigma_z_squared: magnetization_sigma_z * magnetization_sigma_z,
@@ -73,8 +73,8 @@ pub fn measure_observables<R: Rng + ?Sized>(
 /// Imaginary-time average of `sigma_z`.
 pub fn integrated_sigma_z(
     configuration: &WormholeConfiguration,
-    model: &SpinBosonModel,
-) -> Result<f64, SpinBosonError> {
+    model: &ImpurityModel,
+) -> Result<f64, ImpurityError> {
     if configuration.expansion_order() == 0 {
         return Ok(f64::from(configuration.empty_spin()));
     }
@@ -93,11 +93,11 @@ pub fn integrated_sigma_z(
 /// Random-origin estimator of the longitudinal imaginary-time correlation.
 pub fn correlation_sigma_z<R: Rng + ?Sized>(
     configuration: &WormholeConfiguration,
-    model: &SpinBosonModel,
+    model: &ImpurityModel,
     delta_tau: f64,
     samples: usize,
     rng: &mut R,
-) -> Result<f64, SpinBosonError> {
+) -> Result<f64, ImpurityError> {
     let sample_count = samples.max(1);
     let mut total = 0.0;
     for _ in 0..sample_count {
@@ -114,14 +114,14 @@ mod tests {
     use rand::SeedableRng;
     use rand_xoshiro::Xoshiro256PlusPlus;
 
-    use crate::spin_boson::bath::{Bath, SingleModeBath};
-    use crate::spin_boson::model::SpinBosonModel;
+    use crate::impurity::bath::{Bath, SingleModeBath};
+    use crate::impurity::model::ImpurityModel;
 
     use super::*;
 
     #[test]
     fn empty_worldline_estimators_are_exact() {
-        let model = SpinBosonModel::jaynes_cummings(
+        let model = ImpurityModel::jaynes_cummings(
             Bath::SingleMode(SingleModeBath::new(1.0).expect("mode")),
             0.2,
             0.0,

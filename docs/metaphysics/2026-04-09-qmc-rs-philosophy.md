@@ -49,7 +49,7 @@ Based on the discipline-based classification framework, QMC.rs covers all four d
 |-------|-------|---------|
 | Lattice QMC | `LatticeQMC` → `SSEMonteCarlo` / `WormMonteCarlo` | SSE, Worldline, Worm, Directed Loop |
 | Continuous QMC | `ContinuousQMC` → `VMMonteCarlo` / `DMMonteCarlo` | VMC, DMC, AFQMC |
-| Impurity QMC | `ImpurityQMC` → `CTHybMonteCarlo` / `SpinBosonMonteCarlo` | CT-HYB, CT-AUX, Spin-Boson |
+| Impurity QMC | `ImpurityQMC` → `CTHybMonteCarlo` / `ImpurityMonteCarlo` | CT-HYB, CT-AUX, Spin-Boson |
 | Field QMC | `FieldQMC` → `HMCMonteCarlo` | HMC (Lattice Field Theory) |
 
 ### Trait Hierarchy
