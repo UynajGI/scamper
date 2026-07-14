@@ -93,9 +93,7 @@ impl System {
         if !self.beta.is_finite() || self.beta < 0.0 {
             return Err("beta must be finite and non-negative".to_string());
         }
-        if self.spins.iter().any(|value| !value.is_finite()) {
-            return Err("spin buffer contains non-finite values".to_string());
-        }
+        model.validate_configuration(&self.spins, self.n_sites())?;
         if !self.energy.is_finite() {
             return Err("cached energy is non-finite".to_string());
         }
@@ -114,15 +112,9 @@ impl<H: Hamiltonian> TrialEvaluator<H, SiteSpinMove> for System {
         patch: &mut EnergyPatch,
     ) -> ThermodynamicDelta {
         assert!(movement.site < self.n_sites(), "trial site out of range");
-        assert_eq!(
-            movement.spin.len(),
-            model.spin_dim(),
-            "trial spin dimension mismatch"
-        );
-        assert!(
-            movement.spin.iter().all(|component| component.is_finite()),
-            "trial spin contains a non-finite component"
-        );
+        model
+            .validate_spin(&movement.spin)
+            .expect("trial spin is outside the model's physical state manifold");
         patch.delta_energy =
             model.delta_energy(&self.spins, &self.lattice, movement.site, &movement.spin);
         assert!(
@@ -159,6 +151,11 @@ impl<H: Hamiltonian> TrialEvaluator<H, BatchSpinMove> for System {
             model.spin_dim(),
             "batch spin dimension mismatch"
         );
+        for index in 0..movement.len() {
+            model
+                .validate_spin(movement.spin(index))
+                .expect("batch trial spin is outside the model's physical state manifold");
+        }
         let delta_energy = model.batch_delta_energy(
             &self.spins,
             &self.lattice,

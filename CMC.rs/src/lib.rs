@@ -118,7 +118,10 @@ pub use particle::{
     RigidMoleculeRotation, RigidMoleculeTranslation, SimulationCell, TorsionDefinition,
     TorsionRotation, TranslateParticle, VolumeChangePatch, WeightedMove,
 };
-pub use postprocess::{binder_cumulant, specific_heat, susceptibility};
+pub use postprocess::{
+    binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,
+    zero_field_ising_susceptibility,
+};
 pub use statistics::{statistical_efficiency, StatisticalEfficiency};
 pub use worm::{
     enumerate_ising_graph_expansion, EndpointPairHistogram, ExactIsingGraphExpansion,

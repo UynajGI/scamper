@@ -246,11 +246,16 @@ impl<const D: usize> HardSphereEventChain<D> {
             }
             let contact_projection = (diameter_squared - perpendicular_squared).sqrt();
             let oriented_parallel = sign * displacement[axis];
-            let quotient =
-                (COLLISION_EPSILON + contact_projection - oriented_parallel) / axis_length;
-            let image_shift = quotient.floor() + 1.0;
-            let distance = oriented_parallel + image_shift * axis_length - contact_projection;
-            if !distance.is_finite() || distance <= COLLISION_EPSILON {
+            let direct_distance = oriented_parallel - contact_projection;
+            // A particle already touching its forward neighbour must lift at
+            // zero distance. Skipping this contact lets the active sphere pass
+            // through a valid contact and creates an overlap.
+            let distance = if direct_distance >= -COLLISION_EPSILON {
+                direct_distance.max(0.0)
+            } else {
+                direct_distance + axis_length
+            };
+            if !distance.is_finite() || distance < 0.0 {
                 continue;
             }
             if distance > maximum_distance + COLLISION_EPSILON {

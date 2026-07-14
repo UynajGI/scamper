@@ -5,11 +5,19 @@
 
 use carlo_rs::Results;
 
-/// Magnetic susceptibility per site: χ = β·N·(⟨M²⟩ − ⟨M⟩²)
+/// Connected fluctuation of the recorded scalar order parameter:
+/// `β N (⟨M²⟩ - ⟨M⟩²)`.
 ///
-/// Requires "Magnetization", "M2" in results.
-pub fn susceptibility(results: &Results, beta: f64, n_sites: usize) -> Option<f64> {
-    if !beta.is_finite() || n_sites == 0 {
+/// The built-in Ising, Potts and O(N) `Magnetization` observables are
+/// non-negative magnitudes/order parameters. Consequently this quantity is
+/// generally **not** the signed linear-response susceptibility.
+/// Requires `"Magnetization"` and `"M2"`.
+pub fn connected_order_parameter_fluctuation(
+    results: &Results,
+    beta: f64,
+    n_sites: usize,
+) -> Option<f64> {
+    if !beta.is_finite() || beta < 0.0 || n_sites == 0 {
         return None;
     }
     let m = results.get("Magnetization")?;
@@ -17,11 +25,38 @@ pub fn susceptibility(results: &Results, beta: f64, n_sites: usize) -> Option<f6
     Some(beta * n_sites as f64 * (m2.mean - m.mean * m.mean))
 }
 
+/// Compatibility alias for [`connected_order_parameter_fluctuation`].
+///
+/// This name is retained for source compatibility. With the default built-in
+/// magnitude observables it must not be interpreted as a signed
+/// linear-response susceptibility.
+pub fn susceptibility(results: &Results, beta: f64, n_sites: usize) -> Option<f64> {
+    connected_order_parameter_fluctuation(results, beta, n_sites)
+}
+
+/// Zero-field Ising susceptibility per site for a finite spin-flip symmetric
+/// system: `χ = β N ⟨m²⟩`.
+///
+/// The default Ising observable stores `|m|`, but `|m|² = m²`, so `"M2"` is
+/// sufficient. This formula assumes exactly zero magnetic field and global
+/// spin-flip symmetry.
+pub fn zero_field_ising_susceptibility(
+    results: &Results,
+    beta: f64,
+    n_sites: usize,
+) -> Option<f64> {
+    if !beta.is_finite() || beta < 0.0 || n_sites == 0 {
+        return None;
+    }
+    let m2 = results.get("M2")?;
+    Some(beta * n_sites as f64 * m2.mean)
+}
+
 /// Specific heat per site: C_v = β²/N · (⟨E²⟩ − ⟨E⟩²)
 ///
 /// Requires "Energy", "E2" in results.
 pub fn specific_heat(results: &Results, beta: f64, n_sites: usize) -> Option<f64> {
-    if !beta.is_finite() || n_sites == 0 {
+    if !beta.is_finite() || beta < 0.0 || n_sites == 0 {
         return None;
     }
     let e = results.get("Energy")?;

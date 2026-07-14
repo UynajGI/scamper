@@ -77,12 +77,24 @@ pub fn enumerate_ising_density_of_states(
     }
     energies.sort_by(f64::total_cmp);
 
-    let mut levels = Vec::new();
-    let mut degeneracies = Vec::new();
+    // Bound forward-summation roundoff instead of using a loose
+    // relative tolerance that could merge physically distinct weighted
+    // energy levels. Each Ising bond term has magnitude |J w_e|.
+    let terms = lattice.n_edges().max(1) as f64;
+    let sum_abs = lattice
+        .edges
+        .iter()
+        .map(|edge| (model.j * edge.weight).abs())
+        .sum::<f64>();
+    let gamma = terms * f64::EPSILON / (1.0 - terms * f64::EPSILON);
+    let grouping_tolerance = 8.0 * gamma * sum_abs.max(1.0);
+
+    let mut levels: Vec<f64> = Vec::new();
+    let mut degeneracies: Vec<u64> = Vec::new();
     for energy in energies {
         if levels
             .last()
-            .is_some_and(|&previous| close(previous, energy))
+            .is_some_and(|&previous| (previous - energy).abs() <= grouping_tolerance)
         {
             let last = degeneracies
                 .last_mut()
@@ -97,9 +109,4 @@ pub fn enumerate_ising_density_of_states(
         energies: levels,
         degeneracies,
     })
-}
-
-#[inline]
-fn close(left: f64, right: f64) -> bool {
-    (left - right).abs() <= 1e-10 * (1.0 + left.abs().max(right.abs()))
 }

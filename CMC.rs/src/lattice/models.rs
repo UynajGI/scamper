@@ -32,7 +32,8 @@ pub struct IsingModel {
 }
 
 impl IsingModel {
-    pub const fn new(j: f64) -> Self {
+    pub fn new(j: f64) -> Self {
+        assert!(j.is_finite(), "Ising coupling must be finite");
         Self { j }
     }
 
@@ -56,6 +57,22 @@ impl PairInteraction for IsingModel {
 
     fn bond_energy(&self, left: &[f64], right: &[f64], bond: &Bond) -> f64 {
         -self.j * bond.weight * left[0] * right[0]
+    }
+
+    fn validate_spin(&self, spin: &[f64]) -> Result<(), String> {
+        if spin.len() != 1 {
+            return Err(format!(
+                "Ising spin dimension must be 1, got {}",
+                spin.len()
+            ));
+        }
+        if spin[0] != -1.0 && spin[0] != 1.0 {
+            return Err(format!(
+                "Ising spin must be exactly -1 or +1, got {}",
+                spin[0]
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -149,7 +166,10 @@ impl HeatBathable for IsingModel {
     ) -> Spin {
         let field: f64 = lattice
             .incidences(site)
-            .map(|(neighbor, edge_id)| self.j * lattice.edges[edge_id].weight * spins[neighbor])
+            .filter_map(|(neighbor, edge_id)| {
+                let edge = lattice.edges[edge_id];
+                (edge.source != edge.target).then_some(self.j * edge.weight * spins[neighbor])
+            })
             .sum();
         let x = 2.0 * beta * field;
         let p_plus = if x >= 0.0 {
@@ -176,6 +196,7 @@ pub struct PottsModel {
 
 impl PottsModel {
     pub fn new(j: f64, q: usize) -> Self {
+        assert!(j.is_finite(), "Potts coupling must be finite");
         assert!(q >= 2, "Potts q must be >= 2");
         Self { j, q }
     }
@@ -212,6 +233,23 @@ impl PairInteraction for PottsModel {
         } else {
             0.0
         }
+    }
+
+    fn validate_spin(&self, spin: &[f64]) -> Result<(), String> {
+        if spin.len() != 1 {
+            return Err(format!(
+                "Potts spin dimension must be 1, got {}",
+                spin.len()
+            ));
+        }
+        let value = spin[0];
+        if !value.is_finite() || value.fract() != 0.0 || value < 0.0 || value >= self.q as f64 {
+            return Err(format!(
+                "Potts spin must be an integer in [0, {}), got {value}",
+                self.q
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -310,9 +348,13 @@ impl HeatBathable for PottsModel {
     ) -> Spin {
         let mut log_weights = vec![0.0f64; self.q];
         for (neighbor, edge_id) in lattice.incidences(site) {
+            let edge = lattice.edges[edge_id];
+            if edge.source == edge.target {
+                continue;
+            }
             let state = spins[neighbor] as usize;
             if state < self.q {
-                log_weights[state] += beta * self.j * lattice.edges[edge_id].weight;
+                log_weights[state] += beta * self.j * edge.weight;
             }
         }
 
@@ -348,6 +390,7 @@ pub struct ONModel<const D: usize> {
 impl<const D: usize> ONModel<D> {
     pub fn new(j: f64) -> Self {
         assert!(D >= 2, "O(N) spin dimension must be >= 2");
+        assert!(j.is_finite(), "O(N) coupling must be finite");
         Self { j }
     }
 
@@ -406,6 +449,29 @@ impl<const D: usize> PairInteraction for ONModel<D> {
 
     fn bond_energy(&self, left: &[f64], right: &[f64], bond: &Bond) -> f64 {
         -self.j * bond.weight * dot(left, right)
+    }
+
+    fn validate_spin(&self, spin: &[f64]) -> Result<(), String> {
+        if spin.len() != D {
+            return Err(format!(
+                "O(N) spin dimension must be {D}, got {}",
+                spin.len()
+            ));
+        }
+        if spin.iter().any(|component| !component.is_finite()) {
+            return Err("O(N) spin contains a non-finite component".to_string());
+        }
+        let norm_squared = spin
+            .iter()
+            .map(|component| component * component)
+            .sum::<f64>();
+        let tolerance = 1e-10 * D as f64;
+        if (norm_squared - 1.0).abs() > tolerance {
+            return Err(format!(
+                "O(N) spin must have unit norm: norm^2={norm_squared}"
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -515,7 +581,11 @@ impl<const D: usize> LocalFieldModel for ONModel<D> {
         assert_eq!(output.len(), D);
         output.fill(0.0);
         for (neighbor, edge_id) in lattice.incidences(site) {
-            let scale = self.j * lattice.edges[edge_id].weight;
+            let edge = lattice.edges[edge_id];
+            if edge.source == edge.target {
+                continue;
+            }
+            let scale = self.j * edge.weight;
             let base = neighbor * D;
             for component in 0..D {
                 output[component] += scale * spins[base + component];

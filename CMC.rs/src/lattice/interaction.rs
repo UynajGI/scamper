@@ -19,6 +19,42 @@ pub trait Hamiltonian: Send + Sync {
     fn spin_dim(&self) -> usize;
     fn coupling(&self) -> f64;
 
+    /// Validate one site-local degree of freedom against the model's physical
+    /// state manifold. Custom Hamiltonians inherit a finite, dimension-only
+    /// check; built-in discrete and O(N) models strengthen this contract.
+    fn validate_spin(&self, spin: &[f64]) -> Result<(), String> {
+        if spin.len() != self.spin_dim() {
+            return Err(format!(
+                "spin dimension mismatch: expected {}, got {}",
+                self.spin_dim(),
+                spin.len()
+            ));
+        }
+        if spin.iter().any(|component| !component.is_finite()) {
+            return Err("spin contains a non-finite component".to_string());
+        }
+        Ok(())
+    }
+
+    /// Validate a complete flat site-major configuration.
+    fn validate_configuration(&self, spins: &[f64], n_sites: usize) -> Result<(), String> {
+        let spin_dim = self.spin_dim();
+        let expected = n_sites
+            .checked_mul(spin_dim)
+            .ok_or_else(|| "spin buffer size overflow".to_string())?;
+        if spins.len() != expected {
+            return Err(format!(
+                "spin buffer length mismatch: expected {expected}, got {}",
+                spins.len()
+            ));
+        }
+        for (site, spin) in spins.chunks_exact(spin_dim).enumerate() {
+            self.validate_spin(spin)
+                .map_err(|reason| format!("invalid spin at site {site}: {reason}"))?;
+        }
+        Ok(())
+    }
+
     /// Energy terms affected by replacing `site` with `proposed`.
     ///
     /// `beta` is retained for source compatibility.  The return value must be
@@ -77,6 +113,21 @@ pub trait PairInteraction: Send + Sync {
     fn coupling(&self) -> f64;
     fn bond_energy(&self, left: &[f64], right: &[f64], bond: &Bond) -> f64;
 
+    /// Validate one physical spin for pair-interaction models.
+    fn validate_spin(&self, spin: &[f64]) -> Result<(), String> {
+        if spin.len() != self.spin_dim() {
+            return Err(format!(
+                "spin dimension mismatch: expected {}, got {}",
+                self.spin_dim(),
+                spin.len()
+            ));
+        }
+        if spin.iter().any(|component| !component.is_finite()) {
+            return Err("spin contains a non-finite component".to_string());
+        }
+        Ok(())
+    }
+
     fn onsite_energy(&self, _site: usize, _spin: &[f64]) -> f64 {
         0.0
     }
@@ -91,6 +142,10 @@ impl<T: PairInteraction> Hamiltonian for T {
         PairInteraction::coupling(self)
     }
 
+    fn validate_spin(&self, spin: &[f64]) -> Result<(), String> {
+        PairInteraction::validate_spin(self, spin)
+    }
+
     fn local_energy(
         &self,
         spins: &[f64],
@@ -102,16 +157,14 @@ impl<T: PairInteraction> Hamiltonian for T {
         let spin_dim = PairInteraction::spin_dim(self);
         debug_assert_eq!(proposed.len(), spin_dim);
         let mut energy = self.onsite_energy(site, proposed);
-        let mut previous_self_loop = None;
 
         for (_neighbor, edge_id) in lattice.incidences(site) {
             let edge = lattice.edges[edge_id];
             if edge.source == site && edge.target == site {
-                if previous_self_loop == Some(edge_id) {
-                    continue;
-                }
-                previous_self_loop = Some(edge_id);
-                energy += self.bond_energy(proposed, proposed, &edge);
+                // A physical self-loop has exactly two CSR incidences. Count
+                // half on each incidence so correctness is independent of CSR
+                // row ordering, including manually constructed valid lattices.
+                energy += 0.5 * self.bond_energy(proposed, proposed, &edge);
                 continue;
             }
 

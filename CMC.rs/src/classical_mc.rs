@@ -130,6 +130,9 @@ where
                 ),
             ));
         }
+        self.model
+            .validate_configuration(&spins, self.system.n_sites())
+            .map_err(|reason| invalid_checkpoint("snapshot.spins", reason))?;
         if let Some(n_sites) = snapshot["n_sites"].as_u64() {
             if n_sites as usize != self.system.n_sites() {
                 return Err(invalid_checkpoint("snapshot.n_sites", "topology mismatch"));
