@@ -1,7 +1,10 @@
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 
-use crate::adaptation::{HmcWarmup, MetricAdaptation, MetricUpdate, WarmupWindowConfig};
+use crate::adaptation::{
+    find_reasonable_step_size, HmcWarmup, MetricAdaptation, MetricUpdate, StepSizeSearch,
+    WarmupWindowConfig,
+};
 use crate::integrator::{LeapfrogIntegrator, PhasePoint};
 use crate::metric::{DenseMetric, DiagonalMetric, Metric, MetricKind, UnitMetric};
 use crate::{
@@ -16,7 +19,9 @@ const MAX_SUPPORTED_TREE_DEPTH: u16 = 20;
 /// A transition doubles a binary Hamiltonian trajectory until it detects a
 /// U-turn, encounters a divergent numerical path, or exhausts
 /// `max_tree_depth`. Candidate states are sampled in the log domain with
-/// weights proportional to `exp(-H)`.
+/// weights proportional to `exp(-H)`. The generalized termination criterion
+/// tracks summed trajectory momentum and checks both merged and cross-subtree
+/// turns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nuts<M> {
     metric: M,
@@ -24,6 +29,10 @@ pub struct Nuts<M> {
     max_tree_depth: u16,
     max_energy_error: f64,
     warmup: Option<HmcWarmup>,
+    #[serde(default)]
+    step_size_search: Option<StepSizeSearch>,
+    #[serde(default = "step_size_search_complete_default")]
+    step_size_search_complete: bool,
     #[serde(skip, default)]
     initial: PhasePoint,
     #[serde(skip, default)]
@@ -45,6 +54,8 @@ where
             max_tree_depth,
             max_energy_error: 1_000.0,
             warmup: None,
+            step_size_search: None,
+            step_size_search_complete: true,
             initial: PhasePoint::with_dimension(dimension),
             current_gradient: vec![0.0; dimension],
             integrator: LeapfrogIntegrator::with_dimension(dimension),
@@ -91,6 +102,13 @@ where
             metric_adaptation,
             windows,
         )?);
+        Ok(self)
+    }
+
+    /// Enable a one-step warmup search for a reasonable initial step size.
+    pub fn with_step_size_search(mut self, search: StepSizeSearch) -> Result<Self, McmcError> {
+        self.step_size_search = Some(search.validate()?);
+        self.step_size_search_complete = false;
         Ok(self)
     }
 
@@ -153,14 +171,6 @@ where
                 .metric
                 .set_dense_inverse_mass(dimension, &covariance, jitter),
         }
-    }
-
-    fn trajectory_continues(
-        &self,
-        left: &PhasePoint,
-        right: &PhasePoint,
-    ) -> Result<bool, McmcError> {
-        no_u_turn(&self.metric, left, right)
     }
 }
 
@@ -251,7 +261,6 @@ where
         state.validate()?;
         let dimension = state.dimension();
         self.ensure_workspace(dimension)?;
-        let used_step_size = self.step_size;
 
         let mut target_evaluations = 0_u32;
         let mut gradient_evaluations = 0_u32;
@@ -273,6 +282,38 @@ where
             state.synchronize_gradient(log_density, &self.current_gradient)?;
         }
 
+        if let Some(search) = self.step_size_search {
+            if self.step_size_search_complete {
+                // already searched; skip
+            } else if phase != SamplingPhase::Warmup || self.warmup.is_none() {
+                return Err(McmcError::InvalidConfig(
+                    "automatic NUTS step-size search requires configured warmup".to_string(),
+                ));
+            } else {
+                let result = find_reasonable_step_size(
+                    target,
+                    &self.metric,
+                    state.position(),
+                    state.log_density(),
+                    &self.current_gradient,
+                    self.step_size,
+                    search,
+                    rng,
+                    &mut self.integrator,
+                )?;
+                target_evaluations = target_evaluations.saturating_add(result.target_evaluations);
+                gradient_evaluations =
+                    gradient_evaluations.saturating_add(result.gradient_evaluations);
+                self.step_size = result.step_size;
+                self.warmup
+                    .as_mut()
+                    .expect("checked NUTS warmup")
+                    .restart_step_size(result.step_size)?;
+                self.step_size_search_complete = true;
+            }
+        }
+        let used_step_size = self.step_size;
+
         self.initial.position.copy_from_slice(state.position());
         self.initial
             .gradient
@@ -292,6 +333,7 @@ where
         let mut right = self.initial.clone();
         let mut proposal = self.initial.clone();
         let mut log_weight = 0.0;
+        let mut momentum_sum = self.initial.momentum.clone();
         let mut acceptance_sum = 0.0;
         let mut acceptance_count = 0_u32;
         let mut leapfrog_steps = 0_u32;
@@ -341,13 +383,35 @@ where
                 log_weight = combined_weight;
             }
 
+            let continues = if direction > 0.0 {
+                merged_trajectory_continues(
+                    &self.metric,
+                    &left,
+                    &right,
+                    &momentum_sum,
+                    &subtree.left,
+                    &subtree.right,
+                    &subtree.momentum_sum,
+                )?
+            } else {
+                merged_trajectory_continues(
+                    &self.metric,
+                    &subtree.left,
+                    &subtree.right,
+                    &subtree.momentum_sum,
+                    &left,
+                    &right,
+                    &momentum_sum,
+                )?
+            };
+            add_assign(&mut momentum_sum, &subtree.momentum_sum)?;
             if direction > 0.0 {
                 right = subtree.right;
             } else {
                 left = subtree.left;
             }
 
-            if !self.trajectory_continues(&left, &right)? {
+            if !continues {
                 stopped_early = true;
                 break;
             }
@@ -370,12 +434,21 @@ where
             (acceptance_sum / f64::from(acceptance_count)).clamp(0.0, 1.0)
         };
         if phase == SamplingPhase::Warmup {
+            let mut metric_updated = false;
             if let Some(warmup) = &mut self.warmup {
                 let observation = warmup.observe(acceptance_statistic, state.position())?;
                 self.step_size = observation.step_size;
                 if let Some(update) = observation.metric_update {
                     self.apply_metric_update(update)?;
+                    metric_updated = true;
                 }
+            }
+            if metric_updated
+                && self
+                    .step_size_search
+                    .is_some_and(|search| search.repeat_after_metric_update)
+            {
+                self.step_size_search_complete = false;
             }
         }
 
@@ -440,6 +513,7 @@ struct Tree {
     leapfrog_steps: u32,
     divergent: bool,
     energy_error: Option<f64>,
+    momentum_sum: Vec<f64>,
     continue_tree: bool,
 }
 
@@ -507,15 +581,11 @@ where
         rng,
     )?;
 
-    let mut combined = if direction > 0.0 {
-        combine_trees(first, second, rng)
+    if direction > 0.0 {
+        combine_trees(first, second, metric, rng)
     } else {
-        combine_trees(second, first, rng)
-    };
-    if combined.continue_tree {
-        combined.continue_tree = no_u_turn(metric, &combined.left, &combined.right)?;
+        combine_trees(second, first, metric, rng)
     }
-    Ok(combined)
 }
 
 fn build_leaf<T, M>(
@@ -534,6 +604,7 @@ where
     let mut point = start.clone();
     let integration = integrator.integrate(target, metric, &mut point, step_size, 1)?;
     if integration.invalid_trajectory {
+        let momentum_sum = point.momentum.clone();
         return Ok(Tree {
             left: point.clone(),
             right: point,
@@ -546,6 +617,7 @@ where
             leapfrog_steps: 1,
             divergent: true,
             energy_error: None,
+            momentum_sum,
             continue_tree: false,
         });
     }
@@ -560,6 +632,7 @@ where
         (-difference).min(0.0).exp()
     };
     let proposal = (!divergent).then(|| point.clone());
+    let momentum_sum = point.momentum.clone();
     Ok(Tree {
         left: point.clone(),
         right: point,
@@ -576,14 +649,29 @@ where
         leapfrog_steps: 1,
         divergent,
         energy_error: finite.then_some(difference),
+        momentum_sum,
         continue_tree: !divergent,
     })
 }
 
-fn combine_trees<R>(left: Tree, right: Tree, rng: &mut R) -> Tree
+fn combine_trees<M, R>(left: Tree, right: Tree, metric: &M, rng: &mut R) -> Result<Tree, McmcError>
 where
+    M: Metric,
     R: Rng + ?Sized,
 {
+    let continue_tree = left.continue_tree
+        && right.continue_tree
+        && merged_trajectory_continues(
+            metric,
+            &left.left,
+            &left.right,
+            &left.momentum_sum,
+            &right.left,
+            &right.right,
+            &right.momentum_sum,
+        )?;
+    let mut momentum_sum = left.momentum_sum.clone();
+    add_assign(&mut momentum_sum, &right.momentum_sum)?;
     let log_weight = log_add_exp(left.log_weight, right.log_weight);
     let proposal = match (left.proposal, right.proposal) {
         (Some(left_proposal), Some(right_proposal)) => {
@@ -596,7 +684,7 @@ where
         (Some(proposal), None) | (None, Some(proposal)) => Some(proposal),
         (None, None) => None,
     };
-    Tree {
+    Ok(Tree {
         left: left.left,
         right: right.right,
         proposal,
@@ -612,19 +700,79 @@ where
         leapfrog_steps: left.leapfrog_steps.saturating_add(right.leapfrog_steps),
         divergent: left.divergent || right.divergent,
         energy_error: worst_energy_error(left.energy_error, right.energy_error),
-        continue_tree: left.continue_tree && right.continue_tree,
-    }
+        momentum_sum,
+        continue_tree,
+    })
 }
 
-fn no_u_turn<M>(metric: &M, left: &PhasePoint, right: &PhasePoint) -> Result<bool, McmcError>
+#[allow(clippy::too_many_arguments)]
+fn merged_trajectory_continues<M>(
+    metric: &M,
+    left_start: &PhasePoint,
+    left_end: &PhasePoint,
+    left_momentum_sum: &[f64],
+    right_start: &PhasePoint,
+    right_end: &PhasePoint,
+    right_momentum_sum: &[f64],
+) -> Result<bool, McmcError>
 where
     M: Metric,
 {
-    let left_dot =
-        metric.displacement_dot_velocity(&left.position, &right.position, &left.momentum)?;
-    let right_dot =
-        metric.displacement_dot_velocity(&left.position, &right.position, &right.momentum)?;
-    Ok(left_dot.is_finite() && right_dot.is_finite() && left_dot >= 0.0 && right_dot >= 0.0)
+    Ok(generalized_no_u_turn_sum(
+        metric,
+        left_start,
+        right_end,
+        left_momentum_sum,
+        right_momentum_sum,
+    )? && generalized_no_u_turn_sum(
+        metric,
+        left_start,
+        right_start,
+        left_momentum_sum,
+        &right_start.momentum,
+    )? && generalized_no_u_turn_sum(
+        metric,
+        left_end,
+        right_end,
+        &left_end.momentum,
+        right_momentum_sum,
+    )?)
+}
+
+fn generalized_no_u_turn_sum<M>(
+    metric: &M,
+    left: &PhasePoint,
+    right: &PhasePoint,
+    first_momentum_sum: &[f64],
+    second_momentum_sum: &[f64],
+) -> Result<bool, McmcError>
+where
+    M: Metric,
+{
+    let left_dot = metric.velocity_dot_momentum_sum(
+        &left.momentum,
+        first_momentum_sum,
+        second_momentum_sum,
+    )?;
+    let right_dot = metric.velocity_dot_momentum_sum(
+        &right.momentum,
+        first_momentum_sum,
+        second_momentum_sum,
+    )?;
+    Ok(left_dot.is_finite() && right_dot.is_finite() && left_dot > 0.0 && right_dot > 0.0)
+}
+
+fn add_assign(left: &mut [f64], right: &[f64]) -> Result<(), McmcError> {
+    if left.len() != right.len() {
+        return Err(McmcError::DimensionMismatch {
+            expected: left.len(),
+            actual: right.len(),
+        });
+    }
+    for (left, right) in left.iter_mut().zip(right.iter()) {
+        *left += right;
+    }
+    Ok(())
 }
 
 fn select_right<R>(left: f64, right: f64, total: f64, rng: &mut R) -> bool
@@ -672,6 +820,10 @@ fn ensure_vector(vector: &mut Vec<f64>, dimension: usize) -> Result<(), McmcErro
             actual: vector.len(),
         })
     }
+}
+
+const fn step_size_search_complete_default() -> bool {
+    true
 }
 
 fn validate_nuts_config(
@@ -728,17 +880,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn u_turn_criterion_uses_endpoint_velocities() {
+    fn generalized_u_turn_criterion_uses_summed_momentum() {
         let metric = UnitMetric::new(1).unwrap();
         let mut left = PhasePoint::with_dimension(1);
         let mut right = PhasePoint::with_dimension(1);
-        left.position[0] = -1.0;
-        right.position[0] = 1.0;
         left.momentum[0] = 1.0;
         right.momentum[0] = 1.0;
-        assert!(no_u_turn(&metric, &left, &right).unwrap());
-        right.momentum[0] = -1.0;
-        assert!(!no_u_turn(&metric, &left, &right).unwrap());
+        assert!(generalized_no_u_turn_sum(&metric, &left, &right, &[1.0], &[1.0]).unwrap());
+        assert!(!generalized_no_u_turn_sum(&metric, &left, &right, &[-3.0], &[1.0]).unwrap());
+    }
+
+    #[test]
+    fn merged_criterion_checks_cross_subtrees() {
+        let metric = UnitMetric::new(1).unwrap();
+        let mut left_start = PhasePoint::with_dimension(1);
+        let mut left_end = PhasePoint::with_dimension(1);
+        let mut right_start = PhasePoint::with_dimension(1);
+        let mut right_end = PhasePoint::with_dimension(1);
+        left_start.momentum[0] = 1.0;
+        left_end.momentum[0] = -4.0;
+        right_start.momentum[0] = 1.0;
+        right_end.momentum[0] = 1.0;
+        assert!(!merged_trajectory_continues(
+            &metric,
+            &left_start,
+            &left_end,
+            &[2.0],
+            &right_start,
+            &right_end,
+            &[2.0],
+        )
+        .unwrap());
     }
 
     #[test]

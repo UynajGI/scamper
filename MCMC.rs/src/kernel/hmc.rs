@@ -1,7 +1,10 @@
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 
-use crate::adaptation::{HmcWarmup, MetricAdaptation, MetricUpdate, WarmupWindowConfig};
+use crate::adaptation::{
+    find_reasonable_step_size, HmcWarmup, MetricAdaptation, MetricUpdate, StepSizeSearch,
+    WarmupWindowConfig,
+};
 use crate::integrator::{LeapfrogIntegrator, PhasePoint};
 use crate::metric::{DenseMetric, DiagonalMetric, Metric, MetricKind, UnitMetric};
 use crate::{
@@ -17,6 +20,10 @@ pub struct StaticHmc<M> {
     leapfrog_steps: usize,
     max_energy_error: f64,
     warmup: Option<HmcWarmup>,
+    #[serde(default)]
+    step_size_search: Option<StepSizeSearch>,
+    #[serde(default = "step_size_search_complete_default")]
+    step_size_search_complete: bool,
     // Per-transition workspaces are rebuilt from the accepted state. Skipping
     // them keeps checkpoints finite even after an invalid divergent path.
     #[serde(skip, default)]
@@ -40,6 +47,8 @@ where
             leapfrog_steps,
             max_energy_error: 1_000.0,
             warmup: None,
+            step_size_search: None,
+            step_size_search_complete: true,
             phase_point: PhasePoint::with_dimension(dimension),
             current_gradient: vec![0.0; dimension],
             integrator: LeapfrogIntegrator::with_dimension(dimension),
@@ -86,6 +95,13 @@ where
             metric_adaptation,
             windows,
         )?);
+        Ok(self)
+    }
+
+    /// Enable a one-step warmup search for a reasonable initial step size.
+    pub fn with_step_size_search(mut self, search: StepSizeSearch) -> Result<Self, McmcError> {
+        self.step_size_search = Some(search.validate()?);
+        self.step_size_search_complete = false;
         Ok(self)
     }
 
@@ -250,7 +266,6 @@ where
         state.validate()?;
         let dimension = state.dimension();
         self.ensure_workspace(dimension)?;
-        let used_step_size = self.step_size;
 
         let mut target_evaluations = 0_u32;
         let mut gradient_evaluations = 0_u32;
@@ -271,6 +286,38 @@ where
             }
             state.synchronize_gradient(log_density, &self.current_gradient)?;
         }
+
+        if let Some(search) = self.step_size_search {
+            if self.step_size_search_complete {
+                // already searched; skip
+            } else if phase != SamplingPhase::Warmup || self.warmup.is_none() {
+                return Err(McmcError::InvalidConfig(
+                    "automatic HMC step-size search requires configured warmup".to_string(),
+                ));
+            } else {
+                let result = find_reasonable_step_size(
+                    target,
+                    &self.metric,
+                    state.position(),
+                    state.log_density(),
+                    &self.current_gradient,
+                    self.step_size,
+                    search,
+                    rng,
+                    &mut self.integrator,
+                )?;
+                target_evaluations = target_evaluations.saturating_add(result.target_evaluations);
+                gradient_evaluations =
+                    gradient_evaluations.saturating_add(result.gradient_evaluations);
+                self.step_size = result.step_size;
+                self.warmup
+                    .as_mut()
+                    .expect("checked HMC warmup")
+                    .restart_step_size(result.step_size)?;
+                self.step_size_search_complete = true;
+            }
+        }
+        let used_step_size = self.step_size;
 
         self.phase_point.position.copy_from_slice(state.position());
         self.phase_point
@@ -334,12 +381,21 @@ where
         }
 
         if phase == SamplingPhase::Warmup {
+            let mut metric_updated = false;
             if let Some(warmup) = &mut self.warmup {
                 let observation = warmup.observe(acceptance_probability, state.position())?;
                 self.step_size = observation.step_size;
                 if let Some(update) = observation.metric_update {
                     self.apply_metric_update(update)?;
+                    metric_updated = true;
                 }
+            }
+            if metric_updated
+                && self
+                    .step_size_search
+                    .is_some_and(|search| search.repeat_after_metric_update)
+            {
+                self.step_size_search_complete = false;
             }
         }
 
@@ -389,6 +445,10 @@ where
     fn name(&self, _target: &T) -> &'static str {
         "StaticHmc"
     }
+}
+
+const fn step_size_search_complete_default() -> bool {
+    true
 }
 
 fn validate_hmc_config(

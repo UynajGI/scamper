@@ -1,4 +1,4 @@
-# MCMC.rs Architecture — v0.4
+# MCMC.rs Architecture — v0.5
 
 ## Core invariants
 
@@ -47,12 +47,13 @@ leapfrog step and permits target-owned reusable workspaces.
 - momentum sampling;
 - kinetic energy;
 - velocity `G p`;
-- a displacement–velocity dot product used by the U-turn criterion;
+- displacement–velocity products;
+- velocity products against one momentum or a sum of momenta;
 - optional diagonal or dense inverse-mass updates.
 
-The displacement primitive has a correct default implementation for external
-metric implementations. Unit, diagonal and dense built-ins override it without
-allocating temporary velocity vectors in the NUTS tree hot path.
+All new product primitives have correct default implementations for external
+metric implementations. Unit, diagonal and dense built-ins override them
+without allocating temporary velocity vectors in the NUTS tree hot path.
 
 ## Static HMC
 
@@ -80,13 +81,11 @@ contributes evaluation and diagnostic counts, but its candidate mass is not
 merged into the outer trajectory. This preserves the valid trajectory set used
 for multinomial selection.
 
-The generalized U-turn test evaluates both endpoint momenta against the
-endpoint displacement using metric velocity:
-
-```text
-(q_right - q_left) · G p_left  >= 0
-(q_right - q_left) · G p_right >= 0
-```
+Each subtree retains its summed momentum `rho`. The generalized termination
+test checks the full merged trajectory and both cross-subtree joins. In compact
+form, every checked segment uses its endpoint displacement together with the
+metric velocity of that segment's summed momentum. This catches a turn that can
+be hidden by checking only the outermost endpoint momenta.
 
 Tree depth is capped at 20 internally to bound the largest possible trajectory.
 Users normally configure a lower limit such as 8–12.
@@ -95,6 +94,9 @@ Users normally configure a lower limit such as 8–12.
 
 Static HMC and NUTS share `HmcWarmup`:
 
+- an optional bounded doubling/halving search finds a reasonable one-step
+  initial scale before dual averaging;
+- the search can repeat after metric-window updates;
 - dual averaging tunes step size toward the requested acceptance statistic;
 - slow windows accumulate diagonal or dense covariance estimates;
 - geometry updates occur only at slow-window boundaries;
@@ -102,10 +104,18 @@ Static HMC and NUTS share `HmcWarmup`:
 - the terminal buffer retunes the final step size;
 - entering sampling before configured warmup completes is an error.
 
+## Gradient validation
+
+`check_gradient` compares `DifferentiableLogDensity` output with central finite
+differences at a supplied point. It reports component-wise analytic, numerical,
+absolute and relative error and treats non-finite/support-crossing probes as
+structured errors. It is a model-development tool and is not called from the
+transition hot path.
+
 ## Trace and diagnostics
 
 `MemoryTrace` uses contiguous row-major position storage and parallel scalar
-columns. v0.4 adds backward-compatible serde-default columns for:
+columns. v0.4 added backward-compatible serde-default columns for:
 
 - Hamiltonian energy;
 - tree depth;
@@ -137,7 +147,7 @@ future random decisions and floating-point state exactly.
 
 ## Extension boundary
 
-v0.4 deliberately does not add:
+v0.5 deliberately does not add:
 
 - automatic differentiation framework bindings;
 - Riemannian metrics;

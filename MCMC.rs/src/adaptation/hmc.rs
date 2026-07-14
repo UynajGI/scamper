@@ -306,6 +306,13 @@ impl HmcWarmup {
         })
     }
 
+    pub(crate) fn restart_step_size(&mut self, step_size: f64) -> Result<(), McmcError> {
+        if self.frozen || self.iteration >= self.total_warmup {
+            return Err(McmcError::AdaptationFrozen);
+        }
+        self.dual_averaging.restart(step_size)
+    }
+
     pub fn finish(&mut self) -> Result<f64, McmcError> {
         if self.iteration != self.total_warmup {
             return Err(McmcError::InvalidConfig(format!(

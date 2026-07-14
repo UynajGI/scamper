@@ -1,4 +1,6 @@
-use mcmc_rs::{run_multichain, DifferentiableLogDensity, LogDensity, McmcConfig, Nuts};
+use mcmc_rs::{
+    run_multichain, DifferentiableLogDensity, LogDensity, McmcConfig, Nuts, StepSizeSearch,
+};
 
 #[derive(Clone, Copy)]
 struct CorrelatedGaussian;
@@ -33,8 +35,9 @@ fn main() -> Result<(), mcmc_rs::McmcError> {
     let output = run_multichain(
         |_| CorrelatedGaussian,
         |_| {
-            Nuts::diagonal(vec![1.0, 1.0], 0.15, 10)
+            Nuts::diagonal(vec![1.0, 1.0], 1.0, 10)
                 .and_then(|kernel| kernel.with_diagonal_adaptation(warmup, 0.8, 1.0e-3))
+                .and_then(|kernel| kernel.with_step_size_search(StepSizeSearch::default()))
                 .expect("valid NUTS configuration")
         },
         vec![

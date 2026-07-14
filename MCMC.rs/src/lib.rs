@@ -10,6 +10,7 @@ pub mod carlo_adapter;
 pub mod checkpoint;
 pub mod diagnostics;
 pub mod error;
+pub mod gradient;
 pub mod integrator;
 pub mod kernel;
 pub mod metric;
@@ -25,12 +26,15 @@ pub mod transform;
 
 pub use adaptation::{
     DenseCovarianceAdaptation, DiagonalCovarianceAdaptation, DualAveraging, HmcWarmup,
-    MetricAdaptation, RobbinsMonroScale, WarmupWindowConfig,
+    MetricAdaptation, RobbinsMonroScale, StepSizeSearch, WarmupWindowConfig,
 };
 pub use carlo_adapter::McmcSampler;
 pub use checkpoint::{ChainCheckpoint, TargetFingerprint, CHECKPOINT_FORMAT};
 pub use diagnostics::{diagnose, energy_bfmi, MultiChainDiagnostics, ParameterDiagnostics};
 pub use error::McmcError;
+pub use gradient::{
+    check_gradient, GradientCheckConfig, GradientCheckReport, GradientComponentCheck,
+};
 pub use integrator::{IntegrationReport, LeapfrogIntegrator, PhasePoint};
 pub use kernel::{
     ComponentWiseMetropolis, GibbsKernel, GibbsUpdate, GibbsUpdateResult, Mixture, Nuts,
