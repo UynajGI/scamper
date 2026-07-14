@@ -52,6 +52,7 @@ pub mod worm;
 pub mod algorithms;
 pub mod audit;
 pub mod core;
+pub mod dynamics;
 pub mod generalized;
 pub mod lattice;
 pub mod observables;
@@ -76,6 +77,11 @@ pub use core::ensemble::{
 pub use core::r#move::{BatchSpinMove, SiteSpinMove, Spin};
 pub use core::trial::{metropolis_hastings_step, ProposedMove, TrialEvaluator, TrialOutcome};
 pub use core::visit::{SiteOrder, VisitSchedule};
+pub use dynamics::{
+    BklEvent, BklIsingKernel, DynamicsError, EventChainOutcome, GillespieEvent, GillespieKernel,
+    HardSphereEventChain, HardSphereEventChainMC, KawasakiCore, KawasakiIsingMC, KineticIsingBklMC,
+    KineticIsingModel, KineticRateLaw, RejectionFreeModel,
+};
 pub use generalized::{
     canonical_reweight, enumerate_ising_density_of_states, BinnedAxis, CanonicalReweighting,
     DiscreteAxis, EnergyBiasCore, EnergyMacrostate, ExactIsingDensityOfStates, FixedBias,

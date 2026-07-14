@@ -88,6 +88,17 @@ fn on_phase_start(&mut self, phase: RunPhase, _ctx: &mut Context<Self::Rng>) {
 
 Existing `MonteCarlo` implementations do not need to define these hooks.
 
+Dynamic kernels can additionally report distinct clocks through `Context`:
+
+```text
+Sweeps | Attempts | AcceptedMoves | EventTime
+```
+
+Use `record_attempts`, `record_accepted_moves`, and `advance_event_time` rather
+than interpreting a scheduler sweep as physical time. `simulation_clocks()`
+returns typed `SimulationClock` readings, and checkpoint state preserves the
+new counters while older checkpoints default them to zero.
+
 For convergence-driven warmup, `Scheduler::run_controlled` accepts an `AdaptiveRunControl`. The controller returns `ContinueAdaptation`, `BeginProduction`, `ContinueProduction`, or `Stop` after each completed sweep. This adds adaptive scheduling without changing the fixed-count `run_one` API or putting physics into the scheduler.
 
 ## Features
@@ -164,7 +175,7 @@ just bench
 - **`MonteCarlo` trait**: Core abstraction - implement `sweep()` for your algorithm
 - **`Backend`**: Parallel execution (`RayonBackend` for threads, `MpiBackend` for distributed)
 - **`Scheduler`**: Orchestrates thermalization → measurement phases
-- **`Context`**: Runtime state (RNG, measurements, sweep counter)
+- **`Context`**: Runtime state (RNG, measurements, lifecycle and distinct sweep/attempt/accepted/event-time clocks)
 - **`Merge`**: Rebinning, autocorrelation time estimation, covariance matrices
 - **`Evaluator`**: Jackknife resampling for derived observables
 - **`MultiplexEvaluator`**: Parallel tempering chain evaluations

@@ -29,3 +29,5 @@ where
     B: CanonicalLatticeKernel,
 {
 }
+
+impl CanonicalLatticeKernel for crate::dynamics::KawasakiCore {}

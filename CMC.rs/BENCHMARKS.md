@@ -46,3 +46,18 @@ cargo bench -p cmc-rs --bench worm_bench
 ```
 
 It reports local extended-space transitions, full sweeps, endpoint-pair tracking overhead, JSON snapshot serialization and a fixed-seed physical-sector occupied-edge `tau_int` / ESS / ESS-per-second pilot. The endpoint benchmark is separate because dense correlation tracking is optional and should not be hidden in the core transition number.
+
+## Stage 6 classical-dynamics benchmark
+
+Dynamic and rejection-free kernels have a separate Criterion target:
+
+```bash
+cargo bench -p cmc-rs --bench dynamics_bench
+```
+
+It reports Kawasaki attempted exchanges, direct Gillespie events, Fenwick BKL
+events, hard-sphere event-chain lifted distance and BKL JSON serialization.
+A fixed-event-time BKL pilot also prints `tau_int`, ESS and ESS/s.  Event rate,
+attempt throughput and statistical efficiency are intentionally kept separate:
+a rejection-free method can execute fewer but more statistically useful state
+changes, while event-chain distance is not a physical-time unit.

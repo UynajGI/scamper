@@ -111,3 +111,15 @@ let algorithm = MetropolisCore::new().with_visit_schedule(VisitSchedule::Sequent
 - `Initializable`, `Proposable`, `HeatBathable`, `ContinuousHeatBathable`, `LocalFieldModel`, and `Measurable` remain capability traits.
 - `CsrLattice::from_edges` remains the arbitrary weighted multigraph entry point.
 - Unknown `lattice_type` values remain configuration errors.
+
+## Stage 6 explicit clocks
+
+`carlo_rs::ContextCheckpoint` now includes serde-defaulted `attempted_updates`,
+`accepted_moves`, and `event_time` fields.  Normal serialization and
+`Context::checkpoint_state()` callers need no changes, and older JSON
+checkpoints load with zeros.  Downstream code that constructs the public struct
+with a literal must initialize the three new fields.
+
+Dynamic `MonteCarlo` adapters should call `Context::record_attempts`,
+`record_accepted_moves`, and `advance_event_time` explicitly.  A scheduler sweep
+remains bookkeeping and must not be treated as physical time.

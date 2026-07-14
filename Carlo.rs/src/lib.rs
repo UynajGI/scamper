@@ -155,6 +155,7 @@
 mod acceptance;
 pub mod backend;
 pub mod cli;
+mod clock;
 mod context;
 mod error;
 mod estimate;
@@ -181,6 +182,7 @@ pub use acceptance::accept_log_probability;
 #[cfg(feature = "mpi")]
 pub use backend::{run_distributed, MpiBackend, MpiRunConfig, SchedulerTask};
 pub use backend::{Backend, RayonBackend};
+pub use clock::SimulationClock;
 pub use context::{Context, ContextCheckpoint};
 pub use error::CarloError;
 pub use estimate::{ComplexEstimate, Estimate};

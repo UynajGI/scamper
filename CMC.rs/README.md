@@ -5,7 +5,7 @@ CMC.rs is Scuttle's classical Monte Carlo sampling layer. It is intentionally bu
 - **Carlo.rs** owns RNG contexts, explicit run phases, scheduling, backends, accumulation/results, checkpoint orchestration and parallel tempering.
 - **CMC.rs** owns classical configurations, physical energy models, transactional trial moves, target ensembles, update kernels and observables.
 
-This revision keeps the existing lattice-spin functionality and public `ClassicalMC<Model, Algorithm>` composition, while adding continuous-system backends (periodic Lennard-Jones NVT/NPT/μVT particles, rigid molecules) and generalized-ensemble methods (Wang-Landau DOS estimation, multicanonical, umbrella sampling with canonical reweighting), and a persistent classical worm framework with a ferromagnetic Ising high-temperature graph backend.
+This revision keeps the existing lattice-spin functionality and public `ClassicalMC<Model, Algorithm>` composition, while adding continuous-system backends (periodic Lennard-Jones NVT/NPT/μVT particles, rigid molecules) and generalized-ensemble methods (Wang-Landau DOS estimation, multicanonical, umbrella sampling with canonical reweighting), a persistent classical worm framework with a ferromagnetic Ising high-temperature graph backend, and explicit classical-dynamics kernels (Kawasaki, Gillespie/BKL and hard-sphere event-chain Monte Carlo).
 
 ## Existing user entry point
 
@@ -41,6 +41,7 @@ Source code is organised into five subdirectories plus three top-level adapter m
 | `particle/` | Periodic cells, AoS coordinates, pair potentials, packed cell lists, translations and NVT/NPT/μVT adapters |
 | `generalized/` | Wang-Landau, frozen biases, DOS/histograms, exact enumeration and reweighting |
 | `worm/` | Persistent physical/worm sectors, generic local driver and Ising graph representation |
+| `dynamics/` | Kawasaki exchange, direct Gillespie, Fenwick BKL/n-fold way and hard-sphere event chains |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
 The public API is re-exported flat from `lib.rs` — user code sees no change.
@@ -175,6 +176,16 @@ let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
 
 The reusable `WormModel`/`WormKernel` boundary is intended for future integer-current, dimer and loop-gas representations without pretending that their defect constraints are identical. See [`CLASSICAL_WORM.md`](CLASSICAL_WORM.md).
 
+## Classical dynamics and event time
+
+Stage 6 adds three distinct dynamic paths:
+
+- `KawasakiCore` for magnetization-conserving canonical spin exchange;
+- `GillespieKernel` and `BklIsingKernel` for continuous-time rejection-free events;
+- `HardSphereEventChain<D>` for lifted rejection-free hard-sphere chains.
+
+Carlo.rs now records sweeps, attempts, accepted/executed moves and event time as separate clocks. `KineticIsingBklMC` advances fixed event-time observation windows, while event-chain lifted distance remains a separate geometric quantity. See [`CLASSICAL_DYNAMICS.md`](CLASSICAL_DYNAMICS.md).
+
 ## Arbitrary weighted graph
 
 `CsrLattice` stores each physical undirected edge exactly once and keeps CSR incidences for local access:
@@ -222,4 +233,4 @@ impl PairInteraction for MyModel {
 
 Models with genuine multi-site/factor interactions can implement `Hamiltonian` directly and inherit the correct scratch-backed batch path.
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md), [`CLASSICAL_WORM.md`](CLASSICAL_WORM.md), [`MIGRATION.md`](MIGRATION.md), [`CACHE_AUDIT.md`](CACHE_AUDIT.md), [`BENCHMARKS.md`](BENCHMARKS.md), and [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md).
+See [`ARCHITECTURE.md`](ARCHITECTURE.md), [`CLASSICAL_WORM.md`](CLASSICAL_WORM.md), [`CLASSICAL_DYNAMICS.md`](CLASSICAL_DYNAMICS.md), [`MIGRATION.md`](MIGRATION.md), [`CACHE_AUDIT.md`](CACHE_AUDIT.md), [`BENCHMARKS.md`](BENCHMARKS.md), and [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md).

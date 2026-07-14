@@ -33,6 +33,10 @@ harness = false
 name = "worm_bench"
 harness = false
 
+[[bench]]
+name = "dynamics_bench"
+harness = false
+
 [features]
 default = []
 cache-audit = []

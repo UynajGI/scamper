@@ -20,7 +20,7 @@ use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::{ComplexEstimate, Estimate, Measurements, RunPhase};
+use crate::{ComplexEstimate, Estimate, Measurements, RunPhase, SimulationClock};
 
 /// Checkpoint state for serialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +30,12 @@ pub struct ContextCheckpoint {
     pub thermalized: bool,
     #[serde(default)]
     pub phase: RunPhase,
+    #[serde(default)]
+    pub attempted_updates: u64,
+    #[serde(default)]
+    pub accepted_moves: u64,
+    #[serde(default)]
+    pub event_time: f64,
 }
 
 /// Runtime context for Monte Carlo simulation.
@@ -51,6 +57,15 @@ pub struct Context<R: Rng + SeedableRng> {
 
     /// Explicit scheduler-owned lifecycle phase.
     phase: RunPhase,
+
+    /// Algorithm-reported attempted elementary transitions.
+    attempted_updates: u64,
+
+    /// Algorithm-reported accepted or executed transitions.
+    accepted_moves: u64,
+
+    /// Physical/event time advanced by kinetic Monte Carlo kernels.
+    event_time: f64,
 }
 
 impl<R: Rng + SeedableRng> Context<R> {
@@ -63,6 +78,9 @@ impl<R: Rng + SeedableRng> Context<R> {
             thermalization_sweeps,
             thermalized: false,
             phase: RunPhase::Initialization,
+            attempted_updates: 0,
+            accepted_moves: 0,
+            event_time: 0.0,
         }
     }
 
@@ -75,6 +93,9 @@ impl<R: Rng + SeedableRng> Context<R> {
             thermalization_sweeps,
             thermalized: false,
             phase: RunPhase::Initialization,
+            attempted_updates: 0,
+            accepted_moves: 0,
+            event_time: 0.0,
         }
     }
 
@@ -154,12 +175,63 @@ impl<R: Rng + SeedableRng> Context<R> {
         }
     }
 
+    /// Add attempted elementary transitions to the explicit attempt clock.
+    #[inline]
+    pub fn record_attempts(&mut self, count: u64) {
+        self.attempted_updates = self.attempted_updates.saturating_add(count);
+    }
+
+    /// Add accepted/executed transitions to the explicit accepted-move clock.
+    #[inline]
+    pub fn record_accepted_moves(&mut self, count: u64) {
+        self.accepted_moves = self.accepted_moves.saturating_add(count);
+    }
+
+    /// Advance physical/event time.  The increment must be finite and non-negative.
+    #[inline]
+    pub fn advance_event_time(&mut self, delta: f64) {
+        assert!(
+            delta.is_finite() && delta >= 0.0,
+            "event-time increment must be finite and non-negative"
+        );
+        self.event_time += delta;
+        assert!(self.event_time.is_finite(), "event-time clock overflowed");
+    }
+
+    #[inline]
+    pub const fn attempted_updates(&self) -> u64 {
+        self.attempted_updates
+    }
+
+    #[inline]
+    pub const fn accepted_moves(&self) -> u64 {
+        self.accepted_moves
+    }
+
+    #[inline]
+    pub const fn event_time(&self) -> f64 {
+        self.event_time
+    }
+
+    /// Return all clock readings without conflating their units.
+    pub fn simulation_clocks(&self) -> [SimulationClock; 4] {
+        [
+            SimulationClock::Sweeps(self.sweep_count),
+            SimulationClock::Attempts(self.attempted_updates),
+            SimulationClock::AcceptedMoves(self.accepted_moves),
+            SimulationClock::EventTime(self.event_time),
+        ]
+    }
+
     pub fn checkpoint_state(&self) -> ContextCheckpoint {
         ContextCheckpoint {
             sweep_count: self.sweep_count,
             thermalization_sweeps: self.thermalization_sweeps,
             thermalized: self.thermalized,
             phase: self.phase,
+            attempted_updates: self.attempted_updates,
+            accepted_moves: self.accepted_moves,
+            event_time: self.event_time,
         }
     }
 
@@ -187,6 +259,9 @@ impl<R: Rng + SeedableRng> Context<R> {
             thermalized: checkpoint.thermalized
                 || matches!(phase, RunPhase::Measurement | RunPhase::Finished),
             phase,
+            attempted_updates: checkpoint.attempted_updates,
+            accepted_moves: checkpoint.accepted_moves,
+            event_time: checkpoint.event_time,
         }
     }
 
@@ -306,6 +381,9 @@ impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
             } else {
                 RunPhase::Thermalization
             },
+            attempted_updates: 0,
+            accepted_moves: 0,
+            event_time: 0.0,
         })
     }
 }

@@ -164,6 +164,9 @@ fn legacy_checkpoint_phase_is_inferred_from_counters() {
         thermalization_sweeps: 10,
         thermalized: false,
         phase: RunPhase::Initialization,
+        attempted_updates: 0,
+        accepted_moves: 0,
+        event_time: 0.0,
     };
     let rng = Xoshiro256PlusPlus::seed_from_u64(8);
     let context = Context::restore_from_checkpoint(checkpoint, rng, 10);
@@ -174,6 +177,9 @@ fn legacy_checkpoint_phase_is_inferred_from_counters() {
         thermalization_sweeps: 10,
         thermalized: true,
         phase: RunPhase::Initialization,
+        attempted_updates: 0,
+        accepted_moves: 0,
+        event_time: 0.0,
     };
     let rng = Xoshiro256PlusPlus::seed_from_u64(9);
     let context = Context::restore_from_checkpoint(checkpoint, rng, 10);
@@ -206,4 +212,37 @@ fn checkpoint_preserves_explicit_adaptation_phase() {
     let restored = Context::restore_from_checkpoint(checkpoint, rng, 10);
     assert_eq!(restored.phase(), RunPhase::Thermalization);
     assert!(!restored.is_thermalized());
+}
+
+#[test]
+fn explicit_simulation_clocks_round_trip_checkpoint() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(13);
+    let mut context = Context::new(rng, 0);
+    context.record_attempts(17);
+    context.record_accepted_moves(9);
+    context.advance_event_time(2.5);
+    context.advance_sweep();
+    let checkpoint = context.checkpoint_state();
+
+    let rng = Xoshiro256PlusPlus::seed_from_u64(14);
+    let restored = Context::restore_from_checkpoint(checkpoint, rng, 10);
+    assert_eq!(restored.sweep_count(), 1);
+    assert_eq!(restored.attempted_updates(), 17);
+    assert_eq!(restored.accepted_moves(), 9);
+    assert_eq!(restored.event_time(), 2.5);
+    assert_eq!(restored.simulation_clocks()[3].value(), 2.5);
+}
+
+#[test]
+fn legacy_json_checkpoint_defaults_new_clocks_to_zero() {
+    let checkpoint: ContextCheckpoint = serde_json::from_value(serde_json::json!({
+        "sweep_count": 3,
+        "thermalization_sweeps": 5,
+        "thermalized": false,
+        "phase": "Thermalization"
+    }))
+    .unwrap();
+    assert_eq!(checkpoint.attempted_updates, 0);
+    assert_eq!(checkpoint.accepted_moves, 0);
+    assert_eq!(checkpoint.event_time, 0.0);
 }
