@@ -2,7 +2,11 @@
 .jj/
 
 # Agent tooling
+.claude/
+.agents/
 .qoder/
+.zcode/
+skills-lock.json
 
 # Build artifacts
 target/
@@ -40,19 +44,15 @@ criterion/
 .tmp/
 .temp/
 
-# Claude Code
-.claude/
-.agents/
-
-skills-lock.json
-
-# venv
+# Python venv
 .venv/
 .env/
 
 # Reference PDFs (too large for version control)
 docs/ref
-graphify-out/
-# Added by code-review-graph
+
+# Code intelligence
 .codegraph/
+
+# Archives
 *.zip
