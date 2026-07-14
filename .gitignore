@@ -48,9 +48,6 @@ criterion/
 .venv/
 .env/
 
-# Reference PDFs (too large for version control)
-docs/ref
-
 # Code intelligence
 .codegraph/
 
