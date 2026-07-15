@@ -1,0 +1,84 @@
+# Nightly Physics Validation — long-running statistical correctness checks.
+#
+# Runs daily at 18:00 UTC plus on-demand via workflow_dispatch.
+# Uses `--release` for Monte Carlo performance and `-- --ignored` to pick up
+# tests that are too slow for every-PR CI.
+
+name: Nightly Physics Validation
+
+on:
+  schedule:
+    - cron: "37 18 * * *" # daily at 18:37 UTC (off-peak, jittered)
+  workflow_dispatch:       # manual trigger from GitHub UI
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── CMC.rs long-running physics tests ──────────────────────────────────
+  cmc-physics:
+    name: cmc-rs physics
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-cmc
+      - name: Install system dependencies (hdf5, mpi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
+      - run: cargo test --release -p cmc-rs --all-features -- --ignored --nocapture
+
+  # ── QMC.rs long-running physics tests ──────────────────────────────────
+  qmc-physics:
+    name: qmc-rs physics
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-qmc
+      - name: Install system dependencies (hdf5, mpi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
+      - run: cargo test --release -p qmc-rs --all-features -- --ignored --nocapture
+
+  # ── MCMC.rs long-running statistical tests ─────────────────────────────
+  mcmc-physics:
+    name: mcmc-rs physics
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-mcmc
+      - name: Install system dependencies (hdf5, mpi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
+      - run: cargo test --release -p mcmc-rs --all-features -- --ignored --nocapture
+
+  # ── Full workspace ignored tests (belt-and-suspenders) ─────────────────
+  workspace-ignored:
+    name: workspace (all crates, --ignored)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-workspace
+      - name: Install system dependencies (hdf5, mpi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
+      - run: cargo test --release --workspace --all-features -- --ignored --nocapture

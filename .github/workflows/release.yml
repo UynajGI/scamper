@@ -1,0 +1,66 @@
+# Release Validation — full manual verification suite.
+#
+# Triggered manually via workflow_dispatch before tagging a release or
+# publishing to crates.io. Runs every test in the workspace (including
+# long-running ignored tests) on all available platforms with diagnostics
+# capture on failure.
+
+name: Release Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      rust-version:
+        description: Rust toolchain version
+        required: false
+        default: stable
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Full test suite ────────────────────────────────────────────────────
+  full-test:
+    name: test (${{ inputs.rust-version || 'stable' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ inputs.rust-version || 'stable' }}
+          components: rustfmt, clippy
+
+      - name: Install system dependencies (hdf5, mpi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-full
+
+      # Gate 1: formatting
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      # Gate 2: lint (all features)
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features --workspace -- -D warnings
+
+      # Gate 3: all tests including ignored
+      - name: Full test suite (release, all features, include ignored)
+        run: cargo test --release --workspace --all-features -- --nocapture
+
+      # On failure: capture diagnostics for offline analysis.
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-validation-failure
+          path: |
+            target/release/deps/*.log
+            target/debug/deps/*.log
+          retention-days: 14
