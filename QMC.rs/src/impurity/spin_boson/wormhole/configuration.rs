@@ -1232,8 +1232,8 @@ mod legacy {
 
 #[cfg(test)]
 mod tests {
-    use crate::impurity::bath::{Bath, SingleModeBath};
-    use crate::impurity::model::ImpurityModel;
+    use crate::impurity::spin_boson::bath::{Bath, SingleModeBath};
+    use crate::impurity::spin_boson::model::ImpurityModel;
 
     use super::legacy::WorldlineIndex;
     use super::*;
@@ -1478,7 +1478,7 @@ mod tests {
         use rand_xoshiro::Xoshiro256PlusPlus;
 
         use crate::algorithm::{QmcKernel, UpdateSchedule};
-        use crate::impurity::updates::WormholeEngine;
+        use crate::impurity::spin_boson::wormhole::updates::WormholeEngine;
 
         let bath = Bath::SingleMode(SingleModeBath::new(1.0).expect("mode"));
         let model = ImpurityModel::xxz(bath, 0.4, 0.2, 0.1, None).expect("model");
