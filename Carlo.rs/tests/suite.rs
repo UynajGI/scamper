@@ -58,6 +58,8 @@ mod workflow;
 
 // ── I/O ───────────────────────────────────────────────────────────────────
 
+#[path = "io/dataframe.rs"]
+mod dataframe;
 #[path = "io/job.rs"]
 mod job;
 #[path = "io/merge_io.rs"]

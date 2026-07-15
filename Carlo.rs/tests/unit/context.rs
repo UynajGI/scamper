@@ -246,3 +246,90 @@ fn legacy_json_checkpoint_defaults_new_clocks_to_zero() {
     assert_eq!(checkpoint.accepted_moves, 0);
     assert_eq!(checkpoint.event_time, 0.0);
 }
+
+// ── Array measurements via Context ────────────────────────────────────────
+
+#[test]
+fn test_context_measure_array_basic() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let mut ctx = Context::new_with_binsize(rng, 0, 2);
+
+    ctx.measure_array("Correlation", &[1.0, 2.0, 3.0]);
+    ctx.measure_array("Correlation", &[4.0, 5.0, 6.0]);
+
+    let estimates = ctx.finalize_measurements();
+    assert!(estimates.contains_key("Correlation"));
+}
+
+#[test]
+fn test_context_measure_array_finalize() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let mut ctx = Context::new_with_binsize(rng, 0, 1);
+
+    // binsize=1, so each sample becomes one bin
+    ctx.measure_array("Vec", &[10.0, 20.0]);
+    ctx.measure_array("Vec", &[30.0, 40.0]);
+
+    let estimates = ctx.finalize_measurements();
+    let est = estimates.get("Vec").expect("Vec observable");
+    assert_eq!(est.n_bins, 2);
+}
+
+// ── Measurement namespace ─────────────────────────────────────────────────
+
+#[test]
+fn test_context_set_measurement_namespace() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let mut ctx = Context::new_with_binsize(rng, 0, 5);
+
+    ctx.set_measurement_namespace(Some("chain_0".into()));
+    assert_eq!(ctx.measurement_namespace(), Some("chain_0"));
+
+    ctx.measure("Energy", 1.0);
+    ctx.set_measurement_namespace(None);
+    ctx.measure("Energy", 2.0);
+
+    let estimates = ctx.finalize_measurements();
+    assert!(estimates.contains_key("chain_0/Energy"));
+    assert!(estimates.contains_key("Energy"));
+}
+
+#[test]
+fn test_context_measurement_namespace_default_none() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let ctx = Context::new(rng, 10);
+    assert!(ctx.measurement_namespace().is_none());
+}
+
+#[test]
+fn test_context_namespace_isolation() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let mut ctx = Context::new_with_binsize(rng, 0, 1);
+
+    ctx.set_measurement_namespace(Some("chainA".into()));
+    ctx.measure("Mag", 0.5);
+    ctx.measure_array("Corr", &[1.0, 2.0]);
+
+    ctx.set_measurement_namespace(Some("chainB".into()));
+    ctx.measure("Mag", 0.9);
+
+    ctx.set_measurement_namespace(None);
+
+    let estimates = ctx.finalize_measurements();
+    assert!(estimates.contains_key("chainA/Mag"));
+    assert!(estimates.contains_key("chainB/Mag"));
+    assert!(estimates.contains_key("chainA/Corr"));
+    assert!(!estimates.contains_key("chainB/Corr"));
+}
+
+#[test]
+fn test_context_empty_namespace_ignored() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let mut ctx = Context::new_with_binsize(rng, 0, 1);
+
+    ctx.set_measurement_namespace(Some(String::new()));
+    ctx.measure("Energy", 1.0);
+
+    let estimates = ctx.finalize_measurements();
+    assert!(estimates.contains_key("Energy"));
+}
