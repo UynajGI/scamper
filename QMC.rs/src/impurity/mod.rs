@@ -73,6 +73,10 @@ pub use spin_boson::observables::{
     correlation_sigma_z, integrated_sigma_z, measure_observables, register_impurity_evaluables,
     ImpurityObservables,
 };
+pub use spin_boson::occupation::{
+    CavityMode, OccupationBasis, OccupationModelKind, OccupationObservables,
+    OccupationSpinBosonModel, OccupationWorldlineQmc, OccupationWorldlineSampler, SpinState,
+};
 pub use spin_boson::wormhole::configuration::{
     EndpointId, Event, LegId, LegSide, Vertex, VertexId, WormholeConfiguration,
 };
@@ -127,4 +131,8 @@ pub mod vertex {
     pub use super::spin_boson::wormhole::configuration::{
         EndpointId, Event, LegId, LegSide, Vertex, VertexId,
     };
+}
+
+pub mod occupation {
+    pub use super::spin_boson::occupation::*;
 }

@@ -4,4 +4,5 @@ pub mod bath;
 pub mod cluster;
 pub mod model;
 pub mod observables;
+pub mod occupation;
 pub mod wormhole;
