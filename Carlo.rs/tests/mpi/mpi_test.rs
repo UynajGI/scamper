@@ -1,82 +1,48 @@
-//! MPI Backend Tests
+//! MPI backend smoke test.
 //!
-//! These tests require MPI to be installed and must be run with `mpirun`.
-//!
-//! # Running MPI tests
+//! Run this test binary under MPI so every rank executes the same test:
 //!
 //! ```bash
-//! # Install MPI (Ubuntu/Debian)
-//! sudo apt-get install libopenmpi-dev openmpi-bin
-//!
-//! # Build with MPI feature
-//! cargo build --features mpi
-//!
-//! # Run tests with mpirun
-//! mpirun -np 4 cargo test --features mpi --test mpi_test
+//! mpirun -np 4 cargo test --features mpi --test mpi_test -- --nocapture
 //! ```
 
 #[cfg(feature = "mpi")]
 mod mpi_tests {
-    use carlo_rs::{Backend, CarloError, Context, FromParams, MonteCarlo, MpiBackend, Params};
-    use rand_xoshiro::Xoshiro256PlusPlus;
+    use carlo_rs::{Backend, MpiBackend};
+    use std::sync::Mutex;
 
-    /// Simple test MC for MPI
-    #[allow(dead_code)]
-    struct TestMC {
-        sweep_count: u64,
-    }
-
-    impl MonteCarlo for TestMC {
-        type Rng = Xoshiro256PlusPlus;
-
-        fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
-            self.sweep_count += 1;
-            if ctx.is_thermalized() {
-                ctx.measure("SweepCount", self.sweep_count as f64);
-            }
-        }
-    }
-
-    impl FromParams for TestMC {
-        fn from_params(_params: &Params, _rng: &mut Self::Rng) -> Result<Self, CarloError> {
-            Ok(Self { sweep_count: 0 })
-        }
-    }
-
+    /// MPI generally cannot be initialized and finalized repeatedly in one
+    /// process, so this integration test intentionally contains a single test.
     #[test]
-    fn test_mpi_backend_creation() {
-        let backend = MpiBackend::new();
-        // This test requires MPI to be initialized via mpirun
-        if let Ok(b) = backend {
-            assert!(b.size() >= 2, "MPI requires at least 2 ranks");
-            if b.is_controller() {
-                assert_eq!(b.rank(), 0);
-            }
-        }
-    }
+    #[ignore = "requires mpirun"]
+    fn mpi_backend_smoke_suite() {
+        let backend = MpiBackend::new().expect("MPI must be launched under mpirun/mpiexec");
+        let rank = backend.rank();
+        let size = backend.size();
 
-    #[test]
-    fn test_mpi_barrier() {
-        if let Ok(backend) = MpiBackend::new() {
-            // Test that barrier works
-            backend.barrier();
-        }
-    }
+        assert!(size >= 1);
+        assert_eq!(backend.is_controller(), rank == 0);
+        assert_eq!(backend.num_workers(), (size - 1).max(0));
+        assert_eq!(backend.run_group(), if rank == 0 { 0 } else { rank });
+        assert_eq!(backend.rank_in_run(), 0);
 
-    #[test]
-    fn test_mpi_communicator_split() {
-        if let Ok(backend) = MpiBackend::with_ranks_per_run(2) {
-            // Test ranks per run configuration
-            assert!((backend.size() - 1) % 2 == 0);
-        }
+        let n_tasks = size as usize * 3 + 1;
+        let seen = Mutex::new(Vec::new());
+        backend.spawn_tasks(n_tasks, 0x5eed, |task_id, _rng| {
+            seen.lock().expect("task list lock poisoned").push(task_id);
+        });
+
+        let mut actual = seen.into_inner().expect("task list lock poisoned");
+        actual.sort_unstable();
+        let expected: Vec<usize> = (0..n_tasks)
+            .filter(|task_id| task_id % size as usize == rank as usize)
+            .collect();
+        assert_eq!(actual, expected);
+
+        backend.barrier();
     }
 }
 
 #[cfg(not(feature = "mpi"))]
-mod no_mpi_tests {
-    #[test]
-    fn test_mpi_feature_not_enabled() {
-        // When MPI feature is not enabled, we can't test MPI backend
-        // This test just verifies the code compiles without MPI
-    }
-}
+#[test]
+fn mpi_feature_disabled_stub_compiles() {}

@@ -180,7 +180,10 @@ mod version;
 
 pub use acceptance::accept_log_probability;
 #[cfg(feature = "mpi")]
-pub use backend::{run_distributed, MpiBackend, MpiRunConfig, SchedulerTask};
+pub use backend::{
+    run_distributed, run_distributed_compat, DistributedConfig, MpiBackend, MpiError, MpiRng,
+    MpiRunConfig, SchedulerTask, TaskSpec,
+};
 pub use backend::{Backend, RayonBackend};
 pub use clock::SimulationClock;
 pub use context::{Context, ContextCheckpoint};

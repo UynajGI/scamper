@@ -51,22 +51,14 @@ pub trait MonteCarlo: Sized {
     /// Optional: sweep with MPI communicator for multi-rank coordination.
     /// Default: delegate to [`sweep`](MonteCarlo::sweep).
     #[cfg(feature = "mpi")]
-    fn sweep_with_comm(
-        &mut self,
-        ctx: &mut Context<Self::Rng>,
-        _comm: &mpi::topology::SimpleCommunicator,
-    ) {
+    fn sweep_with_comm(&mut self, ctx: &mut Context<Self::Rng>, _comm: &SimpleCommunicator) {
         self.sweep(ctx);
     }
 
     /// Optional: measure with MPI communicator for multi-rank coordination.
     /// Default: delegate to [`measure`](MonteCarlo::measure).
     #[cfg(feature = "mpi")]
-    fn measure_with_comm(
-        &mut self,
-        ctx: &mut Context<Self::Rng>,
-        _comm: &mpi::topology::SimpleCommunicator,
-    ) {
+    fn measure_with_comm(&mut self, ctx: &mut Context<Self::Rng>, _comm: &SimpleCommunicator) {
         self.measure(ctx);
     }
 

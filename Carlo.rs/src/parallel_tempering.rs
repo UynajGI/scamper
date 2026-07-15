@@ -27,9 +27,6 @@ use rand::Rng;
 use rand::SeedableRng;
 
 #[cfg(feature = "mpi")]
-use rand::RngExt;
-
-#[cfg(feature = "mpi")]
 use crate::{
     accept_log_probability, CarloError, FromParams, Metadata, Params, Results, RngPhase,
     RngStreamKey, RunPhase,
@@ -44,6 +41,7 @@ mod tags {
     pub const PT_WEIGHT_MSG: i32 = 4573792;
     pub const PT_SWITCH_MSG: i32 = 4573793;
     pub const PT_MEASUREMENTS_TAG: i32 = 4573794;
+    pub const PT_RESULTS_TAG: i32 = 4573795;
 }
 
 // ============================================================================
@@ -185,10 +183,10 @@ impl<MC: ParallelTemperingCompatible> ParallelTemperingMC<MC> {
 /// ```rust,ignore
 /// use carlo_rs::parallel_tempering::PtExchange;
 ///
-/// let exchange = PtExchange::new(&comm, &config, &params, seed, binsize)?;
+/// let exchange = PtExchange::new(comm, &config, &params, seed, binsize, target_sweeps)?;
 ///
 /// loop {
-///     exchange.step(&mut ctx)?;
+///     exchange.try_step()?;
 ///     if exchange.should_exchange() {
 ///         exchange.try_exchange()?;
 ///     }
@@ -244,6 +242,25 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
         let rank = comm.rank();
         let n_chains = comm.size();
 
+        if config.interval == 0 {
+            return Err(CarloError::InvalidConfig {
+                field: "pt_interval".into(),
+                reason: "parallel-tempering exchange interval must be positive".into(),
+            });
+        }
+        if binsize == 0 {
+            return Err(CarloError::InvalidConfig {
+                field: "binsize".into(),
+                reason: "must be positive".into(),
+            });
+        }
+        if config.values.iter().any(|value| !value.is_finite()) {
+            return Err(CarloError::InvalidConfig {
+                field: "pt_values".into(),
+                reason: "all parallel-tempering parameter values must be finite".into(),
+            });
+        }
+
         if n_chains as usize != config.values.len() {
             return Err(CarloError::InvalidConfig {
                 field: "pt_chains".into(),
@@ -284,7 +301,16 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
     }
 
     /// Execute one PT step (sweep + optional exchange).
+    ///
+    /// This compatibility method panics if the MPI exchange protocol fails.
+    /// New code should use [`try_step`](Self::try_step) to propagate errors.
     pub fn step(&mut self) {
+        self.try_step()
+            .expect("parallel-tempering MPI exchange failed");
+    }
+
+    /// Execute one fallible PT step (sweep + optional exchange).
+    pub fn try_step(&mut self) -> Result<(), CarloError> {
         let desired_phase = if self.ctx.sweep_count() < self.ctx.thermalization_sweeps() {
             RunPhase::Thermalization
         } else {
@@ -299,20 +325,29 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
                 .on_phase_start(desired_phase, &mut self.ctx);
         }
 
-        self.mc.child_mc.sweep(&mut self.ctx);
         let collect = self.ctx.phase().collects_measurements();
+        if collect {
+            self.ctx
+                .set_measurement_namespace(Some(format!("pt_chain_{:04}", self.mc.chain_idx)));
+        }
+
+        self.mc.child_mc.sweep(&mut self.ctx);
         self.ctx.advance_sweep();
 
         if collect {
             self.mc.child_mc.measure(&mut self.ctx);
+            self.ctx.measure("_pt_parameter", self.mc.current_value());
+            self.sweeps_done = self.sweeps_done.saturating_add(1);
+            self.ctx.set_measurement_namespace(None);
         }
 
-        // Check if we should attempt exchange
+        // Check if we should attempt exchange. Errors are collective failures
+        // and must be propagated instead of silently desynchronizing ranks.
         if self.ctx.sweep_count() > 0 && self.ctx.sweep_count() % self.mc.tempering_interval == 0 {
-            let _ = self.try_exchange();
+            self.try_exchange()?;
         }
 
-        self.sweeps_done += 1;
+        Ok(())
     }
 
     /// Try to exchange with a neighbor chain.
@@ -325,10 +360,14 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
             return Ok(false);
         }
 
+        // Every rank participates in this collective before boundary chains
+        // decide that they have no partner. The map remains a permutation even
+        // after accepted swaps move parameter labels between ranks.
+        let rank_for_chain = self.rank_for_chain_map()?;
         let exchange_step = self.ctx.sweep_count() / self.mc.tempering_interval;
-        let pairing_offset = exchange_step & 1;
+        let pairing_offset = exchange_step.saturating_sub(1) & 1;
 
-        // Determine partner
+        // Determine partner by parameter-chain index, not by fixed MPI rank.
         let my_chain_idx = self.mc.chain_idx;
         let partner_chain_idx = if my_chain_idx % 2 == pairing_offset as usize {
             // Try to pair with higher index
@@ -346,8 +385,7 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
             }
         };
 
-        // Find partner's rank in communicator
-        let partner_rank = self.find_rank_for_chain(partner_chain_idx)?;
+        let partner_rank = rank_for_chain[partner_chain_idx];
 
         // Compute log weight ratio
         let w = self.mc.child_mc.log_weight_ratio(
@@ -504,9 +542,32 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
 
     // ---- MPI helper methods ----
 
-    fn find_rank_for_chain(&self, target_chain_idx: usize) -> Result<i32, CarloError> {
-        // In PT mode, each rank corresponds to one chain, so rank == chain_idx
-        Ok(target_chain_idx as i32)
+    fn rank_for_chain_map(&self) -> Result<Vec<i32>, CarloError> {
+        use mpi::traits::*;
+
+        let n_chains = self.comm.size() as usize;
+        let local_chain = self.mc.chain_idx as u64;
+        let mut chain_at_rank = vec![0u64; n_chains];
+        self.comm
+            .all_gather_into(&local_chain, chain_at_rank.as_mut_slice());
+
+        let mut rank_for_chain = vec![-1i32; n_chains];
+        for (rank, &chain) in chain_at_rank.iter().enumerate() {
+            let chain = usize::try_from(chain).map_err(|_| CarloError::InvalidConfig {
+                field: "pt_permutation".into(),
+                reason: "chain index does not fit usize".into(),
+            })?;
+            if chain >= n_chains || rank_for_chain[chain] >= 0 {
+                return Err(CarloError::InvalidConfig {
+                    field: "pt_permutation".into(),
+                    reason: format!(
+                        "parallel-tempering chain labels are not a permutation: {chain_at_rank:?}"
+                    ),
+                });
+            }
+            rank_for_chain[chain] = rank as i32;
+        }
+        Ok(rank_for_chain)
     }
 
     fn send_weight(&self, dest: i32, weight: f64) -> Result<(), CarloError> {
@@ -528,19 +589,27 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
 
     fn send_switch(&self, dest: i32, accept: bool) -> Result<(), CarloError> {
         use mpi::traits::*;
+        let wire = u8::from(accept);
         self.comm
             .process_at_rank(dest)
-            .send_with_tag(&accept, tags::PT_SWITCH_MSG);
+            .send_with_tag(&wire, tags::PT_SWITCH_MSG);
         Ok(())
     }
 
     fn recv_switch(&self, source: i32) -> Result<bool, CarloError> {
         use mpi::traits::*;
-        let (accept, _) = self
+        let (wire, _) = self
             .comm
             .process_at_rank(source)
-            .receive_with_tag(tags::PT_SWITCH_MSG);
-        Ok(accept)
+            .receive_with_tag::<u8>(tags::PT_SWITCH_MSG);
+        match wire {
+            0 => Ok(false),
+            1 => Ok(true),
+            other => Err(CarloError::InvalidConfig {
+                field: "pt_switch".into(),
+                reason: format!("invalid exchange decision byte {other}"),
+            }),
+        }
     }
 }
 
@@ -572,13 +641,26 @@ where
     use mpi::traits::*;
 
     let universe = mpi::initialize().ok_or(MpiError::InitFailed)?;
-    let world = universe.world();
+    let pt_comm = universe.world();
+    let exchange_result =
+        PtExchange::<MC, R>::new(pt_comm, config, params, seed, binsize, target_sweeps);
 
-    // Use the world communicator for PT
-    let pt_comm = world;
-
-    // Override thermalization in context
-    let exchange = PtExchange::<MC, R>::new(pt_comm, config, params, seed, binsize, target_sweeps)?;
+    // Model construction can fail on only one parameter value. Turn that into
+    // a communicator-wide decision before any rank enters exchange collectives.
+    let status_comm = universe.world();
+    let local_init_ok = if exchange_result.is_ok() { 1i32 } else { 0i32 };
+    let mut init_ok = vec![0i32; status_comm.size() as usize];
+    status_comm.all_gather_into(&local_init_ok, init_ok.as_mut_slice());
+    if init_ok.iter().any(|&ok| ok == 0) {
+        return match exchange_result {
+            Err(error) => Err(error),
+            Ok(_) => Err(CarloError::InvalidConfig {
+                field: "parallel_tempering".into(),
+                reason: "another MPI rank failed to construct its tempering chain".into(),
+            }),
+        };
+    }
+    let exchange = exchange_result?;
 
     // Set thermalization in context
     // (PtExchange creates context with 0 thermalization; we adjust here)
@@ -610,15 +692,54 @@ where
         .on_phase_start(initial_phase, &mut exchange.ctx);
 
     while !exchange.is_complete() {
-        exchange.step();
+        exchange.try_step()?;
     }
 
-    let results = exchange.finalize();
+    let result_comm = exchange.comm.duplicate();
+    let local_results = exchange.finalize();
+    gather_parallel_tempering_results(&result_comm, &local_results)
+}
 
-    // Only rank 0 returns results
-    if rank == 0 {
-        Ok(Some(results))
+#[cfg(feature = "mpi")]
+fn gather_parallel_tempering_results(
+    comm: &SimpleCommunicator,
+    local_results: &Results,
+) -> Result<Option<Results>, CarloError> {
+    use mpi::traits::*;
+
+    let local_bytes =
+        serde_json::to_vec(local_results).map_err(|error| CarloError::InvalidConfig {
+            field: "parallel_tempering_results".into(),
+            reason: format!("failed to serialize local results: {error}"),
+        });
+    let local_ok = if local_bytes.is_ok() { 1i32 } else { 0i32 };
+    let mut all_ok = vec![0i32; comm.size() as usize];
+    comm.all_gather_into(&local_ok, all_ok.as_mut_slice());
+    if all_ok.iter().any(|&ok| ok == 0) {
+        return match local_bytes {
+            Err(error) => Err(error),
+            Ok(_) => Err(CarloError::InvalidConfig {
+                field: "parallel_tempering_results".into(),
+                reason: "another MPI rank could not serialize its results".into(),
+            }),
+        };
+    }
+    let local_bytes = local_bytes?;
+
+    if comm.rank() == 0 {
+        let mut all_results = Vec::with_capacity(comm.size() as usize);
+        all_results.push(local_results.clone());
+        for source in 1..comm.size() {
+            let (bytes, _) = comm
+                .process_at_rank(source)
+                .receive_vec_with_tag::<u8>(tags::PT_RESULTS_TAG);
+            let results: Results = serde_json::from_slice(&bytes)?;
+            all_results.push(results);
+        }
+        Ok(Some(Results::merge(&all_results)))
     } else {
+        comm.process_at_rank(0)
+            .send_with_tag(local_bytes.as_slice(), tags::PT_RESULTS_TAG);
         Ok(None)
     }
 }

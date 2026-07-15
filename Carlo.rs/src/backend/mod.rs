@@ -72,6 +72,6 @@ mod mpi;
 #[cfg(feature = "mpi")]
 pub use mpi::{
     run_distributed, run_distributed_compat, DistributedConfig, Done, Idle, MpiBackend, MpiError,
-    MpiRunConfig, ResultsAggregator, Running, SchedulerTask, TaskSpec, TaskStream, TimeLimits,
-    Worker,
+    MpiRng, MpiRunConfig, ResultsAggregator, Running, SchedulerTask, TaskSpec, TaskStream,
+    TimeLimits, Worker, WorkerState,
 };

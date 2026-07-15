@@ -1,63 +1,85 @@
-//! MPI Backend for distributed Monte Carlo simulations.
+//! MPI backend for distributed Monte Carlo simulations.
 //!
-//! Rust-native design with:
-//! - Type-state pattern for compile-time safety
-//! - Channel abstraction over MPI
-//! - Result-based error handling everywhere
+//! The implementation has two complementary entry points:
+//!
+//! - [`MpiBackend`] implements the generic [`Backend`](super::Backend) trait by
+//!   assigning logical task IDs to MPI ranks deterministically.
+//! - [`run_distributed`] runs parameter tasks through a controller/worker-group
+//!   scheduler. Rank 0 is the controller; the remaining ranks are partitioned
+//!   into groups of `ranks_per_run` ranks. Ranks inside a group execute the same
+//!   [`Run`] and may coordinate through `MonteCarlo::sweep_with_comm` and
+//!   `MonteCarlo::measure_with_comm`.
+//!
+//! MPI is initialized exactly once per entry point and its [`Universe`] is kept
+//! alive for the complete lifetime of all communicators. No communicator handle
+//! is copied with `unsafe` code.
 
-// This module is the one place in the workspace that needs `unsafe`: MPI's
-// communicator handles are opaque and the `mpi` crate doesn't expose a safe
-// Clone, so we bitwise-copy via `ptr::read`. The workspace-level lint policy
-// (Cargo.toml `[workspace.lints.rust]`) denies unsafe_code everywhere else;
-// this `#![allow]` scopes the exception to this file only.
-#![allow(unsafe_code)]
+use rand_core::{Rng, SeedableRng};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "mpi")]
-use mpi::topology::SimpleCommunicator;
+use mpi::environment::{Threading, Universe};
+#[cfg(feature = "mpi")]
+use mpi::topology::{Color, SimpleCommunicator};
 #[cfg(feature = "mpi")]
 use mpi::traits::*;
 
-use rand_core::Rng;
-use rand_core::SeedableRng;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
-
-#[cfg(feature = "hdf5")]
-use crate::RngCheckpointHdf5;
 use crate::{
-    CarloError, Estimate, FromParams, MonteCarlo, Params, Results, RngPhase, RngStreamKey, Run,
-    RunConfig, RunId, TaskId,
+    CarloError, FromParams, MonteCarlo, Params, Results, RngPhase, RngStreamKey, Run, RunConfig,
+    RunId, TaskId,
 };
 
 // ============================================================================
-// Time Limits
+// Time limits
 // ============================================================================
 
-/// Time limits for simulation control.
+/// Wall-clock limits used by distributed workers.
+#[derive(Debug, Clone)]
 pub struct TimeLimits {
-    checkpoint_time: Duration,
-    run_time: Duration,
+    checkpoint_time: Option<Duration>,
+    run_time: Option<Duration>,
     last_checkpoint: Instant,
     start_time: Instant,
 }
 
 impl TimeLimits {
+    /// Create limits with both checkpoint and total runtime enabled.
     pub fn new(checkpoint_time: Duration, run_time: Duration) -> Self {
+        Self::optional(Some(checkpoint_time), Some(run_time))
+    }
+
+    /// Create limits where either timer may be disabled.
+    pub fn optional(checkpoint_time: Option<Duration>, run_time: Option<Duration>) -> Self {
+        Self::from_start(checkpoint_time, run_time, Instant::now())
+    }
+
+    /// Create limits whose total runtime is measured from a shared job start.
+    pub fn from_start(
+        checkpoint_time: Option<Duration>,
+        run_time: Option<Duration>,
+        start_time: Instant,
+    ) -> Self {
         Self {
             checkpoint_time,
             run_time,
             last_checkpoint: Instant::now(),
-            start_time: Instant::now(),
+            start_time,
         }
     }
 
     pub fn should_checkpoint(&self) -> bool {
-        self.last_checkpoint.elapsed() >= self.checkpoint_time
+        self.checkpoint_time
+            .is_some_and(|limit| self.last_checkpoint.elapsed() >= limit)
     }
 
     pub fn should_finish(&self) -> bool {
-        self.start_time.elapsed() >= self.run_time
+        self.run_time
+            .is_some_and(|limit| self.start_time.elapsed() >= limit)
     }
 
     pub fn reset_checkpoint(&mut self) {
@@ -66,318 +88,183 @@ impl TimeLimits {
 }
 
 // ============================================================================
-// MPI Error
+// Errors and RNG bounds
 // ============================================================================
 
-/// MPI Error type
-#[cfg(feature = "mpi")]
+/// Errors produced by the MPI backend.
 #[derive(Debug, thiserror::Error)]
 pub enum MpiError {
-    #[error("MPI initialization failed")]
+    #[error("MPI initialization failed or MPI was already initialized by another owner")]
     InitFailed,
 
-    #[error("Communication error: {0}")]
+    #[error("MPI communication failed: {0}")]
     Communication(String),
 
-    #[error("Invalid state transition")]
-    InvalidTransition,
+    #[error("invalid MPI topology: {0}")]
+    InvalidTopology(String),
+
+    #[error("invalid distributed scheduler transition: {0}")]
+    InvalidTransition(String),
+
+    #[error("distributed worker failed: {0}")]
+    Worker(String),
 }
 
-// ============================================================================
-// MPI Serializable
-// ============================================================================
+/// RNG requirements for distributed runs.
+///
+/// With the `hdf5` feature enabled, this additionally requires checkpoint
+/// serialization support. Without `hdf5`, every `Rng + SeedableRng + Send`
+/// automatically implements this trait.
+#[cfg(feature = "hdf5")]
+pub trait MpiRng: Rng + SeedableRng + Send + crate::RngCheckpointHdf5 + 'static {}
 
-/// Trait for MPI-transmissible types
-#[cfg(feature = "mpi")]
-pub trait MpiSerializable: Sized {
-    fn send_mpi(&self, comm: &SimpleCommunicator, dest: i32, tag: i32) -> Result<(), MpiError>;
-    fn recv_mpi(comm: &SimpleCommunicator, source: i32, tag: i32) -> Result<Self, MpiError>;
-}
+#[cfg(feature = "hdf5")]
+impl<T> MpiRng for T where T: Rng + SeedableRng + Send + crate::RngCheckpointHdf5 + 'static {}
 
-#[cfg(feature = "mpi")]
-impl<T: mpi::datatype::Equivalence + Copy> MpiSerializable for T {
-    fn send_mpi(&self, comm: &SimpleCommunicator, dest: i32, tag: i32) -> Result<(), MpiError> {
-        comm.process_at_rank(dest).send_with_tag(self, tag);
-        Ok(())
-    }
+#[cfg(not(feature = "hdf5"))]
+pub trait MpiRng: Rng + SeedableRng + Send + 'static {}
 
-    fn recv_mpi(comm: &SimpleCommunicator, source: i32, tag: i32) -> Result<Self, MpiError> {
-        let (val, _) = comm.process_at_rank(source).receive_with_tag(tag);
-        Ok(val)
-    }
-}
+#[cfg(not(feature = "hdf5"))]
+impl<T> MpiRng for T where T: Rng + SeedableRng + Send + 'static {}
 
 // ============================================================================
-// Message Types
+// Wire protocol
 // ============================================================================
 
 mod tags {
-    pub const WORKER_MSG: i32 = 4355;
-    pub const CONTROLLER_MSG: i32 = 4356;
-    pub const RESULT_HEADER: i32 = 4359;
-    pub const RESULT_DATA: i32 = 4360;
-    pub const RUN_BCAST: i32 = 4361;
-    pub const RUN_BCAST_DATA: i32 = 4362;
-    pub const FOLLOWER_PROGRESS: i32 = 4363;
+    pub const CONTROLLER_COMMAND: i32 = 0x4351;
+    pub const WORKER_REPORT: i32 = 0x4352;
 }
 
-/// Worker status message
-#[cfg(feature = "mpi")]
-#[derive(Debug, Clone, Copy, Equivalence, Default)]
-pub struct WorkerStatusMsg {
-    pub status: i32,
-    pub task_id: u64,
-    pub sweeps: u64,
-}
-
-#[cfg(feature = "mpi")]
-impl WorkerStatusMsg {
-    pub fn idle() -> Self {
-        Self {
-            status: 0,
-            task_id: 0,
-            sweeps: 0,
-        }
-    }
-    pub fn progress(task_id: usize, sweeps: u64) -> Self {
-        Self {
-            status: 1,
-            task_id: task_id as u64,
-            sweeps,
-        }
-    }
-    pub fn complete(task_id: usize) -> Self {
-        Self {
-            status: 2,
-            task_id: task_id as u64,
-            sweeps: 0,
-        }
-    }
-
-    pub fn is_idle(&self) -> bool {
-        self.status == 0
-    }
-    pub fn is_progress(&self) -> bool {
-        self.status == 1
-    }
-    pub fn is_complete(&self) -> bool {
-        self.status == 2
-    }
-    pub fn is_timeup(&self) -> bool {
-        self.status == 3
-    }
-}
-
-/// Controller command message
-#[cfg(feature = "mpi")]
-#[derive(Debug, Clone, Copy, Equivalence, Default)]
-pub struct ControllerCmdMsg {
-    pub action: i32,
-    pub task_id: u64,
-    pub run_id: u64,
-    pub sweeps_hint: u64,
-}
-
-#[cfg(feature = "mpi")]
-impl ControllerCmdMsg {
-    pub fn exit() -> Self {
-        Self {
-            action: 0,
-            ..Default::default()
-        }
-    }
-    pub fn assign_task(task_id: usize, run_id: u64, sweeps_hint: u64) -> Self {
-        Self {
-            action: 1,
-            task_id: task_id as u64,
-            run_id,
-            sweeps_hint,
-        }
-    }
-    pub fn continue_(sweeps_hint: u64) -> Self {
-        Self {
-            action: 2,
-            sweeps_hint,
-            ..Default::default()
-        }
-    }
-    pub fn finish_and_new() -> Self {
-        Self {
-            action: 3,
-            ..Default::default()
-        }
-    }
-
-    pub fn is_exit(&self) -> bool {
-        self.action == 0
-    }
-    pub fn is_assign(&self) -> bool {
-        self.action == 1
-    }
-    pub fn is_continue(&self) -> bool {
-        self.action == 2
-    }
-    pub fn is_finish_and_new(&self) -> bool {
-        self.action == 3
-    }
-}
-
-/// Result transfer header (fixed-size, sent before variable-length JSON bytes).
-#[cfg(feature = "mpi")]
-#[derive(Debug, Clone, Copy, Equivalence, Default)]
-pub struct ResultHeaderMsg {
-    pub task_id: u64,
-    pub byte_count: u64,
-}
-
-/// Broadcast from run leader to followers within a run group.
-#[cfg(feature = "mpi")]
-#[derive(Debug, Clone, Copy, Equivalence, Default)]
-struct RunBcastMsg {
-    action: i32, // 0=assign, 1=continue, 2=exit, 3=timeup
-    task_id: u64,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Assignment {
+    task_id: usize,
     run_id: u64,
-    sweeps_hint: u64,
-    thermalization: u64,
-    measurement: u64,
-    binsize: u64,
+    measurement_sweeps: u64,
+    #[serde(default)]
+    task_target_sweeps: u64,
+    #[serde(default)]
+    ranks_per_run: i32,
+    thermalization_sweeps: u64,
+    binsize: usize,
     base_seed: u64,
-    params_json_len: u64,
+    params: Params,
 }
 
-#[cfg(feature = "mpi")]
-impl RunBcastMsg {
-    fn assign(
+#[cfg(feature = "hdf5")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CheckpointCommit {
+    task_id: usize,
+    run_id: u64,
+    ranks_per_run: i32,
+    sweep_count: u64,
+    measurement_sweeps_done: u64,
+}
+
+#[cfg(feature = "hdf5")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum CheckpointDecision {
+    Fresh,
+    Resume(CheckpointCommit),
+    Error(String),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum ControllerCommand {
+    Assign(Assignment),
+    Stop,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum WorkerReport {
+    Ready,
+    Completed {
         task_id: usize,
         run_id: u64,
-        sweeps_hint: u64,
-        thermalization: u64,
-        measurement: u64,
-        binsize: u64,
-        base_seed: u64,
-        params_json_len: u64,
-    ) -> Self {
-        Self {
-            action: 0,
-            task_id: task_id as u64,
-            run_id,
-            sweeps_hint,
-            thermalization,
-            measurement,
-            binsize,
-            base_seed,
-            params_json_len,
-        }
-    }
-    fn continue_(sweeps_hint: u64) -> Self {
-        Self {
-            action: 1,
-            sweeps_hint,
-            ..Default::default()
-        }
-    }
-    fn exit() -> Self {
-        Self {
-            action: 2,
-            ..Default::default()
-        }
-    }
-    fn timeup() -> Self {
-        Self {
-            action: 3,
-            ..Default::default()
-        }
-    }
-    fn is_assign(&self) -> bool {
-        self.action == 0
-    }
-    fn is_continue(&self) -> bool {
-        self.action == 1
-    }
-    fn is_exit(&self) -> bool {
-        self.action == 2
-    }
-    fn is_timeup(&self) -> bool {
-        self.action == 3
-    }
+        measurement_sweeps: u64,
+        results: Results,
+    },
+    Interrupted {
+        task_id: usize,
+        run_id: u64,
+        measurement_sweeps: u64,
+    },
+    Failed {
+        task_id: Option<usize>,
+        run_id: Option<u64>,
+        message: String,
+    },
 }
 
-/// Progress report from follower to run leader.
 #[cfg(feature = "mpi")]
-#[derive(Debug, Clone, Copy, Equivalence, Default)]
-struct FollowerProgressMsg {
-    task_id: u64,
-    sweeps_done: u64,
-}
-
-/// Send serialized Results as length-prefixed JSON bytes over MPI.
-#[cfg(feature = "mpi")]
-fn send_results(
+fn send_json<T: Serialize>(
     comm: &SimpleCommunicator,
     dest: i32,
-    task_id: usize,
-    results: &crate::Results,
+    tag: i32,
+    value: &T,
 ) -> Result<(), MpiError> {
-    let json = serde_json::to_vec(results).map_err(|e| MpiError::Communication(e.to_string()))?;
-    let header = ResultHeaderMsg {
-        task_id: task_id as u64,
-        byte_count: json.len() as u64,
-    };
-    header.send_mpi(comm, dest, tags::RESULT_HEADER)?;
+    let bytes = serde_json::to_vec(value).map_err(|e| MpiError::Communication(e.to_string()))?;
     comm.process_at_rank(dest)
-        .send_with_tag(&json[..], tags::RESULT_DATA);
+        .send_with_tag(bytes.as_slice(), tag);
     Ok(())
 }
 
-/// Receive serialized Results from a worker.
 #[cfg(feature = "mpi")]
-fn recv_results(
+fn recv_json<T: DeserializeOwned>(
     comm: &SimpleCommunicator,
     source: i32,
-) -> Result<(usize, crate::Results), MpiError> {
-    let header = ResultHeaderMsg::recv_mpi(comm, source, tags::RESULT_HEADER)?;
-    let len = header.byte_count as usize;
-    let mut buf = vec![0u8; len];
-    comm.process_at_rank(source)
-        .receive_with_tag(&mut buf[..], tags::RESULT_DATA);
-    let results: crate::Results =
-        serde_json::from_slice(&buf).map_err(|e| MpiError::Communication(e.to_string()))?;
-    Ok((header.task_id as usize, results))
+    tag: i32,
+) -> Result<T, MpiError> {
+    let (bytes, _) = comm.process_at_rank(source).receive_vec_with_tag::<u8>(tag);
+    serde_json::from_slice(&bytes).map_err(|e| MpiError::Communication(e.to_string()))
 }
 
-/// Build rank-specific checkpoint path for multi-rank coordination.
-fn checkpoint_path_for_rank(
-    job_dir: &std::path::Path,
-    task_id: usize,
-    run_id: u64,
-    rank: i32,
-) -> PathBuf {
-    if rank > 0 {
-        job_dir.join(format!(
-            "task_{:04}/run{:04}/run{:04}.rank{:04}.dump.h5",
-            task_id, run_id, run_id, rank
-        ))
-    } else {
-        job_dir.join(format!(
-            "task_{:04}/run{:04}/run{:04}.dump.h5",
-            task_id, run_id, run_id
-        ))
-    }
-}
-
-/// Broadcast checkpoint existence from leader to followers.
 #[cfg(feature = "mpi")]
-fn bcast_checkpoint_exists(run_comm: &SimpleCommunicator, exists: bool) -> bool {
-    let mut val: i32 = if exists { 1 } else { 0 };
-    run_comm.broadcast_into(&mut val);
-    val != 0
+fn recv_json_any<T: DeserializeOwned>(
+    comm: &SimpleCommunicator,
+    tag: i32,
+) -> Result<(T, i32), MpiError> {
+    let (bytes, status) = comm.any_process().receive_vec_with_tag::<u8>(tag);
+    let value =
+        serde_json::from_slice(&bytes).map_err(|e| MpiError::Communication(e.to_string()))?;
+    Ok((value, status.source_rank()))
+}
+
+#[cfg(feature = "mpi")]
+fn broadcast_json<T>(
+    comm: &SimpleCommunicator,
+    root_rank: i32,
+    value_on_root: Option<&T>,
+) -> Result<T, MpiError>
+where
+    T: Serialize + DeserializeOwned,
+{
+    let root = comm.process_at_rank(root_rank);
+    let mut bytes = if comm.rank() == root_rank {
+        serde_json::to_vec(value_on_root.ok_or_else(|| {
+            MpiError::Communication("broadcast root did not provide a value".into())
+        })?)
+        .map_err(|e| MpiError::Communication(e.to_string()))?
+    } else {
+        Vec::new()
+    };
+
+    let mut len = bytes.len() as u64;
+    root.broadcast_into(&mut len);
+    if comm.rank() != root_rank {
+        bytes.resize(len as usize, 0);
+    }
+    if len > 0 {
+        root.broadcast_into(bytes.as_mut_slice());
+    }
+    serde_json::from_slice(&bytes).map_err(|e| MpiError::Communication(e.to_string()))
 }
 
 // ============================================================================
-// Task Stream
+// Tasks and scheduling
 // ============================================================================
 
-/// Task specification
+/// A parameter task and its aggregate target measurement sweeps.
 #[derive(Debug, Clone)]
 pub struct TaskSpec {
     pub id: usize,
@@ -386,141 +273,260 @@ pub struct TaskSpec {
     pub params: Params,
 }
 
+#[derive(Debug, Clone)]
 struct TaskInfo {
     spec: TaskSpec,
-    sweeps_done: u64,
-    runs_active: u64,
+    completed: u64,
+    reserved: u64,
+    next_run_id: u64,
+    pending: VecDeque<Assignment>,
 }
 
-/// Stream of tasks
+/// Pure scheduler state used by the rank-0 controller.
+///
+/// `next()` reserves work immediately, preventing multiple worker groups from
+/// being assigned overlapping sweep budgets.
 pub struct TaskStream {
     tasks: Vec<TaskInfo>,
-    current_id: Option<usize>,
+    index_by_id: HashMap<usize, usize>,
+    cursor: usize,
+    chunk_divisor: u64,
 }
 
 impl TaskStream {
     pub fn new(specs: Vec<TaskSpec>) -> Self {
-        let tasks = specs
-            .into_iter()
-            .map(|spec| TaskInfo {
-                spec,
-                sweeps_done: 0,
-                runs_active: 0,
-            })
-            .collect();
-        Self {
-            tasks,
-            current_id: None,
-        }
+        Self::with_parallelism(specs, 1).expect("TaskStream::new received duplicate task IDs")
     }
 
-    pub fn next(&mut self, num_workers: i32) -> Option<&TaskSpec> {
-        let start = self.current_id.map(|id| id + 1).unwrap_or(0);
-
-        for (i, task) in self.tasks.iter().enumerate().skip(start) {
-            if self.has_work(task, num_workers) {
-                self.current_id = Some(i);
-                return Some(&task.spec);
+    pub fn with_parallelism(
+        specs: Vec<TaskSpec>,
+        parallel_groups: i32,
+    ) -> Result<Self, CarloError> {
+        let mut index_by_id = HashMap::new();
+        let mut tasks = Vec::with_capacity(specs.len());
+        for spec in specs {
+            let index = tasks.len();
+            if index_by_id.insert(spec.id, index).is_some() {
+                return Err(CarloError::InvalidConfig {
+                    field: "tasks".into(),
+                    reason: format!("duplicate MPI task id {}", spec.id),
+                });
             }
+            tasks.push(TaskInfo {
+                spec,
+                completed: 0,
+                reserved: 0,
+                next_run_id: 1,
+                pending: VecDeque::new(),
+            });
+        }
+        Ok(Self {
+            tasks,
+            index_by_id,
+            cursor: 0,
+            chunk_divisor: parallel_groups.max(1) as u64,
+        })
+    }
+
+    fn task_mut(&mut self, task_id: usize) -> Option<&mut TaskInfo> {
+        let index = *self.index_by_id.get(&task_id)?;
+        self.tasks.get_mut(index)
+    }
+
+    fn task(&self, task_id: usize) -> Option<&TaskInfo> {
+        let index = *self.index_by_id.get(&task_id)?;
+        self.tasks.get(index)
+    }
+
+    fn assignment_for(&mut self, index: usize, base: &RunConfig) -> Option<Assignment> {
+        let task = self.tasks.get_mut(index)?;
+        if let Some(pending) = task.pending.pop_front() {
+            return Some(pending);
         }
 
-        for (i, task) in self.tasks.iter().enumerate().take(start) {
-            if self.has_work(task, num_workers) {
-                self.current_id = Some(i);
-                return Some(&task.spec);
+        let unavailable = task.completed.saturating_add(task.reserved);
+        if unavailable >= task.spec.target_sweeps {
+            return None;
+        }
+        let remaining = task.spec.target_sweeps - unavailable;
+        let nominal = task
+            .spec
+            .target_sweeps
+            .div_ceil(self.chunk_divisor)
+            .max(base.binsize as u64)
+            .max(1);
+        let budget = remaining.min(nominal);
+        let run_id = task.next_run_id;
+        task.next_run_id = task.next_run_id.saturating_add(1);
+        task.reserved = task.reserved.saturating_add(budget);
+
+        Some(Assignment {
+            task_id: task.spec.id,
+            run_id,
+            measurement_sweeps: budget,
+            task_target_sweeps: task.spec.target_sweeps,
+            ranks_per_run: 0,
+            thermalization_sweeps: task.spec.thermalization,
+            binsize: base.binsize,
+            base_seed: base.base_seed,
+            params: task.spec.params.clone(),
+        })
+    }
+
+    fn next_assignment(&mut self, base: &RunConfig) -> Option<Assignment> {
+        if self.tasks.is_empty() {
+            return None;
+        }
+        for offset in 0..self.tasks.len() {
+            let index = (self.cursor + offset) % self.tasks.len();
+            if let Some(assignment) = self.assignment_for(index, base) {
+                self.cursor = (index + 1) % self.tasks.len();
+                return Some(assignment);
             }
         }
-
         None
     }
 
-    fn has_work(&self, task: &TaskInfo, num_workers: i32) -> bool {
-        if task.sweeps_done >= task.spec.target_sweeps {
-            return false;
+    /// Compatibility helper returning the next task with unreserved work.
+    pub fn next(&mut self, _num_workers: i32) -> Option<&TaskSpec> {
+        if self.tasks.is_empty() {
+            return None;
         }
-        let remaining = task.spec.target_sweeps - task.sweeps_done;
-        let min_work = std::cmp::max(
-            task.spec.thermalization * task.runs_active,
-            task.runs_active,
-        );
-        remaining > min_work && task.runs_active < num_workers as u64
+        for offset in 0..self.tasks.len() {
+            let index = (self.cursor + offset) % self.tasks.len();
+            let task = &self.tasks[index];
+            if task.completed.saturating_add(task.reserved) < task.spec.target_sweeps
+                || !task.pending.is_empty()
+            {
+                self.cursor = (index + 1) % self.tasks.len();
+                return Some(&self.tasks[index].spec);
+            }
+        }
+        None
     }
 
     pub fn report_progress(&mut self, task_id: usize, sweeps: u64) {
-        if let Some(task) = self.tasks.get_mut(task_id) {
-            task.sweeps_done += sweeps;
+        if let Some(task) = self.task_mut(task_id) {
+            task.completed = task.completed.saturating_add(sweeps);
+            task.reserved = task.reserved.saturating_sub(sweeps);
         }
     }
 
     pub fn start_run(&mut self, task_id: usize) {
-        if let Some(task) = self.tasks.get_mut(task_id) {
-            task.runs_active += 1;
+        if let Some(task) = self.task_mut(task_id) {
+            let remaining = task
+                .spec
+                .target_sweeps
+                .saturating_sub(task.completed.saturating_add(task.reserved));
+            task.reserved = task.reserved.saturating_add(remaining.min(1));
         }
     }
 
-    pub fn complete_run(&mut self, task_id: usize) {
-        if let Some(task) = self.tasks.get_mut(task_id) {
-            task.runs_active = task.runs_active.saturating_sub(1);
-        }
-    }
+    pub fn complete_run(&mut self, _task_id: usize) {}
 
     pub fn sweeps_hint(&self, task_id: usize, num_active: i32) -> u64 {
-        let task = match self.tasks.get(task_id) {
-            Some(t) => t,
-            None => return 0,
-        };
-
-        if task.runs_active == 0 {
-            return task.spec.target_sweeps - task.sweeps_done;
-        }
-
-        let remaining = task.spec.target_sweeps - task.sweeps_done;
-        std::cmp::min(
-            remaining / task.runs_active,
-            task.spec.target_sweeps / num_active.max(1) as u64,
-        )
+        self.task(task_id)
+            .map(|task| {
+                let remaining = task
+                    .spec
+                    .target_sweeps
+                    .saturating_sub(task.completed.saturating_add(task.reserved));
+                remaining.div_ceil(num_active.max(1) as u64)
+            })
+            .unwrap_or(0)
     }
 
     pub fn is_done(&self, task_id: usize) -> bool {
-        self.tasks
-            .get(task_id)
-            .map(|t| t.sweeps_done >= t.spec.target_sweeps)
+        self.task(task_id)
+            .map(|task| task.completed >= task.spec.target_sweeps)
             .unwrap_or(true)
+    }
+
+    fn complete_assignment(&mut self, task_id: usize, budget: u64) -> Result<(), MpiError> {
+        let task = self.task_mut(task_id).ok_or_else(|| {
+            MpiError::InvalidTransition(format!("completion for unknown task {task_id}"))
+        })?;
+        task.reserved = task.reserved.saturating_sub(budget);
+        task.completed = task.completed.saturating_add(budget);
+        Ok(())
+    }
+
+    fn interrupt_assignment(&mut self, task_id: usize, budget: u64) -> Result<(), MpiError> {
+        let task = self.task_mut(task_id).ok_or_else(|| {
+            MpiError::InvalidTransition(format!("interruption for unknown task {task_id}"))
+        })?;
+        task.reserved = task.reserved.saturating_sub(budget);
+        Ok(())
+    }
+
+    fn restore_assignment(&mut self, assignment: Assignment) -> Result<(), CarloError> {
+        let task = self
+            .task_mut(assignment.task_id)
+            .ok_or_else(|| CarloError::InvalidConfig {
+                field: "job_dir".into(),
+                reason: format!(
+                    "persisted MPI assignment references unknown task {}",
+                    assignment.task_id
+                ),
+            })?;
+        task.next_run_id = task.next_run_id.max(assignment.run_id.saturating_add(1));
+        task.reserved = task.reserved.saturating_add(assignment.measurement_sweeps);
+        task.pending.push_back(assignment);
+        Ok(())
+    }
+
+    fn restore_completed(&mut self, task_id: usize, run_id: u64, sweeps: u64) {
+        if let Some(task) = self.task_mut(task_id) {
+            task.completed = task.completed.saturating_add(sweeps);
+            task.next_run_id = task.next_run_id.max(run_id.saturating_add(1));
+        }
+    }
+
+    fn all_done(&self) -> bool {
+        self.tasks
+            .iter()
+            .all(|task| task.completed >= task.spec.target_sweeps)
     }
 }
 
 // ============================================================================
-// Results Aggregator
+// Results aggregation
 // ============================================================================
 
-/// Aggregates results from multiple runs
+/// Aggregates independent run results, optionally separated by task ID.
 pub struct ResultsAggregator {
-    observables: HashMap<String, Vec<f64>>,
+    by_task: HashMap<usize, Vec<Results>>,
 }
 
 impl ResultsAggregator {
     pub fn new() -> Self {
         Self {
-            observables: HashMap::new(),
+            by_task: HashMap::new(),
         }
     }
 
+    /// Compatibility method: add to task zero.
     pub fn add(&mut self, results: &Results) {
-        for (name, estimate) in results.estimates() {
-            self.observables
-                .entry(name.clone())
-                .or_default()
-                .push(estimate.mean);
-        }
+        self.add_for_task(0, results.clone());
+    }
+
+    pub fn add_for_task(&mut self, task_id: usize, results: Results) {
+        self.by_task.entry(task_id).or_default().push(results);
     }
 
     pub fn finalize(self) -> Results {
-        let estimates: HashMap<String, Estimate> = self
-            .observables
-            .into_iter()
-            .map(|(name, values)| (name, Estimate::from_bins(&values)))
-            .collect();
-        Results::from_measurements(&estimates)
+        let all: Vec<Results> = self.by_task.into_values().flatten().collect();
+        Results::merge(&all)
+    }
+
+    pub fn finalize_ordered(mut self, tasks: &[TaskSpec]) -> Vec<Results> {
+        tasks
+            .iter()
+            .map(|task| {
+                let values = self.by_task.remove(&task.id).unwrap_or_default();
+                Results::merge(&values)
+            })
+            .collect()
     }
 }
 
@@ -531,16 +537,18 @@ impl Default for ResultsAggregator {
 }
 
 // ============================================================================
-// Type-State Worker
+// Type-state compatibility facade
 // ============================================================================
 
-/// Worker state marker
 pub trait WorkerState: private::Sealed {}
+#[derive(Debug, Clone, Copy)]
 pub struct Idle;
+#[derive(Debug, Clone, Copy)]
 pub struct Running {
     pub task_id: usize,
     pub run_id: u64,
 }
+#[derive(Debug, Clone, Copy)]
 pub struct Done;
 
 mod private {
@@ -554,68 +562,37 @@ impl WorkerState for Idle {}
 impl WorkerState for Running {}
 impl WorkerState for Done {}
 
-/// Worker with type-state
-#[cfg(feature = "mpi")]
+/// Lightweight worker state marker retained for source compatibility.
+/// Communicators are deliberately not stored because rsmpi communicators are
+/// neither `Send` nor `Sync` and must not be bitwise copied.
 pub struct Worker<S: WorkerState> {
     world_rank: i32,
-    leader_comm: SimpleCommunicator,
-    run_comm: Option<SimpleCommunicator>,
     state: S,
 }
 
-#[cfg(feature = "mpi")]
 impl Worker<Idle> {
-    pub fn new(
-        world_rank: i32,
-        leader_comm: &SimpleCommunicator,
-        run_comm: Option<&SimpleCommunicator>,
-    ) -> Self {
-        // SAFETY: SimpleCommunicator does not implement Clone, but we need to store
-        // it in the Worker struct. We use ptr::read to create a bitwise copy.
-        // This is safe because:
-        // 1. The caller's communicator reference is borrowed for the call duration only
-        // 2. We take ownership of the bitwise copy, which will be dropped when Worker drops
-        // 3. The MPI library handles reference counting internally for communicator handles
-        // 4. This pattern is used because the mpi crate doesn't expose a safe Clone for SimpleCommunicator
+    pub fn new(world_rank: i32) -> Self {
         Self {
             world_rank,
-            leader_comm: unsafe { std::ptr::read(leader_comm) },
-            run_comm: run_comm.map(|c| unsafe { std::ptr::read(c) }),
             state: Idle,
         }
     }
 
-    pub fn recv_task(self) -> Result<WorkerEither, MpiError> {
-        // Send idle
-        WorkerStatusMsg::idle().send_mpi(&self.leader_comm, 0, tags::WORKER_MSG)?;
+    pub fn assign(self, task_id: usize, run_id: u64) -> Worker<Running> {
+        Worker {
+            world_rank: self.world_rank,
+            state: Running { task_id, run_id },
+        }
+    }
 
-        // Receive command
-        let cmd = ControllerCmdMsg::recv_mpi(&self.leader_comm, 0, tags::CONTROLLER_MSG)?;
-
-        if cmd.is_exit() {
-            Ok(WorkerEither::Done(Worker {
-                world_rank: self.world_rank,
-                leader_comm: self.leader_comm,
-                run_comm: self.run_comm,
-                state: Done,
-            }))
-        } else if cmd.is_assign() {
-            Ok(WorkerEither::Running(Worker {
-                world_rank: self.world_rank,
-                leader_comm: self.leader_comm,
-                run_comm: self.run_comm,
-                state: Running {
-                    task_id: cmd.task_id as usize,
-                    run_id: cmd.run_id,
-                },
-            }))
-        } else {
-            Err(MpiError::InvalidTransition)
+    pub fn finish(self) -> Worker<Done> {
+        Worker {
+            world_rank: self.world_rank,
+            state: Done,
         }
     }
 }
 
-#[cfg(feature = "mpi")]
 impl Worker<Running> {
     pub fn task_id(&self) -> usize {
         self.state.task_id
@@ -623,55 +600,27 @@ impl Worker<Running> {
     pub fn run_id(&self) -> u64 {
         self.state.run_id
     }
-
-    pub fn send_progress(&mut self, sweeps: u64) -> Result<ControllerCmdMsg, MpiError> {
-        WorkerStatusMsg::progress(self.state.task_id, sweeps).send_mpi(
-            &self.leader_comm,
-            0,
-            tags::WORKER_MSG,
-        )?;
-        ControllerCmdMsg::recv_mpi(&self.leader_comm, 0, tags::CONTROLLER_MSG)
-    }
-
-    pub fn finish(self) -> Result<Worker<Done>, MpiError> {
-        WorkerStatusMsg::complete(self.state.task_id).send_mpi(
-            &self.leader_comm,
-            0,
-            tags::WORKER_MSG,
-        )?;
-        Ok(Worker {
+    pub fn finish(self) -> Worker<Done> {
+        Worker {
             world_rank: self.world_rank,
-            leader_comm: self.leader_comm,
-            run_comm: self.run_comm,
             state: Done,
-        })
+        }
     }
 }
 
-#[cfg(feature = "mpi")]
 impl Worker<Done> {
     pub fn reset(self) -> Worker<Idle> {
         Worker {
             world_rank: self.world_rank,
-            leader_comm: self.leader_comm,
-            run_comm: self.run_comm,
             state: Idle,
         }
     }
 }
 
-/// Either running or done worker
-#[cfg(feature = "mpi")]
-pub enum WorkerEither {
-    Running(Worker<Running>),
-    Done(Worker<Done>),
-}
-
 // ============================================================================
-// Distributed Config
+// Public configuration
 // ============================================================================
 
-/// Configuration for distributed runs
 #[derive(Debug, Clone)]
 pub struct DistributedConfig {
     pub run_config: RunConfig,
@@ -695,73 +644,466 @@ impl Default for DistributedConfig {
     }
 }
 
-// ============================================================================
-// Entry Point
-// ============================================================================
-
-/// Run distributed simulation
-#[cfg(feature = "mpi")]
-pub fn run_distributed<MC, R>(config: DistributedConfig) -> Result<Vec<Results>, CarloError>
-where
-    MC: MonteCarlo + FromParams<Rng = R>,
-    R: Rng + SeedableRng + Send,
-{
-    let universe = mpi::initialize().ok_or(MpiError::InitFailed)?;
-    let world = universe.world();
-    let world_rank = world.rank();
-    let world_size = world.size();
-
+fn validate_config(config: &DistributedConfig, world_size: i32) -> Result<(), CarloError> {
     if world_size < 2 {
         return Err(CarloError::InvalidConfig {
             field: "mpi".into(),
-            reason: "MPI requires at least 2 ranks".into(),
+            reason: "distributed execution requires rank 0 plus at least one worker rank".into(),
         });
     }
-
-    if (world_size - 1) % config.ranks_per_run != 0 {
+    if config.ranks_per_run <= 0 {
+        return Err(CarloError::InvalidConfig {
+            field: "ranks_per_run".into(),
+            reason: "must be positive".into(),
+        });
+    }
+    let worker_ranks = world_size - 1;
+    if worker_ranks % config.ranks_per_run != 0 {
         return Err(CarloError::InvalidConfig {
             field: "ranks_per_run".into(),
             reason: format!(
-                "Worker ranks ({}) not divisible by ranks_per_run ({})",
-                world_size - 1,
+                "{worker_ranks} worker ranks are not divisible by {}",
                 config.ranks_per_run
             ),
         });
     }
-
-    // Split communicators
-    let run_color = if world_rank == 0 {
-        mpi::topology::Color::undefined()
-    } else {
-        mpi::topology::Color::with_value(1 + (world_rank - 1) / config.ranks_per_run)
-    };
-    let run_comm = world.split_by_color(run_color);
-
-    let is_leader = world_rank == 0 || ((world_rank - 1) % config.ranks_per_run == 0);
-    let leader_color = if is_leader {
-        mpi::topology::Color::with_value(1)
-    } else {
-        mpi::topology::Color::undefined()
-    };
-    let leader_comm = world.split_by_color(leader_color);
-
-    if world_rank == 0 {
-        let lc = leader_comm.ok_or_else(|| CarloError::InvalidConfig {
-            field: "leader_comm".into(),
-            reason: "Controller must have leader communicator".into(),
-        })?;
-        run_controller(&lc, &config)
-    } else if let Some(lc) = leader_comm {
-        // Run leader: communicates with controller, coordinates run group
-        run_worker::<MC, R>(world_rank, &lc, run_comm.as_ref(), &config)
-    } else {
-        // Follower: follows run leader via run_comm broadcast
-        let rc = run_comm.ok_or_else(|| CarloError::InvalidConfig {
-            field: "run_comm".into(),
-            reason: "Follower must have run communicator".into(),
-        })?;
-        run_follower::<MC, R>(&rc, &config)
+    if config.tasks.is_empty() {
+        return Err(CarloError::InvalidConfig {
+            field: "tasks".into(),
+            reason: "at least one distributed task is required".into(),
+        });
     }
+    if config.run_config.binsize == 0 {
+        return Err(CarloError::InvalidConfig {
+            field: "binsize".into(),
+            reason: "must be positive".into(),
+        });
+    }
+    if (config.checkpoint_time.is_some() || config.run_config.checkpoint_interval > 0)
+        && !cfg!(feature = "hdf5")
+    {
+        return Err(CarloError::InvalidConfig {
+            field: "checkpoint".into(),
+            reason: "distributed checkpointing requires the hdf5 feature".into(),
+        });
+    }
+    Ok(())
+}
+
+// ============================================================================
+// Persistent scheduler files
+// ============================================================================
+
+fn run_dir(job_dir: &Path, task_id: usize, run_id: u64) -> PathBuf {
+    job_dir.join(format!("task_{task_id:04}/run{run_id:04}"))
+}
+
+fn assignment_path(job_dir: &Path, task_id: usize, run_id: u64) -> PathBuf {
+    run_dir(job_dir, task_id, run_id).join("mpi-assignment.json")
+}
+
+fn result_path(job_dir: &Path, task_id: usize, run_id: u64) -> PathBuf {
+    run_dir(job_dir, task_id, run_id).join("result.json")
+}
+
+#[cfg(feature = "hdf5")]
+fn checkpoint_path(
+    job_dir: &Path,
+    task_id: usize,
+    run_id: u64,
+    rank_in_run: i32,
+    ranks_per_run: i32,
+) -> PathBuf {
+    let dir = run_dir(job_dir, task_id, run_id);
+    if ranks_per_run == 1 {
+        dir.join(format!("run{run_id:04}.dump.h5"))
+    } else {
+        dir.join(format!("run{run_id:04}.rank{rank_in_run:04}.dump.h5"))
+    }
+}
+
+#[cfg(feature = "hdf5")]
+fn checkpoint_staging_path(path: &Path) -> PathBuf {
+    path.with_extension("next.h5")
+}
+
+#[cfg(feature = "hdf5")]
+fn checkpoint_commit_path(job_dir: &Path, task_id: usize, run_id: u64) -> PathBuf {
+    run_dir(job_dir, task_id, run_id).join("mpi-checkpoint.json")
+}
+
+fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), CarloError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| CarloError::IoError {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(value)?;
+    fs::write(&tmp, bytes).map_err(|source| CarloError::IoError {
+        path: tmp.clone(),
+        source,
+    })?;
+    fs::rename(&tmp, path).map_err(|source| CarloError::IoError {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(())
+}
+
+fn restore_persisted_runs(
+    stream: &mut TaskStream,
+    aggregator: &mut ResultsAggregator,
+    config: &DistributedConfig,
+) -> Result<(), CarloError> {
+    for task in &config.tasks {
+        let task_dir = config.job_dir.join(format!("task_{:04}", task.id));
+        let entries = match fs::read_dir(&task_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(CarloError::IoError {
+                    path: task_dir,
+                    source,
+                })
+            }
+        };
+
+        for entry in entries {
+            let entry = entry.map_err(|source| CarloError::IoError {
+                path: task_dir.clone(),
+                source,
+            })?;
+            if !entry
+                .file_type()
+                .map_err(|source| CarloError::IoError {
+                    path: entry.path(),
+                    source,
+                })?
+                .is_dir()
+            {
+                continue;
+            }
+            let assignment_file = entry.path().join("mpi-assignment.json");
+            if !assignment_file.exists() {
+                continue;
+            }
+            let assignment: Assignment =
+                serde_json::from_slice(&fs::read(&assignment_file).map_err(|source| {
+                    CarloError::IoError {
+                        path: assignment_file.clone(),
+                        source,
+                    }
+                })?)?;
+            if assignment.task_id != task.id {
+                return Err(CarloError::InvalidConfig {
+                    field: "job_dir".into(),
+                    reason: format!(
+                        "persisted assignment in task_{:04} belongs to task {}",
+                        task.id, assignment.task_id
+                    ),
+                });
+            }
+            if assignment.task_target_sweeps != 0
+                && assignment.task_target_sweeps != task.target_sweeps
+            {
+                return Err(CarloError::InvalidConfig {
+                    field: "job_dir".into(),
+                    reason: format!(
+                        "task {} target changed from {} to {} while restart data exists",
+                        task.id, assignment.task_target_sweeps, task.target_sweeps
+                    ),
+                });
+            }
+            if assignment.ranks_per_run != 0 && assignment.ranks_per_run != config.ranks_per_run {
+                return Err(CarloError::InvalidConfig {
+                    field: "ranks_per_run".into(),
+                    reason: format!(
+                        "task {} was checkpointed with {} ranks per run, not {}",
+                        task.id, assignment.ranks_per_run, config.ranks_per_run
+                    ),
+                });
+            }
+            if assignment.thermalization_sweeps != task.thermalization
+                || assignment.binsize != config.run_config.binsize
+                || assignment.base_seed != config.run_config.base_seed
+                || assignment.params != task.params
+            {
+                return Err(CarloError::InvalidConfig {
+                    field: "job_dir".into(),
+                    reason: format!(
+                        "task {} parameters or run configuration changed while restart data exists",
+                        task.id
+                    ),
+                });
+            }
+            let result_file = entry.path().join("result.json");
+            if result_file.exists() {
+                let results: Results =
+                    serde_json::from_slice(&fs::read(&result_file).map_err(|source| {
+                        CarloError::IoError {
+                            path: result_file.clone(),
+                            source,
+                        }
+                    })?)?;
+                stream.restore_completed(
+                    assignment.task_id,
+                    assignment.run_id,
+                    assignment.measurement_sweeps,
+                );
+                aggregator.add_for_task(assignment.task_id, results);
+            } else {
+                stream.restore_assignment(assignment)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
+// Generic MPI backend
+// ============================================================================
+
+/// Generic task-partitioning MPI backend.
+///
+/// Every rank must call `spawn_tasks` with the same `n_tasks` and `base_seed`.
+/// Logical task `i` is executed by rank `i % world_size`; the final barrier
+/// ensures all ranks finish before the method returns.
+#[cfg(feature = "mpi")]
+struct MpiRuntime {
+    universe: Universe,
+    // MPI_THREAD_SERIALIZED permits multiple application threads as long as
+    // only one of them is inside MPI at a time. Backend methods enforce that
+    // rule through this process-local lock.
+    call_lock: Mutex<()>,
+}
+
+#[cfg(feature = "mpi")]
+#[derive(Clone)]
+pub struct MpiBackend {
+    runtime: Arc<MpiRuntime>,
+    rank: i32,
+    size: i32,
+    ranks_per_run: i32,
+}
+
+#[cfg(feature = "mpi")]
+impl MpiBackend {
+    pub fn new() -> Result<Self, CarloError> {
+        Self::with_ranks_per_run(1)
+    }
+
+    pub fn with_ranks_per_run(ranks_per_run: i32) -> Result<Self, CarloError> {
+        if ranks_per_run <= 0 {
+            return Err(CarloError::InvalidConfig {
+                field: "ranks_per_run".into(),
+                reason: "must be positive".into(),
+            });
+        }
+        let (universe, provided) =
+            mpi::initialize_with_threading(Threading::Serialized).ok_or(MpiError::InitFailed)?;
+        if provided < Threading::Serialized {
+            return Err(MpiError::InvalidTopology(format!(
+                "MPI implementation provided {provided:?} thread support; Serialized is required"
+            ))
+            .into());
+        }
+        let world = universe.world();
+        let rank = world.rank();
+        let size = world.size();
+        if size > 1 && (size - 1) % ranks_per_run != 0 {
+            return Err(CarloError::InvalidConfig {
+                field: "ranks_per_run".into(),
+                reason: format!(
+                    "{} worker ranks are not divisible by {ranks_per_run}",
+                    size - 1
+                ),
+            });
+        }
+        Ok(Self {
+            runtime: Arc::new(MpiRuntime {
+                universe,
+                call_lock: Mutex::new(()),
+            }),
+            rank,
+            size,
+            ranks_per_run,
+        })
+    }
+
+    pub fn rank(&self) -> i32 {
+        self.rank
+    }
+    pub fn size(&self) -> i32 {
+        self.size
+    }
+    pub fn is_controller(&self) -> bool {
+        self.rank == 0
+    }
+    pub fn is_run_leader(&self) -> bool {
+        self.is_controller() || (self.rank > 0 && (self.rank - 1) % self.ranks_per_run == 0)
+    }
+    pub fn num_workers(&self) -> i32 {
+        (self.size - 1).max(0)
+    }
+    pub fn num_parallel_runs(&self) -> i32 {
+        if self.size <= 1 {
+            0
+        } else {
+            self.num_workers() / self.ranks_per_run
+        }
+    }
+    pub fn run_group(&self) -> i32 {
+        if self.rank == 0 {
+            0
+        } else {
+            1 + (self.rank - 1) / self.ranks_per_run
+        }
+    }
+    pub fn rank_in_run(&self) -> i32 {
+        if self.rank == 0 {
+            0
+        } else {
+            (self.rank - 1) % self.ranks_per_run
+        }
+    }
+    pub fn ranks_per_run(&self) -> i32 {
+        self.ranks_per_run
+    }
+}
+
+#[cfg(feature = "mpi")]
+impl Default for MpiBackend {
+    fn default() -> Self {
+        Self::new().expect("failed to initialize MPI backend")
+    }
+}
+
+#[cfg(feature = "mpi")]
+impl super::Backend for MpiBackend {
+    type Rng = rand_xoshiro::Xoshiro256PlusPlus;
+
+    fn spawn_tasks<F>(&self, n_tasks: usize, base_seed: u64, f: F)
+    where
+        F: Fn(usize, &mut Self::Rng) + Sync,
+    {
+        let _guard = self
+            .runtime
+            .call_lock
+            .lock()
+            .expect("MPI backend call lock was poisoned");
+        let world = self.runtime.universe.world();
+        for task_id in 0..n_tasks {
+            if task_id % self.size as usize != self.rank as usize {
+                continue;
+            }
+            let mut rng: Self::Rng = RngStreamKey::new(base_seed)
+                .with_task(task_id as u64)
+                .with_replica(self.rank as u64)
+                .with_phase(RngPhase::BackendTask)
+                .seeded();
+            f(task_id, &mut rng);
+        }
+        world.barrier();
+    }
+
+    fn barrier(&self) {
+        let _guard = self
+            .runtime
+            .call_lock
+            .lock()
+            .expect("MPI backend call lock was poisoned");
+        self.runtime.universe.world().barrier();
+    }
+}
+
+#[cfg(not(feature = "mpi"))]
+#[derive(Debug, Clone, Copy)]
+pub struct MpiBackend;
+
+#[cfg(not(feature = "mpi"))]
+impl MpiBackend {
+    pub fn new() -> Result<Self, CarloError> {
+        Err(CarloError::InvalidConfig {
+            field: "mpi".into(),
+            reason: "MPI feature not enabled".into(),
+        })
+    }
+
+    pub fn with_ranks_per_run(_ranks_per_run: i32) -> Result<Self, CarloError> {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Distributed execution
+// ============================================================================
+
+#[cfg(feature = "mpi")]
+#[derive(Debug)]
+enum GroupOutcome {
+    Completed(Results),
+    Interrupted,
+}
+
+/// Run the distributed controller/worker scheduler.
+///
+/// Return value semantics:
+/// - rank 0 returns one merged [`Results`] value per input task, preserving
+///   `config.tasks` order;
+/// - worker ranks return an empty vector.
+#[cfg(feature = "mpi")]
+pub fn run_distributed<MC, R>(config: DistributedConfig) -> Result<Vec<Results>, CarloError>
+where
+    MC: MonteCarlo<Rng = R> + FromParams<Rng = R>,
+    R: MpiRng,
+{
+    let universe = mpi::initialize().ok_or(MpiError::InitFailed)?;
+    let world = universe.world();
+    validate_config(&config, world.size())?;
+    let job_started = Instant::now();
+
+    let world_rank = world.rank();
+    let group_color = if world_rank == 0 {
+        Color::undefined()
+    } else {
+        Color::with_value((world_rank - 1) / config.ranks_per_run)
+    };
+    let run_comm = world.split_by_color_with_key(group_color, world_rank);
+
+    let is_group_leader = world_rank > 0 && (world_rank - 1) % config.ranks_per_run == 0;
+    let leader_color = if world_rank == 0 || is_group_leader {
+        Color::with_value(0)
+    } else {
+        Color::undefined()
+    };
+    let leader_comm = world.split_by_color_with_key(leader_color, world_rank);
+
+    let result = if world_rank == 0 {
+        let leaders = leader_comm.ok_or_else(|| {
+            MpiError::InvalidTopology("controller was excluded from leader communicator".into())
+        })?;
+        run_controller(&leaders, &config)
+    } else {
+        let group = run_comm.ok_or_else(|| {
+            MpiError::InvalidTopology("worker was excluded from run communicator".into())
+        })?;
+        if is_group_leader {
+            let leaders = leader_comm.ok_or_else(|| {
+                MpiError::InvalidTopology(
+                    "run-group leader was excluded from leader communicator".into(),
+                )
+            })?;
+            run_group_leader::<MC, R>(&leaders, &group, &config, job_started)
+        } else {
+            run_group_follower::<MC, R>(&group, &config, job_started)
+        }
+    };
+
+    // Every rank reaches this barrier after its local role has terminated.
+    world.barrier();
+    result
 }
 
 #[cfg(feature = "mpi")]
@@ -769,428 +1111,619 @@ fn run_controller(
     leader_comm: &SimpleCommunicator,
     config: &DistributedConfig,
 ) -> Result<Vec<Results>, CarloError> {
-    let num_workers = leader_comm.size() - 1;
-    let mut tasks = TaskStream::new(config.tasks.clone());
-    let mut aggregator = ResultsAggregator::new();
-    let mut active_workers = num_workers;
-    let mut next_run_id: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
+    let group_count = leader_comm.size() - 1;
+    let initialized = (|| {
+        let mut stream = TaskStream::with_parallelism(config.tasks.clone(), group_count)?;
+        let mut aggregator = ResultsAggregator::new();
+        fs::create_dir_all(&config.job_dir).map_err(|source| CarloError::IoError {
+            path: config.job_dir.clone(),
+            source,
+        })?;
+        restore_persisted_runs(&mut stream, &mut aggregator, config)?;
+        Ok::<_, CarloError>((stream, aggregator))
+    })();
 
-    leader_comm.barrier();
-
-    while active_workers > 0 {
-        let (status, mpi_status) = leader_comm.any_process().receive::<WorkerStatusMsg>();
-        let source = mpi_status.source_rank();
-
-        if status.is_idle() {
-            let task_opt = tasks.next(active_workers);
-            if let Some(task) = task_opt {
-                let task_id = task.id;
-                tasks.start_run(task_id);
-                let run_id = next_run_id.get(&task_id).copied().unwrap_or(1);
-                next_run_id.insert(task_id, run_id + 1);
-                let hint = tasks.sweeps_hint(task_id, active_workers);
-                let cmd = ControllerCmdMsg::assign_task(task_id, run_id, hint);
-                cmd.send_mpi(leader_comm, source, tags::CONTROLLER_MSG)?;
-            } else {
-                ControllerCmdMsg::exit().send_mpi(leader_comm, source, tags::CONTROLLER_MSG)?;
-                active_workers -= 1;
-            }
-        } else if status.is_progress() {
-            let task_id = status.task_id as usize;
-            tasks.report_progress(task_id, status.sweeps);
-
-            if tasks.is_done(task_id) {
-                tasks.complete_run(task_id);
-                ControllerCmdMsg::finish_and_new().send_mpi(
-                    leader_comm,
-                    source,
-                    tags::CONTROLLER_MSG,
-                )?;
-            } else {
-                let hint = tasks.sweeps_hint(task_id, active_workers);
-                ControllerCmdMsg::continue_(hint).send_mpi(
-                    leader_comm,
-                    source,
-                    tags::CONTROLLER_MSG,
-                )?;
-            }
-        } else if status.is_complete() {
-            match recv_results(leader_comm, source) {
-                Ok((_task_id, results)) => {
-                    aggregator.add(&results);
-                }
-                Err(_) => {
-                    // Worker finished but result transfer failed; continue
-                }
-            }
-        } else if status.is_timeup() {
-            active_workers -= 1;
+    let (mut stream, mut aggregator) = match initialized {
+        Ok(state) => state,
+        Err(error) => {
+            // Worker groups have already sent Ready and are blocked waiting for
+            // a command. Release every group before returning the local error.
+            stop_ready_groups(leader_comm, group_count)?;
+            return Err(error);
         }
-    }
+    };
 
-    leader_comm.barrier();
-    Ok(vec![aggregator.finalize()])
-}
+    let mut live_groups = group_count;
+    let mut stopping = stream.all_done();
+    let mut first_error: Option<String> = None;
 
-#[cfg(feature = "mpi")]
-fn run_worker<MC, R>(
-    world_rank: i32,
-    leader_comm: &SimpleCommunicator,
-    run_comm: Option<&SimpleCommunicator>,
-    config: &DistributedConfig,
-) -> Result<Vec<Results>, CarloError>
-where
-    MC: MonteCarlo + FromParams<Rng = R>,
-    R: Rng + SeedableRng + Send,
-{
-    let mut worker = Worker::<Idle>::new(world_rank, leader_comm, run_comm);
-    let mut results = Vec::new();
-    let time_start = Instant::now();
-    #[allow(unused_mut)]
-    let mut last_checkpoint = Instant::now();
+    while live_groups > 0 {
+        let (report, source) = recv_json_any::<WorkerReport>(leader_comm, tags::WORKER_REPORT)?;
 
-    leader_comm.barrier();
-
-    loop {
-        let either = worker.recv_task()?;
-        let WorkerEither::Running(w) = either else {
-            break;
-        };
-        let task_id = w.task_id();
-        let default_task = TaskSpec {
-            id: 0,
-            target_sweeps: 100,
-            thermalization: 10,
-            params: Params::new(),
-        };
-        let task = config.tasks.get(task_id).unwrap_or(&default_task);
-        let params = &task.params;
-
-        // Build RunConfig from task spec
-        let run_config = RunConfig {
-            measurement_sweeps: task.target_sweeps,
-            thermalization_sweeps: task.thermalization,
-            binsize: config.run_config.binsize,
-            base_seed: config.run_config.base_seed,
-            progress_interval: config.run_config.progress_interval,
-            checkpoint_interval: config.run_config.checkpoint_interval,
-        };
-
-        let seed = RngStreamKey::new(config.run_config.base_seed)
-            .with_task(task_id as u64)
-            .with_run(w.run_id())
-            .with_phase(RngPhase::Initialization)
-            .seed();
-
-        // Check for existing checkpoint
-        #[cfg(feature = "hdf5")]
-        let checkpoint_path = if has_followers {
-            checkpoint_path_for_rank(&config.job_dir, task_id, w.run_id(), 0)
-        } else {
-            config.job_dir.join(format!(
-                "task_{:04}/run{:04}/run{:04}.dump.h5",
+        let report_result: Result<(), CarloError> = match report {
+            WorkerReport::Ready => Ok(()),
+            WorkerReport::Completed {
                 task_id,
-                w.run_id(),
-                w.run_id()
-            ))
-        };
-
-        #[cfg(feature = "hdf5")]
-        let checkpoint_exists = if has_followers {
-            bcast_checkpoint_exists(run_comm.as_ref().unwrap(), checkpoint_path.exists())
-        } else {
-            checkpoint_path.exists()
-        };
-
-        #[cfg(feature = "hdf5")]
-        let run = if checkpoint_exists {
-            if let Some(existing) =
-                Run::<MC, R>::read_checkpoint(&checkpoint_path, params, &run_config, seed)?
-            {
-                existing
-            } else {
-                Run::new(
-                    params,
-                    TaskId::new(task_id),
-                    RunId::new(w.run_id()),
-                    &run_config,
-                    seed,
-                )?
-            }
-        } else {
-            Run::new(
-                params,
-                TaskId::new(task_id),
-                RunId::new(w.run_id()),
-                &run_config,
-                seed,
-            )?
-        };
-
-        #[cfg(not(feature = "hdf5"))]
-        let run: Run<MC, R> = Run::new(
-            params,
-            TaskId::new(task_id),
-            RunId::new(w.run_id()),
-            &run_config,
-            seed,
-        )?;
-
-        let mut run = run;
-        let mut w = w;
-
-        // Broadcast task assignment to followers in the run group
-        let has_followers = run_comm.is_some_and(|rc| rc.size() > 1);
-        if has_followers {
-            let rc = run_comm.as_ref().unwrap();
-            let params_json =
-                serde_json::to_vec(params).map_err(|e| MpiError::Communication(e.to_string()))?;
-            let bcast = RunBcastMsg::assign(
-                task_id,
-                w.run_id(),
-                task.target_sweeps,
-                task.thermalization,
-                task.target_sweeps,
-                run_config.binsize as u64,
-                run_config.base_seed,
-                params_json.len() as u64,
-            );
-            rc.broadcast_into(&bcast);
-            if !params_json.is_empty() {
-                for rank in 1..rc.size() {
-                    rc.process_at_rank(rank)
-                        .send_with_tag(&params_json[..], tags::RUN_BCAST_DATA);
-                }
-            }
-        }
-
-        // Run simulation with progress reporting and checkpointing
-        loop {
-            if has_followers {
-                run.step_with_comm(run_comm.as_ref().unwrap());
-            } else {
-                run.step();
-            }
-
-            // Check time limits
-            let elapsed = time_start.elapsed();
-            let should_checkpoint = config
-                .checkpoint_time
-                .is_some_and(|ct| last_checkpoint.elapsed() >= ct);
-            let should_finish = config.run_time.is_some_and(|rt| elapsed >= rt);
-
-            if should_checkpoint || should_finish || run.is_complete() {
+                run_id,
+                measurement_sweeps,
+                results,
+            } => (|| {
+                stream.complete_assignment(task_id, measurement_sweeps)?;
+                write_json_atomic(&result_path(&config.job_dir, task_id, run_id), &results)?;
                 #[cfg(feature = "hdf5")]
-                if should_checkpoint && !run.is_complete() {
-                    run.write_checkpoint(&checkpoint_path)?;
-                    last_checkpoint = Instant::now();
-                }
-
-                // Collect follower progress before reporting
-                let total_sweeps = if has_followers {
-                    let rc = run_comm.as_ref().unwrap();
-                    let mut sum = run.sweeps_done();
-                    for _ in 1..rc.size() {
-                        let (prog, _) = rc.any_process().receive::<FollowerProgressMsg>();
-                        sum = sum.saturating_add(prog.sweeps_done);
-                    }
-                    sum
-                } else {
-                    run.sweeps_done()
-                };
-
-                // Report progress
-                let cmd = w.send_progress(total_sweeps)?;
-
-                // Broadcast controller response to followers
-                if has_followers {
-                    let rc = run_comm.as_ref().unwrap();
-                    let fbcast = if cmd.is_continue() {
-                        RunBcastMsg::continue_(cmd.sweeps_hint)
-                    } else if cmd.is_finish_and_new() {
-                        RunBcastMsg::continue_(0) // signal to finish
-                    } else {
-                        RunBcastMsg::exit()
-                    };
-                    rc.broadcast_into(&fbcast);
-                }
-
-                if should_finish && !run.is_complete() {
-                    // Write final checkpoint on timeup
-                    #[cfg(feature = "hdf5")]
-                    run.write_checkpoint(&checkpoint_path)?;
-
-                    // Send timeup status
-                    WorkerStatusMsg {
-                        status: 3,
-                        task_id: task_id as u64,
-                        sweeps: run.sweeps_done(),
-                    }
-                    .send_mpi(&w.leader_comm, 0, tags::WORKER_MSG)?;
-
-                    return Ok(results); // Worker exits on timeup
-                }
-
-                // Finalize and send results before finishing worker
-                if cmd.is_finish_and_new() || run.is_complete() {
-                    let result = run.finalize(config.run_config.base_seed);
-                    send_results(&w.leader_comm, 0, task_id, &result)?;
-                    results.push(result);
-                }
-
-                // Reset worker for next task iteration
-                worker = w.finish()?.reset();
-
-                break; // inner loop
+                cleanup_checkpoint_artifacts(config, task_id, run_id);
+                aggregator.add_for_task(task_id, results);
+                Ok(())
+            })(),
+            WorkerReport::Interrupted {
+                task_id,
+                run_id: _,
+                measurement_sweeps,
+            } => {
+                stopping = true;
+                stream
+                    .interrupt_assignment(task_id, measurement_sweeps)
+                    .map_err(CarloError::from)
             }
+            WorkerReport::Failed {
+                task_id: _,
+                run_id: _,
+                message,
+            } => {
+                stopping = true;
+                Err(MpiError::Worker(message).into())
+            }
+        };
+
+        if let Err(error) = report_result {
+            if first_error.is_none() {
+                first_error = Some(error.to_string());
+            }
+            stopping = true;
         }
+
+        let command = if stopping {
+            ControllerCommand::Stop
+        } else if let Some(mut assignment) = stream.next_assignment(&config.run_config) {
+            assignment.ranks_per_run = config.ranks_per_run;
+            match write_json_atomic(
+                &assignment_path(&config.job_dir, assignment.task_id, assignment.run_id),
+                &assignment,
+            ) {
+                Ok(()) => ControllerCommand::Assign(assignment),
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error.to_string());
+                    }
+                    stopping = true;
+                    ControllerCommand::Stop
+                }
+            }
+        } else {
+            ControllerCommand::Stop
+        };
+
+        if matches!(command, ControllerCommand::Stop) {
+            live_groups -= 1;
+        }
+        send_json(leader_comm, source, tags::CONTROLLER_COMMAND, &command)?;
     }
 
-    Ok(results)
+    if let Some(message) = first_error {
+        return Err(MpiError::Worker(message).into());
+    }
+    Ok(aggregator.finalize_ordered(&config.tasks))
 }
 
-/// Follower loop: receives broadcasts from run leader, runs sweeps locally.
 #[cfg(feature = "mpi")]
-fn run_follower<MC, R>(
+fn stop_ready_groups(leader_comm: &SimpleCommunicator, group_count: i32) -> Result<(), CarloError> {
+    for _ in 0..group_count {
+        let (_report, source) = recv_json_any::<WorkerReport>(leader_comm, tags::WORKER_REPORT)?;
+        send_json(
+            leader_comm,
+            source,
+            tags::CONTROLLER_COMMAND,
+            &ControllerCommand::Stop,
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "mpi")]
+fn run_group_leader<MC, R>(
+    leader_comm: &SimpleCommunicator,
     run_comm: &SimpleCommunicator,
     config: &DistributedConfig,
+    job_started: Instant,
 ) -> Result<Vec<Results>, CarloError>
 where
-    MC: MonteCarlo + FromParams<Rng = R>,
-    R: Rng + SeedableRng + Send,
+    MC: MonteCarlo<Rng = R> + FromParams<Rng = R>,
+    R: MpiRng,
 {
-    let mut results = Vec::new();
-    let time_start = Instant::now();
-    let rank_in_run = run_comm.rank();
-
-    run_comm.barrier();
+    send_json(leader_comm, 0, tags::WORKER_REPORT, &WorkerReport::Ready)?;
 
     loop {
-        let mut bcast = RunBcastMsg::default();
-        run_comm.broadcast_into(&mut bcast);
-
-        if bcast.is_exit() || bcast.is_timeup() {
-            break;
-        }
-
-        if bcast.is_assign() {
-            let task_id = bcast.task_id as usize;
-            let params: Params = if bcast.params_json_len > 0 {
-                let len = bcast.params_json_len as usize;
-                let mut buf = vec![0u8; len];
-                run_comm
-                    .process_at_rank(0)
-                    .receive_with_tag(&mut buf[..], tags::RUN_BCAST_DATA);
-                serde_json::from_slice(&buf).map_err(|e| MpiError::Communication(e.to_string()))?
-            } else {
-                Params::new()
-            };
-
-            let run_config = RunConfig {
-                measurement_sweeps: bcast.measurement,
-                thermalization_sweeps: bcast.thermalization,
-                binsize: bcast.binsize as usize,
-                base_seed: bcast.base_seed,
-                progress_interval: config.run_config.progress_interval,
-                checkpoint_interval: config.run_config.checkpoint_interval,
-            };
-
-            let seed = RngStreamKey::new(bcast.base_seed)
-                .with_task(task_id as u64)
-                .with_run(bcast.run_id)
-                .with_replica(rank_in_run as u64)
-                .with_thread(rank_in_run as u64)
-                .with_phase(RngPhase::Initialization)
-                .seed();
-
-            // Check for existing checkpoint
-            #[cfg(feature = "hdf5")]
-            let checkpoint_path =
-                checkpoint_path_for_rank(&config.job_dir, task_id, bcast.run_id, rank_in_run);
-
-            #[cfg(feature = "hdf5")]
-            let mut run = if let Some(existing) =
-                Run::<MC, R>::read_checkpoint(&checkpoint_path, &params, &run_config, seed)?
-            {
-                existing
-            } else {
-                Run::new(
-                    &params,
-                    TaskId::new(task_id),
-                    RunId::new(bcast.run_id),
-                    &run_config,
-                    seed,
-                )?
-            };
-
-            #[cfg(not(feature = "hdf5"))]
-            let mut run: Run<MC, R> = Run::new(
-                &params,
-                TaskId::new(task_id),
-                RunId::new(bcast.run_id),
-                &run_config,
-                seed,
-            )?;
-
-            let mut sweeps_hint = bcast.sweeps_hint;
-            #[allow(unused_mut)]
-            let mut last_checkpoint = Instant::now();
-
-            loop {
-                // Run sweeps in batches
-                let batch = sweeps_hint.min(100).max(1);
-                for _ in 0..batch {
-                    run.step_with_comm(run_comm);
-                }
-
-                let elapsed = time_start.elapsed();
-                let should_checkpoint = config.checkpoint_time.is_some_and(|ct| elapsed >= ct);
-                let should_finish = config.run_time.is_some_and(|rt| elapsed >= rt);
-
-                if should_checkpoint || should_finish || run.is_complete() {
-                    #[cfg(feature = "hdf5")]
-                    if should_checkpoint && !run.is_complete() {
-                        run.write_checkpoint(&checkpoint_path)?;
-                        last_checkpoint = Instant::now();
-                    }
-
-                    FollowerProgressMsg {
-                        task_id: task_id as u64,
-                        sweeps_done: run.sweeps_done(),
-                    }
-                    .send_mpi(run_comm, 0, tags::FOLLOWER_PROGRESS)?;
-
-                    let mut next = RunBcastMsg::default();
-                    run_comm.broadcast_into(&mut next);
-
-                    if next.is_continue() {
-                        sweeps_hint = next.sweeps_hint;
-                    } else {
-                        #[cfg(feature = "hdf5")]
-                        if should_finish && !run.is_complete() {
-                            run.write_checkpoint(&checkpoint_path)?;
+        let command: ControllerCommand = recv_json(leader_comm, 0, tags::CONTROLLER_COMMAND)?;
+        let command: ControllerCommand = broadcast_json(run_comm, 0, Some(&command))?;
+        match command {
+            ControllerCommand::Stop => return Ok(Vec::new()),
+            ControllerCommand::Assign(assignment) => {
+                let task_id = assignment.task_id;
+                let run_id = assignment.run_id;
+                let budget = assignment.measurement_sweeps;
+                match execute_group_assignment::<MC, R>(run_comm, config, &assignment, job_started)
+                {
+                    Ok(GroupOutcome::Completed(results)) => {
+                        let report = WorkerReport::Completed {
+                            task_id,
+                            run_id,
+                            measurement_sweeps: budget,
+                            results,
+                        };
+                        if let Err(error) = send_json(leader_comm, 0, tags::WORKER_REPORT, &report)
+                        {
+                            // Results can contain non-finite model output that
+                            // JSON refuses to encode. Keep the protocol aligned
+                            // by reporting a small serializable failure instead.
+                            let fallback = WorkerReport::Failed {
+                                task_id: Some(task_id),
+                                run_id: Some(run_id),
+                                message: format!("failed to serialize worker results: {error}"),
+                            };
+                            send_json(leader_comm, 0, tags::WORKER_REPORT, &fallback)?;
                         }
-
-                        if run.is_complete() {
-                            let result = run.finalize(config.run_config.base_seed);
-                            results.push(result);
-                        }
-                        break; // exit or timeup
+                    }
+                    Ok(GroupOutcome::Interrupted) => {
+                        let report = WorkerReport::Interrupted {
+                            task_id,
+                            run_id,
+                            measurement_sweeps: budget,
+                        };
+                        send_json(leader_comm, 0, tags::WORKER_REPORT, &report)?;
+                    }
+                    Err(error) => {
+                        let report = WorkerReport::Failed {
+                            task_id: Some(task_id),
+                            run_id: Some(run_id),
+                            message: error.to_string(),
+                        };
+                        send_json(leader_comm, 0, tags::WORKER_REPORT, &report)?;
                     }
                 }
             }
         }
     }
+}
 
-    run_comm.barrier();
-    Ok(results)
+#[cfg(feature = "mpi")]
+fn run_group_follower<MC, R>(
+    run_comm: &SimpleCommunicator,
+    config: &DistributedConfig,
+    job_started: Instant,
+) -> Result<Vec<Results>, CarloError>
+where
+    MC: MonteCarlo<Rng = R> + FromParams<Rng = R>,
+    R: MpiRng,
+{
+    loop {
+        let command: ControllerCommand = broadcast_json(run_comm, 0, None)?;
+        match command {
+            ControllerCommand::Stop => return Ok(Vec::new()),
+            ControllerCommand::Assign(assignment) => {
+                // All ranks return the same success/error decision from
+                // execute_group_assignment, so the next broadcast stays aligned.
+                let _ =
+                    execute_group_assignment::<MC, R>(run_comm, config, &assignment, job_started);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "mpi")]
+fn execute_group_assignment<MC, R>(
+    run_comm: &SimpleCommunicator,
+    config: &DistributedConfig,
+    assignment: &Assignment,
+    job_started: Instant,
+) -> Result<GroupOutcome, CarloError>
+where
+    MC: MonteCarlo<Rng = R> + FromParams<Rng = R>,
+    R: MpiRng,
+{
+    let rank_in_run = run_comm.rank();
+    let run_config = RunConfig {
+        thermalization_sweeps: assignment.thermalization_sweeps,
+        measurement_sweeps: assignment.measurement_sweeps,
+        binsize: assignment.binsize,
+        base_seed: assignment.base_seed,
+        progress_interval: config.run_config.progress_interval,
+        checkpoint_interval: config.run_config.checkpoint_interval,
+    };
+    let seed = RngStreamKey::new(assignment.base_seed)
+        .with_task(assignment.task_id as u64)
+        .with_run(assignment.run_id)
+        .with_replica(rank_in_run as u64)
+        .with_phase(RngPhase::Initialization)
+        .seed();
+
+    #[cfg(feature = "hdf5")]
+    let checkpoint = checkpoint_path(
+        &config.job_dir,
+        assignment.task_id,
+        assignment.run_id,
+        rank_in_run,
+        config.ranks_per_run,
+    );
+    #[cfg(feature = "hdf5")]
+    let checkpoint_staging = checkpoint_staging_path(&checkpoint);
+    #[cfg(feature = "hdf5")]
+    let checkpoint_commit =
+        checkpoint_commit_path(&config.job_dir, assignment.task_id, assignment.run_id);
+
+    #[cfg(feature = "hdf5")]
+    let checkpoint_decision: CheckpointDecision = {
+        let root_decision = if rank_in_run == 0 {
+            Some(read_checkpoint_decision(
+                &checkpoint_commit,
+                assignment,
+                config.ranks_per_run,
+            ))
+        } else {
+            None
+        };
+        broadcast_json(run_comm, 0, root_decision.as_ref())?
+    };
+
+    #[cfg(feature = "hdf5")]
+    let run_result: Result<Run<MC, R>, CarloError> = match &checkpoint_decision {
+        CheckpointDecision::Error(message) => Err(CarloError::CheckpointCorrupted {
+            detail: message.clone(),
+        }),
+        CheckpointDecision::Fresh => (|| {
+            remove_if_exists(&checkpoint)?;
+            remove_if_exists(&checkpoint_staging)?;
+            Run::new(
+                &assignment.params,
+                TaskId::new(assignment.task_id),
+                RunId::new(assignment.run_id),
+                &run_config,
+                seed,
+            )
+        })(),
+        CheckpointDecision::Resume(commit) => {
+            match Run::<MC, R>::read_checkpoint(&checkpoint, &assignment.params, &run_config, seed)
+            {
+                Ok(Some(run)) => {
+                    if run.sweep_count() != commit.sweep_count
+                        || run.sweeps_done() != commit.measurement_sweeps_done
+                    {
+                        Err(CarloError::CheckpointCorrupted {
+                            detail: format!(
+                                "rank {rank_in_run} checkpoint counters ({}, {}) do not match committed counters ({}, {})",
+                                run.sweep_count(),
+                                run.sweeps_done(),
+                                commit.sweep_count,
+                                commit.measurement_sweeps_done
+                            ),
+                        })
+                    } else {
+                        Ok(run)
+                    }
+                }
+                Ok(None) => Err(CarloError::CheckpointCorrupted {
+                    detail: format!(
+                        "committed checkpoint is missing for rank {rank_in_run}: {}",
+                        checkpoint.display()
+                    ),
+                }),
+                Err(error) => Err(error),
+            }
+        }
+    };
+
+    #[cfg(not(feature = "hdf5"))]
+    let run_result: Result<Run<MC, R>, CarloError> = Run::new(
+        &assignment.params,
+        TaskId::new(assignment.task_id),
+        RunId::new(assignment.run_id),
+        &run_config,
+        seed,
+    );
+
+    let run_result = run_result.and_then(|run| {
+        if run.task_id().as_usize() != assignment.task_id
+            || run.run_id().as_u64() != assignment.run_id
+            || run.target_sweeps() != assignment.measurement_sweeps
+        {
+            return Err(CarloError::CheckpointCorrupted {
+                detail: format!(
+                    "checkpoint identity/target ({}, {}, {}) does not match assignment ({}, {}, {})",
+                    run.task_id().as_usize(),
+                    run.run_id().as_u64(),
+                    run.target_sweeps(),
+                    assignment.task_id,
+                    assignment.run_id,
+                    assignment.measurement_sweeps
+                ),
+            });
+        }
+        Ok(run)
+    });
+
+    // Construction/checkpoint errors must be turned into a group-wide decision
+    // before any rank enters model collectives.
+    let local_init_ok = if run_result.is_ok() { 1i32 } else { 0i32 };
+    let mut init_ok = vec![0i32; run_comm.size() as usize];
+    run_comm.all_gather_into(&local_init_ok, init_ok.as_mut_slice());
+    if init_ok.iter().any(|&ok| ok == 0) {
+        return match run_result {
+            Err(error) => Err(error),
+            Ok(_) => Err(MpiError::Worker(
+                "another rank failed while constructing or restoring the distributed run".into(),
+            )
+            .into()),
+        };
+    }
+    let mut run = run_result?;
+
+    #[allow(unused_mut)]
+    let mut limits = TimeLimits::from_start(config.checkpoint_time, config.run_time, job_started);
+    #[allow(unused_mut)]
+    let mut last_checkpoint_sweep = run.sweep_count();
+    let poll_sweeps = config.run_config.progress_interval.max(1).min(10_000);
+
+    loop {
+        for _ in 0..poll_sweeps {
+            if run.is_complete() {
+                break;
+            }
+            if run_comm.size() == 1 {
+                run.step();
+            } else {
+                run.step_with_comm(run_comm);
+            }
+        }
+
+        let mut control = [0u64; 2]; // action: 0=continue, 1=complete, 2=interrupt
+        if rank_in_run == 0 {
+            control[0] = if run.is_complete() {
+                1
+            } else if limits.should_finish() {
+                2
+            } else {
+                0
+            };
+            let sweep_checkpoint_due = config.run_config.checkpoint_interval > 0
+                && run.sweep_count().saturating_sub(last_checkpoint_sweep)
+                    >= config.run_config.checkpoint_interval;
+            control[1] = if limits.should_checkpoint() || sweep_checkpoint_due || control[0] == 2 {
+                1
+            } else {
+                0
+            };
+        }
+        run_comm
+            .process_at_rank(0)
+            .broadcast_into(control.as_mut_slice());
+
+        if control[1] != 0 && !run.is_complete() {
+            #[cfg(feature = "hdf5")]
+            {
+                write_group_checkpoint(
+                    run_comm,
+                    &mut run,
+                    &checkpoint,
+                    &checkpoint_staging,
+                    &checkpoint_commit,
+                    assignment,
+                    config.ranks_per_run,
+                )?;
+                limits.reset_checkpoint();
+                last_checkpoint_sweep = run.sweep_count();
+            }
+        }
+
+        match control[0] {
+            0 => continue,
+            1 => {
+                let results = run.finalize(assignment.base_seed);
+                return if rank_in_run == 0 {
+                    Ok(GroupOutcome::Completed(results))
+                } else {
+                    // Followers discard rank-local results. A genuinely
+                    // distributed model should reduce global observables in
+                    // measure_with_comm before they are recorded on rank 0.
+                    Ok(GroupOutcome::Completed(Results::new()))
+                };
+            }
+            2 => return Ok(GroupOutcome::Interrupted),
+            other => {
+                return Err(MpiError::InvalidTransition(format!(
+                    "unknown run-group control action {other}"
+                ))
+                .into())
+            }
+        }
+    }
+}
+
+#[cfg(feature = "hdf5")]
+fn read_checkpoint_decision(
+    commit_path: &Path,
+    assignment: &Assignment,
+    ranks_per_run: i32,
+) -> CheckpointDecision {
+    if !commit_path.exists() {
+        return CheckpointDecision::Fresh;
+    }
+    let result = (|| {
+        let bytes = fs::read(commit_path).map_err(|error| error.to_string())?;
+        let commit: CheckpointCommit =
+            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        if commit.task_id != assignment.task_id
+            || commit.run_id != assignment.run_id
+            || commit.ranks_per_run != ranks_per_run
+        {
+            return Err(format!(
+                "checkpoint commit {:?} does not match task {}, run {}, ranks_per_run {}",
+                commit, assignment.task_id, assignment.run_id, ranks_per_run
+            ));
+        }
+        Ok(commit)
+    })();
+    match result {
+        Ok(commit) => CheckpointDecision::Resume(commit),
+        Err(message) => CheckpointDecision::Error(message),
+    }
+}
+
+#[cfg(feature = "hdf5")]
+fn remove_if_exists(path: &Path) -> Result<(), CarloError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(CarloError::IoError {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+#[cfg(feature = "hdf5")]
+fn cleanup_checkpoint_artifacts(config: &DistributedConfig, task_id: usize, run_id: u64) {
+    let _ = remove_if_exists(&checkpoint_commit_path(&config.job_dir, task_id, run_id));
+    for rank_in_run in 0..config.ranks_per_run {
+        let path = checkpoint_path(
+            &config.job_dir,
+            task_id,
+            run_id,
+            rank_in_run,
+            config.ranks_per_run,
+        );
+        let _ = remove_if_exists(&path);
+        let _ = remove_if_exists(&checkpoint_staging_path(&path));
+    }
+}
+
+#[cfg(feature = "hdf5")]
+fn write_group_checkpoint<MC, R>(
+    run_comm: &SimpleCommunicator,
+    run: &mut Run<MC, R>,
+    checkpoint: &Path,
+    staging: &Path,
+    commit_path: &Path,
+    assignment: &Assignment,
+    ranks_per_run: i32,
+) -> Result<(), CarloError>
+where
+    MC: MonteCarlo<Rng = R> + FromParams<Rng = R>,
+    R: MpiRng,
+{
+    let rank_in_run = run_comm.rank();
+
+    // Invalidate the previous generation before any final file is replaced.
+    // A crash from this point until the new marker is written causes a clean
+    // restart from the assignment, never a mixed-rank resume.
+    let mut marker_removed = 1i32;
+    let mut marker_error = None;
+    if rank_in_run == 0 {
+        if let Err(error) = remove_if_exists(commit_path) {
+            marker_removed = 0;
+            marker_error = Some(error);
+        }
+    }
+    run_comm
+        .process_at_rank(0)
+        .broadcast_into(&mut marker_removed);
+    if marker_removed == 0 {
+        return match marker_error {
+            Some(error) => Err(error),
+            None => Err(CarloError::InvalidConfig {
+                field: "checkpoint".into(),
+                reason: "run-group leader could not invalidate the previous checkpoint".into(),
+            }),
+        };
+    }
+
+    let local_write: Result<(), CarloError> = (|| {
+        if let Some(parent) = staging.parent() {
+            fs::create_dir_all(parent).map_err(|source| CarloError::IoError {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        remove_if_exists(staging)?;
+        run.write_checkpoint(staging)
+    })();
+    let local_write_ok = if local_write.is_ok() { 1i32 } else { 0i32 };
+    let mut write_ok = vec![0i32; run_comm.size() as usize];
+    run_comm.all_gather_into(&local_write_ok, write_ok.as_mut_slice());
+    if write_ok.iter().any(|&ok| ok == 0) {
+        let _ = remove_if_exists(staging);
+        return match local_write {
+            Err(error) => Err(error),
+            Ok(()) => Err(CarloError::InvalidConfig {
+                field: "checkpoint".into(),
+                reason: "another MPI rank failed to stage its checkpoint".into(),
+            }),
+        };
+    }
+
+    let local_publish: Result<(), CarloError> = (|| {
+        remove_if_exists(checkpoint)?;
+        fs::rename(staging, checkpoint).map_err(|source| CarloError::IoError {
+            path: checkpoint.to_path_buf(),
+            source,
+        })
+    })();
+    let local_publish_ok = if local_publish.is_ok() { 1i32 } else { 0i32 };
+    let mut publish_ok = vec![0i32; run_comm.size() as usize];
+    run_comm.all_gather_into(&local_publish_ok, publish_ok.as_mut_slice());
+    if publish_ok.iter().any(|&ok| ok == 0) {
+        return match local_publish {
+            Err(error) => Err(error),
+            Ok(()) => Err(CarloError::InvalidConfig {
+                field: "checkpoint".into(),
+                reason: "another MPI rank failed to publish its checkpoint".into(),
+            }),
+        };
+    }
+
+    let mut commit_written = 1i32;
+    let mut commit_error = None;
+    if rank_in_run == 0 {
+        let commit = CheckpointCommit {
+            task_id: assignment.task_id,
+            run_id: assignment.run_id,
+            ranks_per_run,
+            sweep_count: run.sweep_count(),
+            measurement_sweeps_done: run.sweeps_done(),
+        };
+        if let Err(error) = write_json_atomic(commit_path, &commit) {
+            commit_written = 0;
+            commit_error = Some(error);
+        }
+    }
+    run_comm
+        .process_at_rank(0)
+        .broadcast_into(&mut commit_written);
+    if commit_written == 0 {
+        return match commit_error {
+            Some(error) => Err(error),
+            None => Err(CarloError::InvalidConfig {
+                field: "checkpoint".into(),
+                reason: "run-group leader could not commit the checkpoint generation".into(),
+            }),
+        };
+    }
+
+    Ok(())
 }
 
 // ============================================================================
-// Backward Compatibility
+// Backward-compatible configuration and entry point
 // ============================================================================
 
-/// Old MpiRunConfig for backwards compatibility
 #[derive(Debug, Clone)]
 pub struct MpiRunConfig {
     pub run_config: RunConfig,
@@ -1214,104 +1747,6 @@ impl Default for MpiRunConfig {
     }
 }
 
-/// Old MpiBackend for backwards compatibility
-#[cfg(feature = "mpi")]
-pub struct MpiBackend {
-    rank: i32,
-    size: i32,
-    ranks_per_run: i32,
-}
-
-#[cfg(feature = "mpi")]
-impl MpiBackend {
-    pub fn new() -> Result<Self, CarloError> {
-        Self::with_ranks_per_run(1)
-    }
-
-    pub fn with_ranks_per_run(ranks_per_run: i32) -> Result<Self, CarloError> {
-        let universe = mpi::initialize().ok_or(MpiError::InitFailed)?;
-        let world = universe.world();
-        Ok(Self {
-            rank: world.rank(),
-            size: world.size(),
-            ranks_per_run,
-        })
-    }
-
-    pub fn rank(&self) -> i32 {
-        self.rank
-    }
-    pub fn size(&self) -> i32 {
-        self.size
-    }
-    pub fn is_controller(&self) -> bool {
-        self.rank == 0
-    }
-    pub fn is_run_leader(&self) -> bool {
-        self.is_controller() || ((self.rank - 1) % self.ranks_per_run == 0)
-    }
-    pub fn num_workers(&self) -> i32 {
-        self.size - 1
-    }
-    pub fn num_parallel_runs(&self) -> i32 {
-        self.num_workers() / self.ranks_per_run
-    }
-    pub fn run_group(&self) -> i32 {
-        if self.is_controller() {
-            0
-        } else {
-            1 + (self.rank - 1) / self.ranks_per_run
-        }
-    }
-    pub fn rank_in_run(&self) -> i32 {
-        if self.is_controller() {
-            0
-        } else {
-            (self.rank - 1) % self.ranks_per_run
-        }
-    }
-    pub fn ranks_per_run(&self) -> i32 {
-        self.ranks_per_run
-    }
-}
-
-#[cfg(feature = "mpi")]
-impl Default for MpiBackend {
-    fn default() -> Self {
-        Self::new().expect("Failed to create MPI backend")
-    }
-}
-
-#[cfg(feature = "mpi")]
-impl Clone for MpiBackend {
-    fn clone(&self) -> Self {
-        Self {
-            rank: self.rank,
-            size: self.size,
-            ranks_per_run: self.ranks_per_run,
-        }
-    }
-}
-
-#[cfg(feature = "mpi")]
-impl super::Backend for MpiBackend {
-    type Rng = rand_xoshiro::Xoshiro256PlusPlus;
-
-    fn spawn_tasks<F>(&self, _: usize, _: u64, _: F)
-    where
-        F: Fn(usize, &mut Self::Rng) + Sync,
-    {
-        unimplemented!("MpiBackend uses run_distributed")
-    }
-
-    fn barrier(&self) {
-        if let Some(universe) = mpi::initialize() {
-            universe.world().barrier();
-        }
-    }
-}
-
-/// Scheduler task for backwards compatibility
 #[derive(Debug, Clone)]
 pub struct SchedulerTask {
     pub target_sweeps: u64,
@@ -1333,24 +1768,25 @@ impl SchedulerTask {
             max_scheduled_runs: u64::MAX,
         }
     }
+
     pub fn is_done(&self) -> bool {
         self.sweeps >= self.target_sweeps
     }
 }
 
-/// Old run_distributed entry point
 #[cfg(feature = "mpi")]
 pub fn run_distributed_compat<
-    MC: FromParams + MonteCarlo<Rng = rand_xoshiro::Xoshiro256PlusPlus>,
+    MC: FromParams<Rng = rand_xoshiro::Xoshiro256PlusPlus>
+        + MonteCarlo<Rng = rand_xoshiro::Xoshiro256PlusPlus>,
 >(
     config: MpiRunConfig,
 ) -> Result<Vec<Results>, CarloError> {
-    let tasks: Vec<TaskSpec> = config
+    let tasks = config
         .tasks
         .iter()
         .enumerate()
-        .map(|(i, params)| TaskSpec {
-            id: i,
+        .map(|(id, params)| TaskSpec {
+            id,
             target_sweeps: config.run_config.measurement_sweeps,
             thermalization: config.run_config.thermalization_sweeps,
             params: params.clone(),
@@ -1367,16 +1803,63 @@ pub fn run_distributed_compat<
     })
 }
 
-// Non-MPI stub
-#[cfg(not(feature = "mpi"))]
-pub struct MpiBackend;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[cfg(not(feature = "mpi"))]
-impl MpiBackend {
-    pub fn new() -> Result<Self, CarloError> {
-        Err(CarloError::InvalidConfig {
-            field: "mpi".into(),
-            reason: "MPI feature not enabled".into(),
-        })
+    fn task(id: usize, target_sweeps: u64) -> TaskSpec {
+        TaskSpec {
+            id,
+            target_sweeps,
+            thermalization: 10,
+            params: Params::new(),
+        }
+    }
+
+    #[test]
+    fn task_stream_reservations_never_overschedule() {
+        let base = RunConfig {
+            measurement_sweeps: 100,
+            binsize: 4,
+            ..RunConfig::default()
+        };
+        let mut stream = TaskStream::with_parallelism(vec![task(7, 10)], 3).unwrap();
+        let mut assignments = Vec::new();
+        while let Some(assignment) = stream.next_assignment(&base) {
+            assignments.push(assignment);
+        }
+        assert_eq!(
+            assignments
+                .iter()
+                .map(|assignment| assignment.measurement_sweeps)
+                .sum::<u64>(),
+            10
+        );
+        assert!(assignments
+            .iter()
+            .all(|assignment| assignment.measurement_sweeps > 0));
+    }
+
+    #[test]
+    fn interrupted_assignment_releases_its_reservation() {
+        let base = RunConfig {
+            binsize: 2,
+            ..RunConfig::default()
+        };
+        let mut stream = TaskStream::with_parallelism(vec![task(3, 8)], 2).unwrap();
+        let first = stream.next_assignment(&base).unwrap();
+        stream
+            .interrupt_assignment(first.task_id, first.measurement_sweeps)
+            .unwrap();
+        let replacement = stream.next_assignment(&base).unwrap();
+        assert_eq!(replacement.measurement_sweeps, first.measurement_sweeps);
+    }
+
+    #[test]
+    fn duplicate_task_ids_are_rejected() {
+        let error = TaskStream::with_parallelism(vec![task(1, 1), task(1, 2)], 1)
+            .err()
+            .expect("duplicate ids must fail");
+        assert!(error.to_string().contains("duplicate MPI task id"));
     }
 }

@@ -46,6 +46,10 @@ pub struct Context<R: Rng + SeedableRng> {
     /// Measurement collector.
     measurements: Measurements,
 
+    /// Optional namespace prepended to observable names. This is transient
+    /// scheduler state used by algorithms such as parallel tempering.
+    measurement_namespace: Option<String>,
+
     /// Current sweep count.
     sweep_count: u64,
 
@@ -74,6 +78,7 @@ impl<R: Rng + SeedableRng> Context<R> {
         Self {
             rng,
             measurements: Measurements::new(100), // default binsize
+            measurement_namespace: None,
             sweep_count: 0,
             thermalization_sweeps,
             thermalized: false,
@@ -89,6 +94,7 @@ impl<R: Rng + SeedableRng> Context<R> {
         Self {
             rng,
             measurements: Measurements::new(binsize),
+            measurement_namespace: None,
             sweep_count: 0,
             thermalization_sweeps,
             thermalized: false,
@@ -109,31 +115,56 @@ impl<R: Rng + SeedableRng> Context<R> {
         self.measurements.finalize_complex()
     }
 
+    fn qualified_measurement_name(&self, name: &str) -> String {
+        match &self.measurement_namespace {
+            Some(namespace) if !namespace.is_empty() => format!("{namespace}/{name}"),
+            _ => name.to_string(),
+        }
+    }
+
+    /// Set a transient namespace for subsequently recorded observables.
+    ///
+    /// Schedulers should clear the namespace after the scoped operation. It is
+    /// deliberately not persisted in checkpoints.
+    pub fn set_measurement_namespace(&mut self, namespace: Option<String>) {
+        self.measurement_namespace = namespace;
+    }
+
+    /// Return the current transient measurement namespace.
+    pub fn measurement_namespace(&self) -> Option<&str> {
+        self.measurement_namespace.as_deref()
+    }
+
     /// Record an observable sample (scalar).
     pub fn measure(&mut self, name: &str, value: f64) {
-        self.measurements.add_sample(name, value);
+        let name = self.qualified_measurement_name(name);
+        self.measurements.add_sample(&name, value);
     }
 
     /// Record an array observable sample.
     /// The shape is determined by the first call for each observable name.
     pub fn measure_array(&mut self, name: &str, values: &[f64]) {
-        self.measurements.add_sample_array(name, values);
+        let name = self.qualified_measurement_name(name);
+        self.measurements.add_sample_array(&name, values);
     }
 
     /// Record a complex observable sample.
     /// Real and imaginary parts are accumulated separately.
     pub fn measure_complex(&mut self, name: &str, re: f64, im: f64) {
-        self.measurements.add_sample_complex(name, re, im);
+        let name = self.qualified_measurement_name(name);
+        self.measurements.add_sample_complex(&name, re, im);
     }
 
     /// Register a scalar observable with custom binsize.
     pub fn register_observable(&mut self, name: &str, binsize: usize) {
-        self.measurements.register(name, binsize);
+        let name = self.qualified_measurement_name(name);
+        self.measurements.register(&name, binsize);
     }
 
     /// Register an array observable with custom binsize and shape.
     pub fn register_observable_with_shape(&mut self, name: &str, binsize: usize, shape: &[usize]) {
-        self.measurements.register_array(name, binsize, shape);
+        let name = self.qualified_measurement_name(name);
+        self.measurements.register_array(&name, binsize, shape);
     }
 
     /// Check if thermalized.
@@ -254,6 +285,7 @@ impl<R: Rng + SeedableRng> Context<R> {
         Self {
             rng,
             measurements: Measurements::new(binsize),
+            measurement_namespace: None,
             sweep_count: checkpoint.sweep_count,
             thermalization_sweeps: checkpoint.thermalization_sweeps,
             thermalized: checkpoint.thermalized
@@ -373,6 +405,7 @@ impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
         Ok(Self {
             rng,
             measurements,
+            measurement_namespace: None,
             sweep_count,
             thermalization_sweeps,
             thermalized: sweep_count >= thermalization_sweeps,

@@ -272,7 +272,12 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
         self.sweeps_done >= self.target_sweeps
     }
 
-    /// Get remaining sweeps.
+    /// Get configured measurement-sweep target.
+    pub fn target_sweeps(&self) -> u64 {
+        self.target_sweeps
+    }
+
+    /// Get remaining measurement sweeps.
     pub fn remaining_sweeps(&self) -> u64 {
         self.target_sweeps.saturating_sub(self.sweeps_done)
     }
