@@ -9,8 +9,8 @@
 //!
 //! - [`lattice`] — continuous-time interaction-expansion directed-loop QMC on
 //!   arbitrary CSR adjacency graphs, with arbitrary quantum spin `S`.
-//! - [`impurity`] — continuous-time retarded-interaction wormhole QMC for
-//!   quantum impurity models.
+//! - [`impurity`] — retarded-interaction wormhole QMC and a continuous-time
+//!   cluster solver for longitudinal spin-boson impurities.
 //!
 //! Discrete-time prototypes and the old chain-specific Heisenberg adapter have
 //! been removed. Lattice geometry is now data, not an algorithm type.
@@ -28,13 +28,18 @@ pub use impurity::{
     connected_susceptibility,
     correlation_sigma_z,
     integrated_sigma_z,
+    measure_cluster_observables,
     measure_observables,
+    register_cluster_evaluables,
     register_connected_susceptibility,
     register_impurity_evaluables,
     // Core types
     BasisTransform,
     Bath,
     BathSample,
+    ClusterDiagnostics,
+    ClusterUpdateReport,
+    ContinuousTimeClusterEngine,
     CouplingNormalization,
     ImpurityError,
     ImpurityModel,
@@ -43,10 +48,15 @@ pub use impurity::{
     ImpurityQmc,
     InteractionChannel,
     KernelDirection,
+    LongitudinalClusterObservables,
+    LongitudinalSpinBosonClusterQmc,
+    LongitudinalSpinBosonModel,
+    LongitudinalWorldline,
     LoopStartPolicy,
     PairFlipGauge,
     PhysicalAxis,
     PowerLawBath,
+    RetardedKernel,
     SignFreeMetadata,
     SignFreeReport,
     SingleModeBath,

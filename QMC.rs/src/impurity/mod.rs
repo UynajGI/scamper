@@ -1,10 +1,10 @@
 //! Quantum-impurity solvers built on QMC.rs and Carlo.rs.
 //!
-//! The production implementation currently provided here is the spin-boson
-//! retarded-interaction wormhole solver.  The module boundary is intentionally
-//! wider than that solver so fermionic, bosonic, and Bose-Fermi impurity
-//! backends can be added without forcing them into the same configuration or
-//! update representation.
+//! The production implementations currently provided here are the spin-boson
+//! retarded-interaction wormhole solver and the longitudinal continuous-time
+//! cluster solver. The module boundary is intentionally wider than either
+//! representation so fermionic, bosonic, and Bose-Fermi impurity backends can
+//! be added without forcing them into the same configuration or update type.
 
 use thiserror::Error;
 
@@ -24,7 +24,7 @@ pub enum ImpurityError {
     },
 
     /// A sampled operator configuration violates worldline invariants.
-    #[error("invalid wormhole configuration: {0}")]
+    #[error("invalid impurity configuration: {0}")]
     InvalidConfiguration(String),
 
     /// The directed loop exceeded its safety limit without closing.
@@ -60,6 +60,12 @@ pub use core::operators::{
     BasisTransform, PhysicalAxis, SignedAxis, VertexKind, A_IN, A_OUT, B_IN, B_OUT, LEGS_PER_VERTEX,
 };
 pub use spin_boson::bath::{Bath, BathSample, PowerLawBath, SingleModeBath, TabulatedBath};
+pub use spin_boson::cluster::{
+    build_segments, measure_cluster_observables, register_cluster_evaluables, ClusterDiagnostics,
+    ClusterUpdateReport, ContinuousTimeClusterEngine, LongitudinalClusterObservables,
+    LongitudinalSpinBosonClusterQmc, LongitudinalSpinBosonModel, LongitudinalWorldline,
+    RetardedKernel, TimeInterval, WorldlineSegment,
+};
 pub use spin_boson::model::{
     CouplingNormalization, ImpurityModel, ImpurityModelKind, InteractionChannel,
 };
@@ -85,6 +91,10 @@ pub mod error {
 pub mod bath {
     pub use super::core::kernel::KernelDirection;
     pub use super::spin_boson::bath::*;
+}
+
+pub mod cluster {
+    pub use super::spin_boson::cluster::*;
 }
 
 pub mod model {
