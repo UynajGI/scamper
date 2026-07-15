@@ -11,7 +11,7 @@ use crate::{CarloError, Results};
 /// Requires the `hdf5` feature; returns [`CarloError::InvalidConfig`] otherwise.
 #[cfg(feature = "hdf5")]
 pub fn save_hdf5(results: &Results, path: &Path) -> Result<(), CarloError> {
-    use hdf5::{File, H5};
+    use hdf5::File;
 
     let file = File::create(path)?;
 
@@ -19,23 +19,45 @@ pub fn save_hdf5(results: &Results, path: &Path) -> Result<(), CarloError> {
     let obs_group = file.create_group("observables")?;
     for (name, est) in results.estimates() {
         let obs = obs_group.create_group(name)?;
-        obs.write_scalar("mean", &est.mean)?;
-        obs.write_scalar("stderr", &est.stderr)?;
-        obs.write_scalar("autocorr_time", &est.autocorr_time)?;
-        obs.write_scalar("n_bins", &(est.n_bins as i64))?;
+
+        let ds = obs.new_dataset::<f64>().create("mean")?;
+        ds.write_scalar(&est.mean)?;
+        let ds = obs.new_dataset::<f64>().create("stderr")?;
+        ds.write_scalar(&est.stderr)?;
+        let ds = obs.new_dataset::<f64>().create("autocorr_time")?;
+        ds.write_scalar(&est.autocorr_time)?;
+        let ds = obs.new_dataset::<i64>().create("n_bins")?;
+        ds.write_scalar(&(est.n_bins as i64))?;
     }
 
     // Write metadata
     let meta = results.metadata();
     let meta_group = file.create_group("metadata")?;
-    meta_group.write_scalar("version", &meta.version)?;
-    meta_group.write_scalar("timestamp", &meta.timestamp.to_rfc3339())?;
-    meta_group.write_scalar("base_seed", &(meta.base_seed as i64))?;
-    meta_group.write_scalar(
-        "thermalization_sweeps",
-        &(meta.thermalization_sweeps as i64),
-    )?;
-    meta_group.write_scalar("measurement_sweeps", &(meta.measurement_sweeps as i64))?;
+
+    // Store strings as byte arrays
+    let version_bytes = meta.version.as_bytes();
+    meta_group
+        .new_dataset_builder()
+        .with_data(version_bytes)
+        .create("version")?;
+
+    let timestamp_bytes = meta.timestamp.to_rfc3339();
+    let timestamp_bytes = timestamp_bytes.as_bytes();
+    meta_group
+        .new_dataset_builder()
+        .with_data(timestamp_bytes)
+        .create("timestamp")?;
+
+    let ds = meta_group.new_dataset::<i64>().create("base_seed")?;
+    ds.write_scalar(&(meta.base_seed as i64))?;
+    let ds = meta_group
+        .new_dataset::<i64>()
+        .create("thermalization_sweeps")?;
+    ds.write_scalar(&(meta.thermalization_sweeps as i64))?;
+    let ds = meta_group
+        .new_dataset::<i64>()
+        .create("measurement_sweeps")?;
+    ds.write_scalar(&(meta.measurement_sweeps as i64))?;
 
     Ok(())
 }

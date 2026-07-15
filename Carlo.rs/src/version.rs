@@ -36,11 +36,9 @@ impl Version {
     /// Write version to HDF5 group.
     pub fn write_hdf5(&self, group: &mut hdf5::Group) -> Result<(), crate::CarloError> {
         group
-            .create_dataset_simple(
-                "carlo_version",
-                &[self.carlo_version.len() as u64],
-                &self.carlo_version.as_bytes(),
-            )
+            .new_dataset_builder()
+            .with_data(self.carlo_version.as_bytes())
+            .create("carlo_version")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "version".into(),
                 reason: format!("Cannot write carlo_version: {}", e),
@@ -48,15 +46,20 @@ impl Version {
 
         if let Some(ref mc_ver) = self.mc_version {
             group
-                .create_dataset_simple("mc_version", &[mc_ver.len() as u64], &mc_ver.as_bytes())
+                .new_dataset_builder()
+                .with_data(mc_ver.as_bytes())
+                .create("mc_version")
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "version".into(),
                     reason: format!("Cannot write mc_version: {}", e),
                 })?;
         }
 
+        let rng_bytes = self.rng_version.to_ne_bytes();
         group
-            .create_dataset_simple("rng_version", &[1], &self.rng_version.to_ne_bytes())
+            .new_dataset_builder()
+            .with_data(&rng_bytes)
+            .create("rng_version")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "version".into(),
                 reason: format!("Cannot write rng_version: {}", e),
@@ -73,7 +76,7 @@ impl Version {
                 field: "version".into(),
                 reason: format!("Cannot read carlo_version: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u8>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "version".into(),
                 reason: format!("Cannot parse carlo_version: {}", e),
@@ -85,19 +88,26 @@ impl Version {
             .dataset("mc_version")
             .ok()
             .and_then(|ds| ds.read_1d::<u8>().ok())
-            .map(|bytes| String::from_utf8_lossy(&bytes).to_string());
+            .map(|bytes| String::from_utf8_lossy(&bytes.to_vec()).to_string());
 
-        let rng_version: u64 = group
+        let rng_bytes: Vec<u8> = group
             .dataset("rng_version")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "version".into(),
                 reason: format!("Cannot read rng_version: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u8>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "version".into(),
                 reason: format!("Cannot parse rng_version: {}", e),
-            })?[0];
+            })?
+            .to_vec();
+
+        // Reconstruct u64 from NE bytes
+        let mut arr = [0u8; 8];
+        let len = rng_bytes.len().min(8);
+        arr[..len].copy_from_slice(&rng_bytes[..len]);
+        let rng_version = u64::from_ne_bytes(arr);
 
         Ok(Self {
             carlo_version,

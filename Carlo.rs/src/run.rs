@@ -374,7 +374,9 @@ where
                 })?;
 
         version_group
-            .create_dataset_simple("carlo_version", &[1], &env!("CARGO_PKG_VERSION"))
+            .new_dataset_builder()
+            .with_data(env!("CARGO_PKG_VERSION").as_bytes())
+            .create("carlo_version")
             .map_err(|e| CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write carlo_version: {}", e),
@@ -389,7 +391,7 @@ where
                 })?;
 
         // Create rank-specific subgroup (for multi-rank runs)
-        let rank_group = context_group
+        let mut rank_group = context_group
             .create_group(&format!("rank{:04}", 0))
             .map_err(|e| CarloError::InvalidConfig {
                 field: "checkpoint".into(),
@@ -399,12 +401,12 @@ where
         self.context.write_checkpoint_hdf5(&mut rank_group)?;
 
         // Write MC-specific state
-        let mc_group = file
-            .create_group("simulation")
-            .map_err(|e| CarloError::InvalidConfig {
-                field: "checkpoint".into(),
-                reason: format!("Cannot create simulation group: {}", e),
-            })?;
+        let mut mc_group =
+            file.create_group("simulation")
+                .map_err(|e| CarloError::InvalidConfig {
+                    field: "checkpoint".into(),
+                    reason: format!("Cannot create simulation group: {}", e),
+                })?;
 
         self.mc.write_checkpoint(&mut mc_group)?;
 
@@ -417,28 +419,36 @@ where
             })?;
 
         meta_group
-            .create_dataset_simple("task_id", &[1], &(self.task_id.as_usize() as u64))
+            .new_dataset_builder()
+            .with_data(&[self.task_id.as_usize() as u64])
+            .create("task_id")
             .map_err(|e| CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write task_id: {}", e),
             })?;
 
         meta_group
-            .create_dataset_simple("run_id", &[1], &self.run_id.as_u64())
+            .new_dataset_builder()
+            .with_data(&[self.run_id.as_u64()])
+            .create("run_id")
             .map_err(|e| CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write run_id: {}", e),
             })?;
 
         meta_group
-            .create_dataset_simple("sweeps_done", &[1], &self.sweeps_done)
+            .new_dataset_builder()
+            .with_data(&[self.sweeps_done])
+            .create("sweeps_done")
             .map_err(|e| CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write sweeps_done: {}", e),
             })?;
 
         meta_group
-            .create_dataset_simple("target_sweeps", &[1], &self.target_sweeps)
+            .new_dataset_builder()
+            .with_data(&[self.target_sweeps])
+            .create("target_sweeps")
             .map_err(|e| CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write target_sweeps: {}", e),
@@ -459,7 +469,7 @@ where
         path: &Path,
         params: &Params,
         config: &RunConfig,
-        seed: u64,
+        _seed: u64,
     ) -> Result<Option<Self>, CarloError>
     where
         MC: FromParams<Rng = R>,
@@ -489,7 +499,7 @@ where
                 field: "checkpoint".into(),
                 reason: format!("Cannot read task_id: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u64>()
             .map_err(|e| CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse task_id: {}", e),
@@ -501,7 +511,7 @@ where
                 field: "checkpoint".into(),
                 reason: format!("Cannot read run_id: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u64>()
             .map_err(|e| CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse run_id: {}", e),
@@ -513,7 +523,7 @@ where
                 field: "checkpoint".into(),
                 reason: format!("Cannot read sweeps_done: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u64>()
             .map_err(|e| CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse sweeps_done: {}", e),
@@ -525,7 +535,7 @@ where
                 field: "checkpoint".into(),
                 reason: format!("Cannot read target_sweeps: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u64>()
             .map_err(|e| CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse target_sweeps: {}", e),

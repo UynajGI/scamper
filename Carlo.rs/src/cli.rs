@@ -204,8 +204,8 @@ fn cli_merge(job: &JobInfo) -> Result<(), CarloError> {
                     });
 
                     let result_file = task_dir.join("results.json");
-                    let output = serde_json::to_string_pretty(&task_result)
-                        .map_err(|e| CarloError::SerializationError(e))?;
+                    let output =
+                        serde_json::to_string_pretty(&task_result).map_err(CarloError::SerializationError)?;
                     std::fs::write(&result_file, output).map_err(|e| CarloError::IoError {
                         path: result_file,
                         source: e,

@@ -25,17 +25,22 @@ pub trait RngCheckpointHdf5: rand_core::Rng + rand_core::SeedableRng {
 #[cfg(feature = "hdf5")]
 impl RngCheckpointHdf5 for rand_xoshiro::Xoshiro256PlusPlus {
     fn write_checkpoint(&self, group: &mut Group) -> Result<(), crate::CarloError> {
-        // Write type identifier
+        // Write type identifier (stored as byte array)
         group
-            .create_dataset_simple("rng_type", &[1], &RNG_TYPE.as_bytes())
+            .new_dataset_builder()
+            .with_data(RNG_TYPE.as_bytes())
+            .create("rng_type")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write rng_type: {}", e),
             })?;
 
-        // Write version
+        // Write version (stored as NE bytes)
+        let ver_bytes = RNG_VERSION.to_ne_bytes();
         group
-            .create_dataset_simple("rng_version", &[1], &RNG_VERSION.to_ne_bytes())
+            .new_dataset_builder()
+            .with_data(&ver_bytes)
+            .create("rng_version")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write rng_version: {}", e),
@@ -49,11 +54,9 @@ impl RngCheckpointHdf5 for rand_xoshiro::Xoshiro256PlusPlus {
             })?;
 
         group
-            .create_dataset_simple(
-                "rng_state_json",
-                &[state_json.len() as u64],
-                &state_json.as_bytes(),
-            )
+            .new_dataset_builder()
+            .with_data(state_json.as_bytes())
+            .create("rng_state_json")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write rng_state_json: {}", e),
@@ -70,7 +73,7 @@ impl RngCheckpointHdf5 for rand_xoshiro::Xoshiro256PlusPlus {
                 field: "checkpoint".into(),
                 reason: format!("Cannot read rng_type: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u8>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse rng_type: {}", e),
@@ -86,17 +89,22 @@ impl RngCheckpointHdf5 for rand_xoshiro::Xoshiro256PlusPlus {
         }
 
         // Check version
-        let rng_version: u64 = group
+        let ver_bytes: Vec<u8> = group
             .dataset("rng_version")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot read rng_version: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u8>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse rng_version: {}", e),
-            })?[0];
+            })?
+            .to_vec();
+        let mut arr = [0u8; 8];
+        let len = ver_bytes.len().min(8);
+        arr[..len].copy_from_slice(&ver_bytes[..len]);
+        let rng_version = u64::from_ne_bytes(arr);
 
         if rng_version != RNG_VERSION {
             return Err(crate::CarloError::InvalidConfig {
@@ -115,7 +123,7 @@ impl RngCheckpointHdf5 for rand_xoshiro::Xoshiro256PlusPlus {
                 field: "checkpoint".into(),
                 reason: format!("Cannot read rng_state_json: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u8>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse rng_state_json: {}", e),

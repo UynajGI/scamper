@@ -373,12 +373,11 @@ where
                 })?;
 
         for name_result in obs_group.member_names().unwrap_or_default() {
-            if let Ok(obs_name) = name_result {
-                if let Ok(obs) = obs_group.group(&obs_name) {
-                    let state = states.remove(&obs_name);
-                    let new_state = f(&obs_name, &obs, state)?;
-                    states.insert(obs_name, new_state);
-                }
+            let obs_name = name_result;
+            if let Ok(obs) = obs_group.group(&obs_name) {
+                let state = states.remove(&obs_name);
+                let new_state = f(&obs_name, &obs, state)?;
+                states.insert(obs_name, new_state);
             }
         }
     }
@@ -410,8 +409,9 @@ pub fn merge_results_from_files(
     }
 
     // First pass: collect observable types and counts
-    let obs_types: HashMap<String, ObservableType<f64>> =
-        iterate_measfile_observables(filenames, |name, group, state| {
+    let obs_types: HashMap<String, ObservableType<f64>> = iterate_measfile_observables(
+        filenames,
+        |name, group, state: Option<ObservableType<f64>>| {
             let bin_length: u64 = group.dataset("bin_length")?.read_1d::<u64>().map_err(|e| {
                 crate::CarloError::InvalidConfig {
                     field: "hdf5".into(),
@@ -441,28 +441,31 @@ pub fn merge_results_from_files(
                     sample_count.saturating_sub(options.sample_skip),
                 ),
             })
-        })?;
+        },
+    )?;
 
     // Second pass: read actual samples and compute statistics
     let results: HashMap<String, ResultObservable<f64>> = obs_types
         .into_iter()
         .map(|(name, obs_type)| {
             let rebin_len = calc_rebin_length(obs_type.total_sample_count, options.rebin_length);
-            match accumulate_and_compute(&name, &obs_type, filenames, options, rebin_len) {
-                Ok(result) => (name, result),
-                Err(e) => {
-                    tracing::warn!("Failed to compute statistics for {}: {}", name, e);
-                    ResultObservable {
-                        internal_bin_length: obs_type.internal_bin_length,
-                        rebin_length: rebin_len,
-                        mean: ndarray::ArrayD::zeros(obs_type.shape.clone()),
-                        error: ndarray::ArrayD::zeros(obs_type.shape.clone()),
-                        covariance: None,
-                        autocorrelation_time: ndarray::ArrayD::zeros(vec![1]),
-                        rebin_means: ndarray::ArrayD::zeros(obs_type.shape),
+            let result =
+                match accumulate_and_compute(&name, &obs_type, filenames, options, rebin_len) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!("Failed to compute statistics for {}: {}", name, e);
+                        ResultObservable {
+                            internal_bin_length: obs_type.internal_bin_length,
+                            rebin_length: rebin_len,
+                            mean: ndarray::ArrayD::zeros(obs_type.shape.clone()),
+                            error: ndarray::ArrayD::zeros(obs_type.shape.clone()),
+                            covariance: None,
+                            autocorrelation_time: ndarray::ArrayD::zeros(vec![1]),
+                            rebin_means: ndarray::ArrayD::zeros(obs_type.shape),
+                        }
                     }
-                }
-            }
+                };
+            (name, result)
         })
         .collect();
 
@@ -504,13 +507,24 @@ fn accumulate_and_compute(
                 reason: format!("Observable {} not found", name),
             })?;
 
-        let samples: ArrayD<f64> =
-            obs.dataset("samples")?
-                .read()
+        let ds = obs
+            .dataset("samples")
+            .map_err(|e| crate::CarloError::InvalidConfig {
+                field: "hdf5".into(),
+                reason: format!("Cannot open samples dataset for {}: {}", name, e),
+            })?;
+        let shape: Vec<usize> = ds.shape();
+        let data: Vec<f64> =
+            ds.read_raw::<f64>()
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "hdf5".into(),
                     reason: format!("Cannot read samples for {}: {}", name, e),
                 })?;
+        let samples: ArrayD<f64> = ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&shape), data)
+            .map_err(|e| crate::CarloError::InvalidConfig {
+                field: "hdf5".into(),
+                reason: format!("Cannot reconstruct samples array for {}: {}", name, e),
+            })?;
 
         // Accumulate rebin bins from samples
         let n_samples = samples.shape().last().copied().unwrap_or(0);
@@ -543,12 +557,11 @@ fn accumulate_and_compute(
 
     // Compute covariance if requested and observable is multi-component
     let covariance = if options.estimate_covariance
-        && obs_type.shape.len() > 0
+        && !obs_type.shape.is_empty()
         && obs_type.shape.iter().product::<usize>() > 1
     {
         let rebin_bins = state.rebin_bins_array();
-        if rebin_bins.is_some() {
-            let bins_arr = rebin_bins.unwrap();
+        if let Some(bins_arr) = rebin_bins {
             let cov = cov_of_mean(&bins_arr);
             Some(cov)
         } else {
@@ -560,10 +573,14 @@ fn accumulate_and_compute(
 
     // Compute decorrelated autocorrelation time if covariance was computed
     let autocorrelation_time =
-        if options.estimate_covariance && covariance.is_some() && obs_type.shape.len() > 0 {
-            let rebin_bins = state.rebin_bins_array().unwrap();
-            let cov = covariance.as_ref().unwrap();
-            compute_decorrelated_autocorr_time(&rebin_bins, &mu, cov, state.bin_count())
+        if options.estimate_covariance && covariance.is_some() && !obs_type.shape.is_empty() {
+            if let (Some(rebin_bins), Some(cov)) =
+                (state.rebin_bins_array(), covariance.as_ref())
+            {
+                compute_decorrelated_autocorr_time(&rebin_bins, &mu, cov, state.bin_count())
+            } else {
+                autocorrelation_time
+            }
         } else {
             autocorrelation_time
         };

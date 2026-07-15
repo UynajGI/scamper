@@ -548,29 +548,24 @@ impl Accumulator {
             })?;
 
         obs_group
-            .create_dataset_simple("bin_length", &[1], &(self.bin_capacity as u64))
+            .new_dataset_builder()
+            .with_data(&[self.bin_capacity as u64])
+            .create("bin_length")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "hdf5".into(),
                 reason: format!("Cannot write bin_length: {}", e),
             })?;
 
         // Write shape
-        if self.shape.is_empty() {
-            obs_group
-                .create_dataset_simple("shape", &[0], &[0u64])
-                .map_err(|e| crate::CarloError::InvalidConfig {
-                    field: "hdf5".into(),
-                    reason: format!("Cannot write shape: {}", e),
-                })?;
-        } else {
-            let shape_u64: Vec<u64> = self.shape.iter().map(|&x| x as u64).collect();
-            obs_group
-                .create_dataset_simple("shape", &[shape_u64.len() as u64], &shape_u64)
-                .map_err(|e| crate::CarloError::InvalidConfig {
-                    field: "hdf5".into(),
-                    reason: format!("Cannot write shape: {}", e),
-                })?;
-        }
+        let shape_u64: Vec<u64> = self.shape.iter().map(|&x| x as u64).collect();
+        obs_group
+            .new_dataset_builder()
+            .with_data(&shape_u64)
+            .create("shape")
+            .map_err(|e| crate::CarloError::InvalidConfig {
+                field: "hdf5".into(),
+                reason: format!("Cannot write shape: {}", e),
+            })?;
 
         // Write bins as 2D array: (flat_size, n_bins)
         if !self.bins.is_empty() {
@@ -581,7 +576,9 @@ impl Accumulator {
             }
 
             obs_group
-                .create_dataset_simple("samples", &[(flat_size * self.bins.len()) as u64], &data)
+                .new_dataset_builder()
+                .with_data(&data)
+                .create("samples")
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "hdf5".into(),
                     reason: format!("Cannot write samples: {}", e),
@@ -599,7 +596,7 @@ impl Accumulator {
                 field: "hdf5".into(),
                 reason: format!("Cannot read bin_length: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u64>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "hdf5".into(),
                 reason: format!("Cannot parse bin_length: {}", e),
@@ -628,7 +625,7 @@ impl Accumulator {
                     field: "hdf5".into(),
                     reason: format!("Cannot read samples: {}", e),
                 })?
-                .read_1d()
+                .read_1d::<f64>()
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "hdf5".into(),
                     reason: format!("Cannot parse samples: {}", e),
@@ -646,7 +643,7 @@ impl Accumulator {
                     field: "hdf5".into(),
                     reason: format!("Cannot read samples: {}", e),
                 })?
-                .read_1d()
+                .read_1d::<f64>()
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "hdf5".into(),
                     reason: format!("Cannot parse samples: {}", e),
@@ -689,7 +686,9 @@ impl Accumulator {
 
         // Write bin capacity
         obs_group
-            .create_dataset_simple("bin_capacity", &[1], &(self.bin_capacity as u64))
+            .new_dataset_builder()
+            .with_data(&[self.bin_capacity as u64])
+            .create("bin_capacity")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write bin_capacity: {}", e),
@@ -698,7 +697,9 @@ impl Accumulator {
         // Write shape
         let shape_u64: Vec<u64> = self.shape.iter().map(|&x| x as u64).collect();
         obs_group
-            .create_dataset_simple("shape", &[shape_u64.len() as u64], &shape_u64)
+            .new_dataset_builder()
+            .with_data(&shape_u64)
+            .create("shape")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write shape: {}", e),
@@ -713,7 +714,9 @@ impl Accumulator {
             }
 
             obs_group
-                .create_dataset_simple("bins", &[data.len() as u64], &data)
+                .new_dataset_builder()
+                .with_data(&data)
+                .create("bins")
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "checkpoint".into(),
                     reason: format!("Cannot write bins: {}", e),
@@ -727,18 +730,18 @@ impl Accumulator {
             let partial_mean: Vec<f64> = self.current_bin.iter().map(|x| x * scale).collect();
 
             obs_group
-                .create_dataset_simple(
-                    "partial_bin_mean",
-                    &[partial_mean.len() as u64],
-                    &partial_mean,
-                )
+                .new_dataset_builder()
+                .with_data(&partial_mean)
+                .create("partial_bin_mean")
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "checkpoint".into(),
                     reason: format!("Cannot write partial_bin_mean: {}", e),
                 })?;
 
             obs_group
-                .create_dataset_simple("partial_bin_filling", &[1], &(self.current_filling as u64))
+                .new_dataset_builder()
+                .with_data(&[self.current_filling as u64])
+                .create("partial_bin_filling")
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "checkpoint".into(),
                     reason: format!("Cannot write partial_bin_filling: {}", e),
@@ -747,7 +750,9 @@ impl Accumulator {
 
         // Write total count
         obs_group
-            .create_dataset_simple("total_count", &[1], &(self.total_count as u64))
+            .new_dataset_builder()
+            .with_data(&[self.total_count as u64])
+            .create("total_count")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write total_count: {}", e),
@@ -758,13 +763,13 @@ impl Accumulator {
 
     /// Read accumulator checkpoint (includes partial bin).
     pub fn read_checkpoint_hdf5(group: &Group) -> Result<Self, crate::CarloError> {
-        let bin_capacity: u64 = group
+        let bin_capacity: usize = group
             .dataset("bin_capacity")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot read bin_capacity: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u64>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse bin_capacity: {}", e),
@@ -793,7 +798,7 @@ impl Accumulator {
 
         let bins: Vec<Array1<f64>> = if let Ok(ds) = group.dataset("bins") {
             let data: Vec<f64> = ds
-                .read_1d()
+                .read_1d::<f64>()
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "checkpoint".into(),
                     reason: format!("Cannot parse bins: {}", e),
@@ -818,13 +823,13 @@ impl Accumulator {
             Vec::new()
         };
 
-        let total_count: u64 = group
+        let total_count: usize = group
             .dataset("total_count")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot read total_count: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u64>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse total_count: {}", e),
@@ -833,7 +838,7 @@ impl Accumulator {
         // Restore partial bin if present
         let (current_bin, current_filling) = if let Ok(ds) = group.dataset("partial_bin_mean") {
             let partial_mean: Vec<f64> = ds
-                .read_1d()
+                .read_1d::<f64>()
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "checkpoint".into(),
                     reason: format!("Cannot parse partial_bin_mean: {}", e),
@@ -846,7 +851,7 @@ impl Accumulator {
                     field: "checkpoint".into(),
                     reason: format!("Cannot read partial_bin_filling: {}", e),
                 })?
-                .read_1d()
+                .read_1d::<u64>()
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "checkpoint".into(),
                     reason: format!("Cannot parse partial_bin_filling: {}", e),
@@ -878,7 +883,7 @@ impl Accumulator {
 impl Measurements {
     /// Write all measurements to HDF5 file.
     pub fn write_hdf5(&self, file: &mut Group) -> Result<(), crate::CarloError> {
-        let obs_group =
+        let mut obs_group =
             file.create_group("observables")
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "hdf5".into(),
@@ -911,22 +916,21 @@ impl Measurements {
                     reason: format!("Cannot list members: {}", e),
                 })?
         {
-            if let Ok(name) = name_result {
-                if let Ok(obs) = obs_group.group(&name) {
-                    // Check if this is a complex observable
-                    let is_complex = obs
-                        .dataset("is_complex")
-                        .ok()
-                        .and_then(|ds| ds.read_1d::<u64>().ok().map(|arr| arr[0] == 1))
-                        .unwrap_or(false);
+            let name = name_result;
+            if let Ok(obs) = obs_group.group(&name) {
+                // Check if this is a complex observable
+                let is_complex = obs
+                    .dataset("is_complex")
+                    .ok()
+                    .and_then(|ds| ds.read_1d::<u64>().ok().map(|arr| arr[0] == 1))
+                    .unwrap_or(false);
 
-                    if is_complex {
-                        if let Ok(acc) = ComplexAccumulator::read_hdf5(&obs) {
-                            measurements.complex_observables.insert(name, acc);
-                        }
-                    } else if let Ok(acc) = Accumulator::read_hdf5(&obs) {
-                        measurements.observables.insert(name, acc);
+                if is_complex {
+                    if let Ok(acc) = ComplexAccumulator::read_hdf5(&obs) {
+                        measurements.complex_observables.insert(name, acc);
                     }
+                } else if let Ok(acc) = Accumulator::read_hdf5(&obs) {
+                    measurements.observables.insert(name, acc);
                 }
             }
         }
@@ -937,14 +941,16 @@ impl Measurements {
     pub fn write_checkpoint_hdf5(&self, group: &mut Group) -> Result<(), crate::CarloError> {
         // Write default binsize
         group
-            .create_dataset_simple("default_binsize", &[1], &(self.default_binsize as u64))
+            .new_dataset_builder()
+            .with_data(&[self.default_binsize as u64])
+            .create("default_binsize")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write default_binsize: {}", e),
             })?;
 
         // Write real observables with full state
-        let obs_group =
+        let mut obs_group =
             group
                 .create_group("observables")
                 .map_err(|e| crate::CarloError::InvalidConfig {
@@ -957,7 +963,7 @@ impl Measurements {
         }
 
         // Write complex observables with full state
-        let complex_group = group.create_group("complex_observables").map_err(|e| {
+        let mut complex_group = group.create_group("complex_observables").map_err(|e| {
             crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot create complex_observables group: {}", e),
@@ -973,13 +979,13 @@ impl Measurements {
 
     /// Read measurements checkpoint (includes partial bins).
     pub fn read_checkpoint_hdf5(group: &Group) -> Result<Self, crate::CarloError> {
-        let default_binsize: u64 = group
+        let default_binsize: usize = group
             .dataset("default_binsize")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot read default_binsize: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u64>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse default_binsize: {}", e),
@@ -996,11 +1002,10 @@ impl Measurements {
                 })?;
 
         for name_result in obs_group.member_names().unwrap_or_default() {
-            if let Ok(name) = name_result {
-                if let Ok(obs) = obs_group.group(&name) {
-                    if let Ok(acc) = Accumulator::read_checkpoint_hdf5(&obs) {
-                        measurements.observables.insert(name, acc);
-                    }
+            let name = name_result;
+            if let Ok(obs) = obs_group.group(&name) {
+                if let Ok(acc) = Accumulator::read_checkpoint_hdf5(&obs) {
+                    measurements.observables.insert(name, acc);
                 }
             }
         }
@@ -1008,11 +1013,10 @@ impl Measurements {
         // Read complex observables
         if let Ok(complex_group) = group.group("complex_observables") {
             for name_result in complex_group.member_names().unwrap_or_default() {
-                if let Ok(name) = name_result {
-                    if let Ok(obs) = complex_group.group(&name) {
-                        if let Ok(acc) = ComplexAccumulator::read_hdf5(&obs) {
-                            measurements.complex_observables.insert(name, acc);
-                        }
+                let name = name_result;
+                if let Ok(obs) = complex_group.group(&name) {
+                    if let Ok(acc) = ComplexAccumulator::read_hdf5(&obs) {
+                        measurements.complex_observables.insert(name, acc);
                     }
                 }
             }
@@ -1035,7 +1039,9 @@ impl ComplexAccumulator {
             })?;
 
         obs_group
-            .create_dataset_simple("bin_length", &[1], &(self.bin_capacity as u64))
+            .new_dataset_builder()
+            .with_data(&[self.bin_capacity as u64])
+            .create("bin_length")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "hdf5".into(),
                 reason: format!("Cannot write bin_length: {}", e),
@@ -1043,7 +1049,9 @@ impl ComplexAccumulator {
 
         // Mark as complex observable
         obs_group
-            .create_dataset_simple("is_complex", &[1], &1u64)
+            .new_dataset_builder()
+            .with_data(&[1u64])
+            .create("is_complex")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "hdf5".into(),
                 reason: format!("Cannot write is_complex: {}", e),
@@ -1052,13 +1060,17 @@ impl ComplexAccumulator {
         // Write real part samples
         if !self.re_bins.is_empty() {
             obs_group
-                .create_dataset_simple("samples_re", &[self.re_bins.len() as u64], &self.re_bins)
+                .new_dataset_builder()
+                .with_data(&self.re_bins)
+                .create("samples_re")
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "hdf5".into(),
                     reason: format!("Cannot write samples_re: {}", e),
                 })?;
             obs_group
-                .create_dataset_simple("samples_im", &[self.im_bins.len() as u64], &self.im_bins)
+                .new_dataset_builder()
+                .with_data(&self.im_bins)
+                .create("samples_im")
                 .map_err(|e| crate::CarloError::InvalidConfig {
                     field: "hdf5".into(),
                     reason: format!("Cannot write samples_im: {}", e),
@@ -1076,7 +1088,7 @@ impl ComplexAccumulator {
                 field: "hdf5".into(),
                 reason: format!("Cannot read bin_length: {}", e),
             })?
-            .read_1d()
+            .read_1d::<u64>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "hdf5".into(),
                 reason: format!("Cannot parse bin_length: {}", e),
@@ -1088,7 +1100,7 @@ impl ComplexAccumulator {
                 field: "hdf5".into(),
                 reason: format!("Cannot read samples_re: {}", e),
             })?
-            .read_1d()
+            .read_1d::<f64>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "hdf5".into(),
                 reason: format!("Cannot parse samples_re: {}", e),
@@ -1101,7 +1113,7 @@ impl ComplexAccumulator {
                 field: "hdf5".into(),
                 reason: format!("Cannot read samples_im: {}", e),
             })?
-            .read_1d()
+            .read_1d::<f64>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "hdf5".into(),
                 reason: format!("Cannot parse samples_im: {}", e),

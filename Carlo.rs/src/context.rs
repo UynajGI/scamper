@@ -326,26 +326,28 @@ use crate::RngCheckpointHdf5;
 impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
     /// Write context state to HDF5 group (includes RNG state).
     pub fn write_checkpoint_hdf5(&self, group: &mut Group) -> Result<(), crate::CarloError> {
-        // Write sweep state
+        // Write sweep state (stored as NE bytes)
+        let sweep_bytes = self.sweep_count.to_ne_bytes();
         group
-            .create_dataset_simple("sweep_count", &[1], &self.sweep_count.to_ne_bytes())
+            .new_dataset_builder()
+            .with_data(&sweep_bytes)
+            .create("sweep_count")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write sweep_count: {}", e),
             })?;
+        let therm_bytes = self.thermalization_sweeps.to_ne_bytes();
         group
-            .create_dataset_simple(
-                "thermalization_sweeps",
-                &[1],
-                &self.thermalization_sweeps.to_ne_bytes(),
-            )
+            .new_dataset_builder()
+            .with_data(&therm_bytes)
+            .create("thermalization_sweeps")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot write thermalization_sweeps: {}", e),
             })?;
 
         // Write RNG state
-        let rng_group =
+        let mut rng_group =
             group
                 .create_group("rng")
                 .map_err(|e| crate::CarloError::InvalidConfig {
@@ -355,7 +357,7 @@ impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
         self.rng.write_checkpoint(&mut rng_group)?;
 
         // Write measurements
-        let meas_group =
+        let mut meas_group =
             group
                 .create_group("measurements")
                 .map_err(|e| crate::CarloError::InvalidConfig {
@@ -370,31 +372,41 @@ impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
     /// Read context from HDF5 group (includes RNG state).
     pub fn read_checkpoint_hdf5_full(
         group: &Group,
-        binsize: usize,
+        _binsize: usize,
     ) -> Result<Self, crate::CarloError> {
-        let sweep_count = group
+        let sweep_bytes: Vec<u8> = group
             .dataset("sweep_count")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot read sweep_count: {}", e),
             })?
-            .read_1d::<u64>()
+            .read_1d::<u8>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse sweep_count: {}", e),
-            })?[0];
+            })?
+            .to_vec();
+        let mut arr = [0u8; 8];
+        let len = sweep_bytes.len().min(8);
+        arr[..len].copy_from_slice(&sweep_bytes[..len]);
+        let sweep_count = u64::from_ne_bytes(arr);
 
-        let thermalization_sweeps = group
+        let therm_bytes: Vec<u8> = group
             .dataset("thermalization_sweeps")
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot read thermalization_sweeps: {}", e),
             })?
-            .read_1d::<u64>()
+            .read_1d::<u8>()
             .map_err(|e| crate::CarloError::InvalidConfig {
                 field: "checkpoint".into(),
                 reason: format!("Cannot parse thermalization_sweeps: {}", e),
-            })?[0];
+            })?
+            .to_vec();
+        let mut arr = [0u8; 8];
+        let len = therm_bytes.len().min(8);
+        arr[..len].copy_from_slice(&therm_bytes[..len]);
+        let thermalization_sweeps = u64::from_ne_bytes(arr);
 
         // Read RNG
         let rng_group = group
