@@ -183,3 +183,67 @@ fn test_accumulator_autocorr_time_from_bins() {
         "Autocorrelation should be non-negative, got {autocorr}"
     );
 }
+
+#[test]
+fn test_complex_accumulator_rebin_means() {
+    let mut acc = ComplexAccumulator::new(2);
+    // Bin 0: (1+2i), (3+4i) → re_mean=2.0, im_mean=3.0
+    acc.add(1.0, 2.0);
+    acc.add(3.0, 4.0);
+    // Bin 1: (5+6i), (7+8i) → re_mean=6.0, im_mean=7.0
+    acc.add(5.0, 6.0);
+    acc.add(7.0, 8.0);
+
+    let (re_means, im_means) = acc.rebin_means();
+    assert_eq!(re_means.len(), 2);
+    assert!((re_means[0] - 2.0).abs() < 1e-10);
+    assert!((re_means[1] - 6.0).abs() < 1e-10);
+    assert!((im_means[0] - 3.0).abs() < 1e-10);
+    assert!((im_means[1] - 7.0).abs() < 1e-10);
+}
+
+#[test]
+fn test_complex_result_to_estimate_roundtrip() {
+    let original_est = ComplexEstimate::new(
+        Estimate {
+            mean: 1.5,
+            stderr: 0.1,
+            autocorr_time: 1.2,
+            n_bins: 10,
+        },
+        Estimate {
+            mean: 2.5,
+            stderr: 0.2,
+            autocorr_time: 1.5,
+            n_bins: 10,
+        },
+    );
+
+    let result = ComplexResult::from_estimate(&original_est);
+    let restored_est = result.to_estimate();
+
+    assert!((restored_est.re.mean - original_est.re.mean).abs() < 1e-10);
+    assert!((restored_est.im.mean - original_est.im.mean).abs() < 1e-10);
+    assert_eq!(restored_est.re.n_bins, original_est.re.n_bins);
+    assert_eq!(restored_est.im.n_bins, original_est.im.n_bins);
+}
+
+#[test]
+fn test_complex_estimate_from_bins() {
+    let est = ComplexEstimate::new(
+        Estimate::from_bins(&[1.0, 2.0, 3.0]),
+        Estimate::from_bins(&[4.0, 5.0, 6.0]),
+    );
+
+    assert!((est.re.mean - 2.0).abs() < 1e-10);
+    assert!((est.im.mean - 5.0).abs() < 1e-10);
+    assert_eq!(est.re.n_bins, 3);
+    assert_eq!(est.im.n_bins, 3);
+}
+
+#[test]
+fn test_complex_value_new() {
+    let cv = carlo_rs::ComplexValue::new(3.0, 4.0);
+    assert!((cv.re - 3.0).abs() < 1e-10);
+    assert!((cv.im - 4.0).abs() < 1e-10);
+}

@@ -1,16 +1,22 @@
+//! Thread-parallel backend using Rayon.
+
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 
 use super::Backend;
 use crate::{RngPhase, RngStreamKey};
 
-/// Rayon-based parallel backend (Phase 1).
+/// Rayon-based parallel backend.
+///
+/// Tasks are distributed across a Rayon thread pool. Each task receives a
+/// domain-separated RNG derived from the base seed and task index.
 #[derive(Clone)]
 pub struct RayonBackend {
     _n_threads: usize,
 }
 
 impl RayonBackend {
+    /// Create a backend with `n_threads` worker threads.
     pub fn new(n_threads: usize) -> Self {
         Self {
             _n_threads: n_threads,

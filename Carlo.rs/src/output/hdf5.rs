@@ -1,7 +1,14 @@
+//! HDF5 serialization for simulation results.
+//!
+//! Requires the `hdf5` feature. Without it, [`save_hdf5`] returns an error.
+
 use std::path::Path;
 
 use crate::{CarloError, Results};
 
+/// Write `results` to an HDF5 file at `path`.
+///
+/// Requires the `hdf5` feature; returns [`CarloError::InvalidConfig`] otherwise.
 #[cfg(feature = "hdf5")]
 pub fn save_hdf5(results: &Results, path: &Path) -> Result<(), CarloError> {
     use hdf5::{File, H5};
@@ -33,6 +40,7 @@ pub fn save_hdf5(results: &Results, path: &Path) -> Result<(), CarloError> {
     Ok(())
 }
 
+/// Stub returned when the `hdf5` feature is not enabled.
 #[cfg(not(feature = "hdf5"))]
 pub fn save_hdf5(_results: &Results, _path: &Path) -> Result<(), CarloError> {
     Err(CarloError::InvalidConfig {

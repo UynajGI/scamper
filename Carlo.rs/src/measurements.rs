@@ -47,6 +47,7 @@ pub struct ComplexValue {
 }
 
 impl ComplexValue {
+    /// Create a complex observable sample from real and imaginary parts.
     pub fn new(re: f64, im: f64) -> Self {
         Self { re, im }
     }
@@ -441,6 +442,7 @@ pub struct Measurements {
 }
 
 impl Measurements {
+    /// Create a collector with `default_binsize` for auto-registered observables.
     pub fn new(default_binsize: usize) -> Self {
         Self {
             observables: HashMap::new(),

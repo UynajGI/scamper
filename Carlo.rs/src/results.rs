@@ -1,3 +1,5 @@
+//! Simulation result containers and metadata.
+
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -81,6 +83,7 @@ impl Default for Metadata {
 }
 
 impl Results {
+    /// Create an empty result set with default metadata.
     pub fn new() -> Self {
         Self {
             estimates: HashMap::new(),

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::SystemTime;
 
+/// Parse a duration string in `[[[DD-]HH:]MM:]SS` format.
 pub fn parse_duration(s: &str) -> Result<Duration, CarloError> {
     let re = regex::Regex::new(
         r"^((((?P<days>\d+)-)?(?P<hours>\d+):)?(?P<minutes>\d+):)?(?P<seconds>\d+)$",
@@ -29,6 +30,9 @@ pub fn parse_duration(s: &str) -> Result<Duration, CarloError> {
         + Duration::from_secs(conv("days") * 86400))
 }
 
+/// Estimate remaining wall-clock time from the `SLURM_JOB_END_TIME` environment variable.
+///
+/// Returns `remaining * grace_factor` when the variable is set, otherwise `default`.
 pub fn run_time_from_slurm(grace_factor: f64, default: Duration) -> Duration {
     if let Some(end_time_str) = std::env::var_os("SLURM_JOB_END_TIME") {
         if let Ok(end_time_unix) = end_time_str.to_string_lossy().parse::<i64>() {
@@ -40,6 +44,7 @@ pub fn run_time_from_slurm(grace_factor: f64, default: Duration) -> Duration {
     default
 }
 
+/// Metadata and directory layout for a multi-task simulation job.
 #[derive(Debug, Clone)]
 pub struct JobInfo {
     name: String,
@@ -48,6 +53,7 @@ pub struct JobInfo {
     mc_type: String,
     #[allow(dead_code)]
     rng_type: String,
+    /// Parameter sets that make up this job.
     pub tasks: Vec<TaskInfo>,
     checkpoint_time: Duration,
     run_time: Duration,
@@ -56,6 +62,7 @@ pub struct JobInfo {
 }
 
 impl JobInfo {
+    /// Construct job metadata from a job file path, model/RNG type names, and task list.
     pub fn new(
         job_file: &str,
         mc_type: &str,
@@ -82,21 +89,26 @@ impl JobInfo {
         }
     }
 
+    /// Directory for a specific task's output files.
     pub fn task_dir(&self, task: &TaskInfo) -> std::path::PathBuf {
         self.dir.join(task.name())
     }
+    /// Human-readable job name (derived from the job file name).
     pub fn name(&self) -> &str {
         &self.name
     }
+    /// Directory containing all task subdirectories (default `<job_file>/.data`).
     pub fn dir(&self) -> &std::path::PathBuf {
         &self.dir
     }
+    /// Whether enough wall-clock time has elapsed since `last_checkpoint`.
     pub fn is_checkpoint_time(&self, last_checkpoint: DateTime<Utc>) -> bool {
         Utc::now()
             >= last_checkpoint
                 + chrono::Duration::from_std(self.checkpoint_time)
                     .expect("checkpoint_time duration out of range")
     }
+    /// Whether the job's total wall-clock budget has been exceeded since `start`.
     pub fn is_end_time(&self, start: DateTime<Utc>) -> bool {
         Utc::now()
             >= start

@@ -4,7 +4,9 @@ use carlo_rs::{
 use rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-struct TestMC;
+struct TestMC {
+    value: f64,
+}
 
 impl MonteCarlo for TestMC {
     type Rng = Xoshiro256PlusPlus;
@@ -13,7 +15,7 @@ impl MonteCarlo for TestMC {
 
 impl FromParams for TestMC {
     fn from_params(_params: &Params, _rng: &mut Self::Rng) -> Result<Self, CarloError> {
-        Ok(TestMC)
+        Ok(TestMC { value: 0.0 })
     }
 }
 
@@ -63,7 +65,7 @@ fn test_run_step() {
 fn test_run_from_context() {
     let rng = Xoshiro256PlusPlus::seed_from_u64(42);
     let context = Context::new(rng, 100);
-    let mc = TestMC;
+    let mc = TestMC { value: 0.0 };
     let run: Run<TestMC, Xoshiro256PlusPlus> = Run::from_context(context, mc);
     assert_eq!(run.sweep_count(), 0);
 }
@@ -166,4 +168,139 @@ fn test_run_mc_access() {
 
     // Test MC access
     let _mc = run.mc();
+}
+
+// ── Additional run lifecycle tests ────────────────────────────────────────
+
+#[test]
+fn test_run_finalize() {
+    let params = Params::new();
+    let config = RunConfig {
+        measurement_sweeps: 10,
+        thermalization_sweeps: 0,
+        binsize: 5,
+        base_seed: 42,
+        ..Default::default()
+    };
+    let mut run: Run<TestMC, Xoshiro256PlusPlus> =
+        Run::new(&params, TaskId::new(0), RunId::new(1), &config, 42)
+            .expect("Failed to create run");
+
+    run.run(10);
+    let results = run.finalize(42);
+    assert!(results.metadata().measurement_sweeps == 10);
+    assert_eq!(results.metadata().base_seed, 42);
+}
+
+#[test]
+fn test_run_finalize_with_mc() {
+    let params = Params::new();
+    let config = RunConfig {
+        measurement_sweeps: 5,
+        thermalization_sweeps: 0,
+        binsize: 5,
+        ..Default::default()
+    };
+    let mut run: Run<TestMC, Xoshiro256PlusPlus> =
+        Run::new(&params, TaskId::new(0), RunId::new(1), &config, 42)
+            .expect("Failed to create run");
+
+    run.run(5);
+    let (results, mc) = run.finalize_with_mc(42);
+    assert!(results.metadata().measurement_sweeps == 5);
+    assert!((mc.value - 0.0).abs() < 1e-10);
+}
+
+#[test]
+fn test_run_from_parts() {
+    let rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let context = Context::new_with_binsize(rng, 0, 10);
+    let mc = TestMC { value: 1.0 };
+    let config = RunConfig {
+        measurement_sweeps: 50,
+        thermalization_sweeps: 0,
+        binsize: 10,
+        ..Default::default()
+    };
+    let run: Run<TestMC, Xoshiro256PlusPlus> =
+        Run::from_parts(context, mc, TaskId::new(2), RunId::new(3), config);
+    assert_eq!(run.task_id().as_usize(), 2);
+    assert_eq!(run.run_id().as_u64(), 3);
+    assert_eq!(run.target_sweeps(), 50);
+}
+
+#[test]
+fn test_run_target_sweeps() {
+    let params = Params::new();
+    let config = RunConfig {
+        measurement_sweeps: 777,
+        thermalization_sweeps: 10,
+        binsize: 10,
+        ..Default::default()
+    };
+    let run: Run<TestMC, Xoshiro256PlusPlus> =
+        Run::new(&params, TaskId::new(0), RunId::new(0), &config, 42)
+            .expect("Failed to create run");
+    assert_eq!(run.target_sweeps(), 777);
+}
+
+#[test]
+fn test_run_mc_mut() {
+    let params = Params::new();
+    let config = RunConfig::default();
+    let mut run: Run<TestMC, Xoshiro256PlusPlus> =
+        Run::new(&params, TaskId::new(0), RunId::new(1), &config, 42)
+            .expect("Failed to create run");
+
+    run.mc_mut().value = 42.0;
+    assert!((run.mc().value - 42.0).abs() < 1e-10);
+}
+
+#[test]
+fn test_run_timing_observables_recorded() {
+    let params = Params::new();
+    let config = RunConfig {
+        measurement_sweeps: 10,
+        thermalization_sweeps: 0,
+        binsize: 5,
+        ..Default::default()
+    };
+    let mut run: Run<TestMC, Xoshiro256PlusPlus> =
+        Run::new(&params, TaskId::new(0), RunId::new(1), &config, 42)
+            .expect("Failed to create run");
+
+    run.run(10);
+    let results = run.finalize(42);
+
+    assert!(results.get("_ll_sweep_time").is_some());
+    assert!(results.get("_ll_measure_time").is_some());
+}
+
+#[test]
+fn test_run_zero_measurement_sweeps() {
+    let params = Params::new();
+    let config = RunConfig {
+        measurement_sweeps: 0,
+        thermalization_sweeps: 0,
+        binsize: 10,
+        ..Default::default()
+    };
+    let run: Run<TestMC, Xoshiro256PlusPlus> =
+        Run::new(&params, TaskId::new(0), RunId::new(1), &config, 42)
+            .expect("Failed to create run");
+    assert!(run.is_complete());
+}
+
+#[test]
+fn test_runid_taskid() {
+    let rid = RunId::new(42);
+    assert_eq!(rid.as_u64(), 42);
+    let rid2 = RunId::new(42);
+    assert_eq!(rid, rid2);
+
+    let tid = TaskId::new(7);
+    assert_eq!(tid.as_usize(), 7);
+    let tid2 = TaskId::new(7);
+    assert_eq!(tid, tid2);
+    assert_ne!(tid, TaskId::new(8));
 }

@@ -76,7 +76,10 @@ pub trait ParallelTemperingCompatible: MonteCarlo {
     /// Returns log(W(x, p') / W(x, p)).
     fn log_weight_ratio(&self, param: &str, new_value: f64) -> f64;
 
-    /// Update the model to use a new value for the given parameter.
+    /// Switch the model to use `new_value` for `param`.
+    ///
+    /// Called after an accepted replica exchange; the implementation must
+    /// update all internal state that depends on the tempered parameter.
     fn change_parameter(&mut self, param: &str, new_value: f64);
 }
 

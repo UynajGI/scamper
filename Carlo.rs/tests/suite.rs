@@ -8,6 +8,8 @@
 
 #[path = "unit/accumulator.rs"]
 mod accumulator;
+#[path = "unit/clock_phase.rs"]
+mod clock_phase;
 #[path = "unit/complex.rs"]
 mod complex;
 #[path = "unit/context.rs"]
@@ -26,6 +28,8 @@ mod merge;
 mod params;
 #[path = "unit/results.rs"]
 mod results;
+#[path = "unit/version.rs"]
+mod version;
 
 // ── Integration ───────────────────────────────────────────────────────────
 
@@ -58,6 +62,8 @@ mod workflow;
 mod job;
 #[path = "io/merge_io.rs"]
 mod merge_io;
+#[path = "io/output_io.rs"]
+mod output_io;
 
 // ── MPI (feature-gated) ───────────────────────────────────────────────────
 

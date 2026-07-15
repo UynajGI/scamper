@@ -7,33 +7,57 @@
 use rand_core::SeedableRng;
 
 /// Logical lifecycle domain used when deriving a stream.
+///
+/// Distinct phases ensure that RNG draws made during thermalization,
+/// measurement, exchange, and checkpointing never collide, even when
+/// task counts or thread assignments change between runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u64)]
 pub enum RngPhase {
+    /// Model construction or restored state before the first scheduled sweep.
     #[default]
     Initialization = 0,
+    /// Warmup sweeps.
     Thermalization = 1,
+    /// Production sweeps with measurement accumulation.
     Measurement = 2,
+    /// Parallel-tempering replica exchange.
     Exchange = 3,
+    /// Checkpoint write/read.
     Checkpoint = 4,
+    /// Per-task streams spawned by a parallel backend.
     BackendTask = 5,
+    /// Post-run finalization.
     Finished = 6,
 }
 
 /// Complete identity of a deterministic random-number stream.
+///
+/// Fields are combined through domain-separated SplitMix64 rounds in
+/// [`seed()`](RngStreamKey::seed) so that changing any single field
+/// produces a statistically independent stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RngStreamKey {
+    /// Global seed shared by all tasks in the job.
     pub base_seed: u64,
+    /// Parameter-set index within a job.
     pub task_id: u64,
+    /// Repetition index within a task.
     pub run_id: u64,
+    /// Parallel-tempering chain index.
     pub chain_id: u64,
+    /// Replica index for independent replicas within a chain.
     pub replica_id: u64,
+    /// Physical thread / worker index.
     pub thread_id: u64,
+    /// Lifecycle phase of the simulation.
     pub phase: RngPhase,
+    /// Sub-stream counter for fine-grained stream splitting.
     pub substream: u64,
 }
 
 impl RngStreamKey {
+    /// Create a key with only `base_seed` set; all other fields default to zero.
     #[inline]
     pub const fn new(base_seed: u64) -> Self {
         Self {
@@ -48,42 +72,49 @@ impl RngStreamKey {
         }
     }
 
+    /// Set the task ID.
     #[inline]
     pub const fn with_task(mut self, value: u64) -> Self {
         self.task_id = value;
         self
     }
 
+    /// Set the run ID.
     #[inline]
     pub const fn with_run(mut self, value: u64) -> Self {
         self.run_id = value;
         self
     }
 
+    /// Set the parallel-tempering chain ID.
     #[inline]
     pub const fn with_chain(mut self, value: u64) -> Self {
         self.chain_id = value;
         self
     }
 
+    /// Set the replica ID.
     #[inline]
     pub const fn with_replica(mut self, value: u64) -> Self {
         self.replica_id = value;
         self
     }
 
+    /// Set the thread ID.
     #[inline]
     pub const fn with_thread(mut self, value: u64) -> Self {
         self.thread_id = value;
         self
     }
 
+    /// Set the lifecycle phase.
     #[inline]
     pub const fn with_phase(mut self, value: RngPhase) -> Self {
         self.phase = value;
         self
     }
 
+    /// Set the sub-stream counter.
     #[inline]
     pub const fn with_substream(mut self, value: u64) -> Self {
         self.substream = value;

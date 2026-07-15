@@ -1,13 +1,21 @@
+//! Typed key-value parameter store for simulation configuration.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Generic parameter container with string keys.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Values are stored as strings internally and parsed on retrieval via
+/// [`get::<T>()`](Params::get). This keeps the container serializable
+/// while allowing callers to read typed values without downstream crates
+/// needing to agree on a schema.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Params {
     values: HashMap<String, String>,
 }
 
 impl Params {
+    /// Create an empty parameter set.
     pub fn new() -> Self {
         Self {
             values: HashMap::new(),

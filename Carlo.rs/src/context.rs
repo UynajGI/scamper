@@ -25,15 +25,22 @@ use crate::{ComplexEstimate, Estimate, Measurements, RunPhase, SimulationClock};
 /// Checkpoint state for serialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextCheckpoint {
+    /// Sweeps completed at checkpoint time.
     pub sweep_count: u64,
+    /// Configured thermalization sweep count.
     pub thermalization_sweeps: u64,
+    /// Whether the warmup boundary has been crossed.
     pub thermalized: bool,
+    /// Explicit lifecycle phase (defaults to `Initialization` for legacy checkpoints).
     #[serde(default)]
     pub phase: RunPhase,
+    /// Algorithm-reported attempted elementary transitions.
     #[serde(default)]
     pub attempted_updates: u64,
+    /// Algorithm-reported accepted or executed transitions.
     #[serde(default)]
     pub accepted_moves: u64,
+    /// Physical/event time advanced by kinetic Monte Carlo kernels.
     #[serde(default)]
     pub event_time: f64,
 }
@@ -229,16 +236,19 @@ impl<R: Rng + SeedableRng> Context<R> {
         assert!(self.event_time.is_finite(), "event-time clock overflowed");
     }
 
+    /// Total number of attempted elementary transitions.
     #[inline]
     pub const fn attempted_updates(&self) -> u64 {
         self.attempted_updates
     }
 
+    /// Total number of accepted or executed transitions.
     #[inline]
     pub const fn accepted_moves(&self) -> u64 {
         self.accepted_moves
     }
 
+    /// Accumulated physical/event time.
     #[inline]
     pub const fn event_time(&self) -> f64 {
         self.event_time
@@ -254,6 +264,7 @@ impl<R: Rng + SeedableRng> Context<R> {
         ]
     }
 
+    /// Snapshot the current context state for serialization.
     pub fn checkpoint_state(&self) -> ContextCheckpoint {
         ContextCheckpoint {
             sweep_count: self.sweep_count,
@@ -266,6 +277,8 @@ impl<R: Rng + SeedableRng> Context<R> {
         }
     }
 
+    /// Reconstruct a context from checkpoint state, inferring the lifecycle
+    /// phase from counters when the checkpoint predates explicit phases.
     pub fn restore_from_checkpoint(checkpoint: ContextCheckpoint, rng: R, binsize: usize) -> Self {
         // Old serialized checkpoints do not contain `phase` and deserialize it
         // as `Initialization`. Infer the active phase from their counters while

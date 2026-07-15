@@ -31,11 +31,15 @@ use crate::{
 #[cfg(feature = "hdf5")]
 use hdf5::File as Hdf5File;
 
-/// Internal timing observables (prefixed with _ll_ matching Carlo.jl)
+/// Internal timing observables (prefixed with `_ll_` matching Carlo.jl).
 pub mod timing {
+    /// Wall-clock time of one sweep, in seconds.
     pub const SWEEP_TIME: &str = "_ll_sweep_time";
+    /// Wall-clock time of one measurement pass, in seconds.
     pub const MEASURE_TIME: &str = "_ll_measure_time";
+    /// Wall-clock time to read a checkpoint, in seconds.
     pub const CHECKPOINT_READ_TIME: &str = "_ll_checkpoint_read_time";
+    /// Wall-clock time to write a checkpoint, in seconds.
     pub const CHECKPOINT_WRITE_TIME: &str = "_ll_checkpoint_write_time";
 }
 
@@ -44,10 +48,12 @@ pub mod timing {
 pub struct RunId(pub u64);
 
 impl RunId {
+    /// Create a new run ID.
     pub fn new(id: u64) -> Self {
         Self(id)
     }
 
+    /// Underlying `u64` value.
     pub fn as_u64(&self) -> u64 {
         self.0
     }
@@ -58,10 +64,12 @@ impl RunId {
 pub struct TaskId(pub usize);
 
 impl TaskId {
+    /// Create a new task ID.
     pub fn new(id: usize) -> Self {
         Self(id)
     }
 
+    /// Underlying `usize` value.
     pub fn as_usize(&self) -> usize {
         self.0
     }

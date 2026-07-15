@@ -1,3 +1,5 @@
+//! Statistical estimates for simulation observables.
+
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
