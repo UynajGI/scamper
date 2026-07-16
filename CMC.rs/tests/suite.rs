@@ -37,6 +37,8 @@ mod particle_core;
 mod particle_metropolis;
 #[path = "integration/particle_stage3.rs"]
 mod particle_stage3;
+#[path = "integration/usage.rs"]
+mod usage;
 #[path = "integration/worm_stage5.rs"]
 mod worm_stage5;
 
@@ -60,5 +62,7 @@ mod particles_exact;
 mod statistical_regression;
 #[path = "physics/transition_balance.rs"]
 mod transition_balance;
+#[path = "physics/usage_exact.rs"]
+mod usage_exact;
 #[path = "physics/worm_exact.rs"]
 mod worm_exact;
