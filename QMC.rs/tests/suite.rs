@@ -8,6 +8,10 @@
 
 #[path = "lattice/lattice_continuous.rs"]
 mod lattice_continuous;
+#[path = "lattice/lattice_ed.rs"]
+mod lattice_ed;
+#[path = "lattice/lattice_limits.rs"]
+mod lattice_limits;
 
 // ── Impurity — spin-boson wormhole QMC ───────────────────────────────────
 
