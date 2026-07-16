@@ -56,6 +56,8 @@ mod dynamics_exact;
 mod generalized_exact;
 #[path = "physics/lattice_exact.rs"]
 mod lattice_exact;
+#[path = "physics/long_convergence.rs"]
+mod long_convergence;
 #[path = "physics/observables_exact.rs"]
 mod observables_exact;
 #[path = "physics/particles_exact.rs"]
