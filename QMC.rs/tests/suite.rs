@@ -21,5 +21,7 @@ mod cross_solver;
 mod occupation;
 #[path = "impurity/physics.rs"]
 mod physics;
+#[path = "impurity/rabi_qpt.rs"]
+mod rabi_qpt;
 #[path = "impurity/wormhole.rs"]
 mod wormhole;

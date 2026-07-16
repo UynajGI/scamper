@@ -574,9 +574,7 @@ fn accumulate_and_compute(
     // Compute decorrelated autocorrelation time if covariance was computed
     let autocorrelation_time =
         if options.estimate_covariance && covariance.is_some() && !obs_type.shape.is_empty() {
-            if let (Some(rebin_bins), Some(cov)) =
-                (state.rebin_bins_array(), covariance.as_ref())
-            {
+            if let (Some(rebin_bins), Some(cov)) = (state.rebin_bins_array(), covariance.as_ref()) {
                 compute_decorrelated_autocorr_time(&rebin_bins, &mu, cov, state.bin_count())
             } else {
                 autocorrelation_time

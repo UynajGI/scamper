@@ -141,6 +141,7 @@ fn build_hamiltonian(n_sites: usize, edges: &[(usize, usize, EdgeCoupling)]) -> 
 }
 
 /// Add transverse field -h_x·Sx_i.
+#[allow(dead_code)]
 fn add_transverse_field(h: &mut DenseMatrix, n_sites: usize, i: usize, h_x: f64) {
     let bi = n_sites - 1 - i;
     let dim = h.dim;
