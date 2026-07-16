@@ -76,6 +76,24 @@ diagonal_proposals      per measured sweep
 directed_loops          per measured sweep
 ```
 
+### Validated domain and known limitations
+
+The lattice solver has been validated against exact diagonalization and
+analytic limits for **S = 1/2** sign-problem-free models on bipartite
+graphs (Heisenberg, XXZ, XYZ, TFIM).
+
+**Spin-S > 1/2 caveat:** the directed-loop bounce fallback (used when
+the scattering table has no residual flow for a given entrance channel)
+preserves the worm charge by reflecting it. For S = 1/2 this is always
+a legal spin-flip, but for S > 1/2 it can create an illegal
+raising/lowering operation at the linked leg. Until per-level scattering
+tables replace the bounce fallback, **S > 1/2 results should not be
+trusted** without independent verification.
+
+**Sign-problem-free requirement:** the solver auto-detects and rejects
+frustrated (non-stoquastic) models via the Marshall Z2 gauge solver.
+Fermionic statistics are reserved but not implemented.
+
 ## Continuous-time impurity wormhole QMC
 
 `qmc_rs::impurity` implements a generic retarded-interaction directed-loop
@@ -84,6 +102,22 @@ represented by two-time four-leg vertices. Diagonal updates sample
 `(interaction, omega, tau, tau')`; directed loops convert diagonal and
 spin-flip vertices and can traverse the nonlocal endpoint connection—the
 wormhole move.
+
+### Basis rotation for the Rabi model
+
+To make the retarded-interaction matrix elements sign-free, the wormhole
+solver samples in a **rotated basis** for the `rabi`/`rotated_impurity`
+model: `σz_sampled = σx_physical`, `σx_sampled = -σz_physical`, `σy` fixed
+(see `BasisTransform::rotated_rabi()`). The observable `MagnetizationSigmaZ`
+reported by the wormhole is therefore the **physical ⟨σx⟩**, not ⟨σz⟩.
+
+The occupation solver (`OccupationWorldlineQmc`) does **not** rotate: it
+samples in the physical σz basis. Its `OccupationSigmaZ` is the physical
+⟨σz⟩, and `OccupationSigmaX` is computed from the transfer matrix.
+
+Direct observable comparison between the two solvers requires accounting
+for this basis difference. See `tests/impurity/cross_solver.rs` for the
+full convention reconciliation notes.
 
 ### Implemented impurity models
 

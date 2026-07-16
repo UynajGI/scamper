@@ -15,6 +15,8 @@ mod lattice_limits;
 
 // ── Impurity — spin-boson wormhole QMC ───────────────────────────────────
 
+#[path = "impurity/cross_solver.rs"]
+mod cross_solver;
 #[path = "impurity/occupation.rs"]
 mod occupation;
 #[path = "impurity/physics.rs"]
