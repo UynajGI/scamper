@@ -20,6 +20,8 @@ mod detailed_balance;
 
 // ── Exact — exact enumeration / analytical reference solutions ───────────
 
+#[path = "exact/classic_models.rs"]
+mod classic_models;
 #[path = "exact/onsager.rs"]
 mod onsager;
 
