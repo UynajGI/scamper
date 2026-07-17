@@ -161,8 +161,6 @@ Key patterns:
 - Replica exchange keeps targets/kernels/RNGs/traces fixed to ladder slots and swaps only synchronized states
 - `Nuts<M>` doubles a binary Hamiltonian trajectory until U-turn, divergence or depth exhaustion; multinomial candidate selection in the log domain; optional `StepSizeSearch` (pre-warmup step-size tuning); shares dual averaging and windowed metric adaptation with `StaticHmc<M>`; metric-aware U-turn via `displacement_dot_velocity`; gradient-check validation available
 - `TransitionReport` includes `energy`, `acceptance_statistic`, `tree_depth`, `max_tree_depth_reached` for dynamic-HMC diagnostics; `merge()` uses weighted averaging for `acceptance_statistic` and OR for `max_tree_depth_reached`
-- Default-feature MCMC.rs v0.5 validation passes fmt, check, Clippy and all tests on Rust 1.90.0
-- Optional HDF5 validation is blocked: `hdf5-sys 0.8.1` does not recognize the installed HDF5 1.14.5 header format
 
 
 ## Behavioral Guidelines

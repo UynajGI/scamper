@@ -216,3 +216,66 @@ fn mc_sigma_z_matches_ed_across_crossover() {
         );
     }
 }
+
+/// Verify energy matches ED across the crossover.
+#[test]
+#[ignore]
+fn mc_energy_matches_ed_across_crossover() {
+    let delta = 1.0_f64;
+    let eta = 5.0_f64;
+    let omega = eta * delta;
+    let gc = (omega * delta).sqrt() / 2.0;
+    let cutoff = 60;
+    let beta = (1u64 << 10) as f64;
+
+    let r_values = [0.5_f64, 1.0, 2.0, 3.0, 5.0];
+
+    eprintln!("Energy validation: η={eta}, β={beta}");
+    eprintln!("r      ⟨E⟩_ED      ⟨E⟩_MC      rel_err%");
+
+    for (i, &r) in r_values.iter().enumerate() {
+        let g = r * gc;
+
+        // ED finite-β ⟨E⟩
+        let model_ed =
+            OccupationSpinBosonModel::rabi(delta, vec![CavityMode::new(omega, g, cutoff).unwrap()])
+                .unwrap();
+        let dim = model_ed.basis().dimension();
+        let eigen = SymmetricEigensystem::diagonalize(model_ed.hamiltonian()).unwrap();
+        let ground = eigen.values[0];
+        let mut e_weighted = 0.0;
+        let mut z = 0.0;
+        for k in 0..dim {
+            let boltz = (-beta * (eigen.values[k] - ground)).exp();
+            e_weighted += boltz * eigen.values[k];
+            z += boltz;
+        }
+        let e_ed = e_weighted / z;
+
+        // MC
+        let model_mc =
+            OccupationSpinBosonModel::rabi(delta, vec![CavityMode::new(omega, g, cutoff).unwrap()])
+                .unwrap();
+        let mut sampler = OccupationWorldlineSampler::new(model_mc, beta, 8, 0).unwrap();
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(3000 + i as u64);
+        let mut e_sum = 0.0;
+        let mut samples = 0u64;
+        for sweep in 0..250_000u64 {
+            sampler.sweep(&mut rng).unwrap();
+            if sweep >= 50_000 {
+                let obs = sampler.measure().unwrap();
+                e_sum += obs.energy;
+                samples += 1;
+            }
+        }
+        let e_mc = e_sum / samples as f64;
+
+        let rel_err = 100.0 * (e_mc - e_ed).abs() / e_ed.abs().max(0.01);
+        eprintln!("{r:.2}   {e_ed:.6}   {e_mc:.6}   {rel_err:.2}%");
+
+        assert!(
+            rel_err < 5.0,
+            "r={r:.2}: ⟨E⟩_MC={e_mc:.6}, ⟨E⟩_ED={e_ed:.6}, rel_err={rel_err:.2}%"
+        );
+    }
+}
