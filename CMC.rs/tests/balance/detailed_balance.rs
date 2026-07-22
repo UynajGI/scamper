@@ -6,7 +6,7 @@
 use cmc_rs::{
     build_chain, Algorithm, Bond, BondType, CanonicalEnsemble, CsrLattice, EnergyPatch,
     Hamiltonian, HeatBathable, IsingModel, MetropolisHastingsAcceptance, ProposalStrategy,
-    ProposedSpin, SiteSpinMove, Spin, System, TrialEvaluator, WolffCore,
+    ProposedSpin, SWCore, SimulationPhase, SiteSpinMove, Spin, System, TrialEvaluator, WolffCore,
 };
 use rand::{RngExt, SeedableRng};
 
@@ -523,4 +523,49 @@ fn self_loop_detailed_balance_n2() {
         }
     }
     assert!(max_violation < tolerance);
+}
+
+#[test]
+fn swendsen_wang_detailed_balance_n2() {
+    let n = 2;
+    let beta = 0.5;
+    let lattice = build_chain(n, true);
+    let model = IsingModel::new(1.0);
+    let states = enumerate_ising_states(n);
+    let n_states = states.len();
+
+    let samples_per_state = 50_000;
+    let tolerance = 0.04;
+    let mut counts = vec![vec![0u64; n_states]; n_states];
+    let mut sw = SWCore::new();
+    let mut rng = RngType::seed_from_u64(0xBEEF);
+
+    for (x_idx, x_spins) in states.iter().enumerate() {
+        for _ in 0..samples_per_state {
+            let mut system = build_system(x_spins, lattice.clone(), beta);
+            sw.sweep_with_phase(&mut system, &model, &mut rng, SimulationPhase::Measurement);
+            let y_idx = state_index(&system.spins, &states).unwrap_or(x_idx);
+            counts[x_idx][y_idx] += 1;
+        }
+    }
+
+    let pi: Vec<f64> = states
+        .iter()
+        .map(|s| boltzmann(s, &model, &lattice, beta))
+        .collect();
+    let z: f64 = pi.iter().sum();
+    let pi_norm: Vec<f64> = pi.iter().map(|p| p / z).collect();
+
+    for x in 0..n_states {
+        for y in x + 1..n_states {
+            let p_xy = counts[x][y] as f64 / samples_per_state as f64;
+            let p_yx = counts[y][x] as f64 / samples_per_state as f64;
+            let forward = pi_norm[x] * p_xy;
+            let reverse = pi_norm[y] * p_yx;
+            assert!(
+                (forward - reverse).abs() < tolerance,
+                "SW DB: forward={forward:.6} reverse={reverse:.6}"
+            );
+        }
+    }
 }

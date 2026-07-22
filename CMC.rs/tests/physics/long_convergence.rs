@@ -112,8 +112,7 @@ fn susceptibility_peak_height_grows_with_system_size() {
 // 3. WANG-LANDAU: converged DOS matches exact enumeration
 // ════════════════════════════════════════════════════════════════════════
 
-#[test]
-#[ignore = "long: Wang-Landau DOS convergence on 4×4 Ising (~30 s)"]
+#[test] // was #[ignore] — runs in ~11s, fast enough for CI
 fn wang_landau_dos_matches_exact_on_4x4_ising() {
     let lattice = build_square(4, 4, true);
     let model = IsingModel::new(1.0);

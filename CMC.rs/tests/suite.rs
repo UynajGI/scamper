@@ -52,6 +52,8 @@ mod common;
 mod continuous_spins;
 #[path = "physics/dynamics_exact.rs"]
 mod dynamics_exact;
+#[path = "physics/ergodicity.rs"]
+mod ergodicity;
 #[path = "physics/generalized_exact.rs"]
 mod generalized_exact;
 #[path = "physics/lattice_exact.rs"]
@@ -60,6 +62,8 @@ mod lattice_exact;
 mod long_convergence;
 #[path = "physics/observables_exact.rs"]
 mod observables_exact;
+#[path = "physics/p2_validation.rs"]
+mod p2_validation;
 #[path = "physics/particles_exact.rs"]
 mod particles_exact;
 #[path = "physics/statistical_regression.rs"]
