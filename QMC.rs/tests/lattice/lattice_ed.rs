@@ -532,3 +532,74 @@ fn matrix_exp_recovers_known_dimer_partition_function() {
         "E: computed={computed_energy:.10}, exact={exact_energy:.10}"
     );
 }
+
+// ─── P2.1: Binder cumulant U4 = 1 - ⟨m⁴⟩/(3⟨m²⟩²) vs ED ──────────────
+
+#[test]
+fn three_site_heisenberg_binder_cumulant_matches_ed() {
+    let n_sites = 3;
+    let beta = 3.0;
+    let j = 1.0;
+    let edges_pair = [(0, 1), (1, 2)];
+
+    // ED side
+    let graph = CsrGraph::chain(n_sites, false).expect("graph");
+    let weight = graph.edges().first().unwrap().weight;
+    let edges: Vec<(usize, usize, EdgeCoupling)> = edges_pair
+        .iter()
+        .map(|&(si, sj)| (si, sj, EdgeCoupling::heisenberg(j * weight)))
+        .collect();
+    let h = build_hamiltonian(n_sites, &edges);
+    let rho = h.expm_negative(beta);
+    let z = rho.trace();
+    let dim = 1usize << n_sites;
+
+    // m(s) = Σ_i Sz_i / N for each basis state (diagonal in Sz basis)
+    let mut m2_sum = 0.0;
+    let mut m4_sum = 0.0;
+    for s in 0..dim {
+        let m: f64 = (0..n_sites)
+            .map(|i| ((s >> (n_sites - 1 - i)) & 1) as f64 - 0.5)
+            .sum::<f64>()
+            / n_sites as f64;
+        let rho_ss = rho.get(s, s);
+        m2_sum += m * m * rho_ss;
+        m4_sum += m * m * m * m * rho_ss;
+    }
+    let exact_m2 = m2_sum / z;
+    let exact_m4 = m4_sum / z;
+    let exact_u4 = 1.0 - exact_m4 / (3.0 * exact_m2 * exact_m2);
+
+    // MC side
+    let space = SpinSpace::uniform(n_sites, 1).expect("space");
+    let model = SpinModelBuilder::new(graph, space)
+        .uniform_edge(EdgeCoupling::heisenberg(j))
+        .build()
+        .expect("model");
+    let mut configuration = LatticeConfiguration::new(beta, vec![0, 0, 0], &model).expect("config");
+    let mut engine = ContinuousLatticeEngine::new(model, UpdateSchedule::new(2, 2, 16));
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(42);
+
+    let mut mc_m2 = 0.0;
+    let mut mc_m4 = 0.0;
+    let mut samples = 0u64;
+    for sweep in 0..80_000 {
+        engine.sweep(&mut configuration, &mut rng).expect("sweep");
+        if sweep >= 20_000 {
+            let obs =
+                qmc_rs::lattice::measure_observables(&configuration, engine.model()).expect("obs");
+            mc_m2 += obs.magnetization_z_squared;
+            mc_m4 += obs.magnetization_z_fourth;
+            samples += 1;
+        }
+    }
+    let n = samples as f64;
+    mc_m2 /= n;
+    mc_m4 /= n;
+    let mc_u4 = 1.0 - mc_m4 / (3.0 * mc_m2 * mc_m2);
+
+    assert!(
+        (mc_u4 - exact_u4).abs() < 0.02,
+        "U4: MC={mc_u4:.6}, exact={exact_u4:.6} (⟨m²⟩_MC={mc_m2:.6}, ⟨m⁴⟩_MC={mc_m4:.6})"
+    );
+}
