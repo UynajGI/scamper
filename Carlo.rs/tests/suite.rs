@@ -67,6 +67,9 @@ mod checkpoint_hdf5;
 mod dataframe;
 #[path = "io/job.rs"]
 mod job;
+#[cfg(feature = "hdf5")]
+#[path = "io/merge_hdf5.rs"]
+mod merge_hdf5;
 #[path = "io/merge_io.rs"]
 mod merge_io;
 #[path = "io/output_io.rs"]
@@ -76,6 +79,9 @@ mod output_io;
 
 #[path = "mpi/distributed.rs"]
 mod mpi_distributed;
+#[cfg(feature = "mpi")]
+#[path = "mpi/pt_exchange.rs"]
+mod mpi_pt_exchange;
 #[path = "mpi/mpi_test.rs"]
 mod mpi_test;
 

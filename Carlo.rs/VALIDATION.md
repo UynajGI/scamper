@@ -37,11 +37,10 @@
 - **File:** `Carlo.rs/tests/mpi/distributed.rs` (extend existing)
 - **Status:** not started
 
-### [ ] C-P2.1 — strict-repro feature test
-- **Problem:** The `strict-repro` feature (jump-sequence RNG for exact reproducibility across task counts) has zero tests.
-- **Plan:** Run same model with `strict-repro` on, different task counts. Verify identical RNG streams.
-- **File:** `Carlo.rs/tests/integration/reproducibility.rs` (extend)
-- **Status:** not started
+### [~] C-P2.1 — strict-repro feature test
+- **Problem:** Feature flag defined in Cargo.toml but **zero implementation** in source code. No `#[cfg(feature = "strict-repro")]` anywhere.
+- **Action:** Cannot test what doesn't exist. Feature should either be implemented or removed from Cargo.toml.
+- **Status:** ⛔ blocked (feature not implemented)
 
 ### [ ] C-P2.2 — HDF5 result merging
 - **Problem:** `merge_results` / `merge_results_from_files` for HDF5 measurement files is untested. This is the primary production analysis path.

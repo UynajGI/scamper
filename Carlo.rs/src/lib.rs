@@ -215,6 +215,8 @@ pub use output::{
     dataframe, make_scalar, make_scalar_owned, measurement_from_obs, recursive_stack, save_hdf5,
     save_json, ResultRow,
 };
+#[cfg(feature = "mpi")]
+pub use parallel_tempering::run_parallel_tempering;
 pub use parallel_tempering::{
     ParallelTemperingCompatible, ParallelTemperingConfig, ParallelTemperingMC,
 };
