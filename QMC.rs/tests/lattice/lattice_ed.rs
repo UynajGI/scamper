@@ -416,6 +416,89 @@ fn three_site_ferromagnetic_heisenberg_chain_matches_ed() {
     );
 }
 
+/// 3-site S=1/2 AFM Heisenberg open chain: χ_z = β(⟨m²⟩ − ⟨m⟩²) vs ED.
+///
+/// ED computes χ_z from the diagonal magnetization operator m = Σ_i Sz_i / N
+/// in the Sz basis:  χ_z = β(Tr[m²ρ]/Z − (Tr[mρ]/Z)²).
+/// MC collects both ⟨m⟩ and ⟨m²⟩ sample averages and forms the same combination.
+#[test]
+fn three_site_heisenberg_susceptibility_matches_ed() {
+    let n_sites = 3;
+    let beta = 3.0;
+    let j = 1.0;
+    let edges_pair = [(0, 1), (1, 2)];
+
+    // ── ED side ──────────────────────────────────────────────────────────
+    let graph = CsrGraph::chain(n_sites, false).expect("graph");
+    let weight = graph.edges().first().unwrap().weight;
+    let edges: Vec<(usize, usize, EdgeCoupling)> = edges_pair
+        .iter()
+        .map(|&(si, sj)| (si, sj, EdgeCoupling::heisenberg(j * weight)))
+        .collect();
+    let h = build_hamiltonian(n_sites, &edges);
+    let rho = h.expm_negative(beta);
+    let z = rho.trace();
+
+    let dim = 1usize << n_sites;
+    // m(s) = Σ_i Sz_i / N  for each basis state
+    let exact_m: f64 = (0..dim)
+        .map(|s| {
+            let m: f64 = (0..n_sites)
+                .map(|i| ((s >> (n_sites - 1 - i)) & 1) as f64 - 0.5)
+                .sum::<f64>()
+                / n_sites as f64;
+            m * rho.get(s, s)
+        })
+        .sum::<f64>()
+        / z;
+    let exact_m2: f64 = (0..dim)
+        .map(|s| {
+            let m: f64 = (0..n_sites)
+                .map(|i| ((s >> (n_sites - 1 - i)) & 1) as f64 - 0.5)
+                .sum::<f64>()
+                / n_sites as f64;
+            m * m * rho.get(s, s)
+        })
+        .sum::<f64>()
+        / z;
+    let exact_chi_z = beta * (exact_m2 - exact_m * exact_m);
+
+    // ── MC side ──────────────────────────────────────────────────────────
+    let space = SpinSpace::uniform(n_sites, 1).expect("space");
+    let model = SpinModelBuilder::new(graph, space)
+        .uniform_edge(EdgeCoupling::heisenberg(j))
+        .build()
+        .expect("model");
+    let mut configuration = LatticeConfiguration::new(beta, vec![0, 1, 0], &model).expect("config");
+    let mut engine = ContinuousLatticeEngine::new(model, UpdateSchedule::new(8, 4, 64));
+    engine.set_validate_each_sweep(true);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xC41_0);
+
+    let mut m_sum = 0.0;
+    let mut m2_sum = 0.0;
+    let mut samples = 0u64;
+    for sweep in 0..100_000u64 {
+        engine.sweep(&mut configuration, &mut rng).expect("sweep");
+        if sweep >= 20_000 && sweep % 2 == 0 {
+            let obs =
+                qmc_rs::lattice::measure_observables(&configuration, engine.model()).expect("obs");
+            m_sum += obs.magnetization_z;
+            m2_sum += obs.magnetization_z_squared;
+            samples += 1;
+        }
+    }
+    assert!(samples > 0, "no MC samples collected");
+    let n = samples as f64;
+    let mc_m = m_sum / n;
+    let mc_m2 = m2_sum / n;
+    let mc_chi_z = beta * (mc_m2 - mc_m * mc_m);
+
+    assert!(
+        (mc_chi_z - exact_chi_z).abs() < 0.01,
+        "χ_z: MC={mc_chi_z:.6}, exact={exact_chi_z:.6} (⟨m⟩_MC={mc_m:.6}, ⟨m²⟩_MC={mc_m2:.6})"
+    );
+}
+
 /// Verify the matrix exponential against the known 2-site XXZ spectrum.
 #[test]
 fn matrix_exp_recovers_known_dimer_partition_function() {

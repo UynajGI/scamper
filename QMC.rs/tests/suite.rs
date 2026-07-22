@@ -10,6 +10,8 @@
 mod lattice_continuous;
 #[path = "lattice/lattice_ed.rs"]
 mod lattice_ed;
+#[path = "lattice/lattice_ergodicity.rs"]
+mod lattice_ergodicity;
 #[path = "lattice/lattice_limits.rs"]
 mod lattice_limits;
 
@@ -17,6 +19,10 @@ mod lattice_limits;
 
 #[path = "impurity/cross_solver.rs"]
 mod cross_solver;
+#[path = "impurity/cross_solver_numerical.rs"]
+mod cross_solver_numerical;
+#[path = "impurity/ergodicity.rs"]
+mod impurity_ergodicity;
 #[path = "impurity/occupation.rs"]
 mod occupation;
 #[path = "impurity/physics.rs"]
@@ -25,5 +31,9 @@ mod physics;
 mod rabi_long;
 #[path = "impurity/rabi_qpt.rs"]
 mod rabi_qpt;
+#[path = "impurity/thread_count.rs"]
+mod thread_count;
 #[path = "impurity/wormhole.rs"]
 mod wormhole;
+#[path = "impurity/wormhole_interacting_ed.rs"]
+mod wormhole_interacting_ed;
