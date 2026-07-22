@@ -129,7 +129,6 @@
 //! |---------|--------|
 //! | `hdf5` | HDF5 checkpoint + measurement files |
 //! | `mpi` | MPI distributed backend (`mpirun -np N ./carlo run`) |
-//! | `strict-repro` | Jump-sequence RNG for exact reproducibility across task counts |
 //!
 //! ## Module map
 //!

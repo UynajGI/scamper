@@ -76,17 +76,19 @@ fn pt_exchange_completes_and_returns_results() {
 
     match result {
         Ok(Some(results)) => {
-            // Controller rank gets aggregated results
+            // Controller rank gets merged results from all chains.
+            // PT uses namespaced measurements: pt_chain_XXXX/ParamValue
+            let has_param = results.estimates().keys().any(|k| k.contains("ParamValue"));
             assert!(
-                results.get("ParamValue").is_some(),
-                "ParamValue should be in results"
+                has_param,
+                "ParamValue should be in merged results, got: {:?}",
+                results.estimates().keys().collect::<Vec<_>>()
             );
         }
         Ok(None) => {
             // Worker rank — no aggregate
         }
         Err(e) => {
-            // Non-mpirun single process should give a clear error
             panic!("PT exchange failed: {e}");
         }
     }
