@@ -34,7 +34,7 @@ fn make_acc_from_samples(samples: &[f64], _binsize: usize) -> Accumulator {
 }
 
 #[test]
-fn uncorrelated_data_has_autocorr_time_near_one() {
+fn uncorrelated_data_has_non_negative_autocorr_time() {
     let series = ar1_series(0.0, 10000, 42);
     let acc = make_acc_from_samples(&series, 10);
     let tau = acc.autocorr_time();

@@ -33,24 +33,24 @@ fn exact_energy(n: usize, j: f64, beta: f64, pbc: bool) -> f64 {
 }
 
 #[test]
-fn gillespie_equilibrium_distribution_matches_stationary() {
-    // P2.5: Gillespie equilibrium distribution is tested in dynamics_exact.rs
-    // (bkl_fixed_time_sampling_matches_exact_small_ising_energy).
-    // Here we verify the exact enumeration helper is self-consistent.
+fn exact_enumeration_helper_is_self_consistent() {
+    // Sanity check for the exact_energy helper used by other tests.
+    // AFM Ising chain at finite β should have negative energy.
     let exact = exact_energy(3, 1.0, 0.5, true);
     assert!(exact < 0.0, "AFM energy should be negative, got {exact}");
+    // Higher β should give lower (more negative) energy
+    let cold = exact_energy(3, 1.0, 2.0, true);
+    assert!(cold < exact, "colder β=2 energy {cold} should be < warmer β=0.5 energy {exact}");
 }
 
 // P2.2: HybridCore needs explicit construction (no Default impl) —
 // tested via integration/usage.rs smoke test instead.
 
 #[test]
-fn multispin_ising_8energy_matches_enumeration() {
-    // P2.1: MultiSpinIsing is bit-packed and complex. Test via Carlo scheduler
-    // if supported, otherwise document the gap.
-    // MultiSpinIsing doesn't use the standard ClassicalMC adapter pattern —
-    // it has its own ParallelTemperingCompatible implementation.
-    // For now, verify that the exact energy formula works for N=8.
+fn metropolis_8site_energy_matches_exact_enumeration() {
+    // 8-site Ising chain: Metropolis MC vs exact 256-state enumeration.
+    // Note: MultiSpinIsing is NOT tested here — it uses a different adapter
+    // pattern (ParallelTemperingCompatible) and needs its own test.
     let exact = exact_energy(8, 1.0, 0.5, true);
 
     // 8 spins, β=0.5, J=1, PBC: exact ⟨E⟩ via 256-state enumeration

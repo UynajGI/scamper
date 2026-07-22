@@ -1,8 +1,10 @@
-//! Cross-solver numerical validation: wormhole↔occupation and wormhole↔cluster.
+//! Cross-solver validation: wormhole↔occupation.
 //!
-//! Both solvers are compared against each other on the free two-level system
-//! (g=0) where convention differences vanish, and on the interacting Rabi
-//! model where expansion order (energy) should agree.
+//! The occupation solver is compared against exact analytic results for the
+//! free two-level system. The wormhole solver is run on the same model but
+//! only checked for finite output (convention differences prevent direct
+//! observable comparison). A true cross-solver test would compare both
+//! against a shared ED reference.
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use qmc_rs::impurity::ImpurityQmc;
@@ -11,7 +13,7 @@ use qmc_rs::OccupationWorldlineQmc;
 // ─── P1.1: Wormhole ↔ Occupation (free two-level system) ────────────────
 
 #[test]
-fn wormhole_and_occupation_agree_on_free_two_level_system() {
+fn occupation_matches_exact_free_two_level_wormhole_smoke() {
     // Free two-level system: g=0, only tunnelling Δ.
     // Both solvers should give ⟨σz⟩ = -tanh(βΔ/2) (occupation convention)
     // and ⟨E⟩ = -(Δ/2)tanh(βΔ/2).
@@ -84,7 +86,7 @@ fn wormhole_and_occupation_agree_on_free_two_level_system() {
 // ─── P1.1b: Wormhole ↔ Occupation (interacting, compare energy) ─────────
 
 #[test]
-fn wormhole_and_occupation_expansion_order_agree_interacting() {
+fn wormhole_and_occupation_smoke_both_run_interacting() {
     // Interacting Rabi model: both solvers should give consistent
     // expansion order (related to energy).
     let beta = 8.0;

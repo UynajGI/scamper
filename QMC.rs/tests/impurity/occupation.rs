@@ -133,7 +133,7 @@ fn transfer_worldline_is_independent_of_slice_count() {
 }
 
 #[test]
-fn explicit_solver_reports_requested_cavity_observables() {
+fn smoke_explicit_solver_reports_requested_cavity_observables() {
     let model = OccupationSpinBosonModel::rabi(
         0.7,
         vec![

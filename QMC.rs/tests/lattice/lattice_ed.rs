@@ -23,13 +23,13 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 // For diagonal observables (Sz-basis diagonal): Tr[O·ρ] = Σ_s O[s,s]·ρ[s,s]
 // For energy: Tr[H·ρ] = Σ_{i,j} H[i,j]·ρ[j,i]
 
-struct DenseMatrix {
-    dim: usize,
-    elements: Vec<f64>, // row-major dim×dim
+pub(crate) struct DenseMatrix {
+    pub(crate) dim: usize,
+    pub(crate) elements: Vec<f64>, // row-major dim×dim
 }
 
 impl DenseMatrix {
-    fn zero(dim: usize) -> Self {
+    pub(crate) fn zero(dim: usize) -> Self {
         Self {
             dim,
             elements: vec![0.0; dim * dim],
@@ -44,7 +44,7 @@ impl DenseMatrix {
         m
     }
 
-    fn get(&self, i: usize, j: usize) -> f64 {
+    pub(crate) fn get(&self, i: usize, j: usize) -> f64 {
         self.elements[i * self.dim + j]
     }
 
@@ -56,7 +56,7 @@ impl DenseMatrix {
         self.elements[i * self.dim + j] += val;
     }
 
-    fn multiply(&self, other: &Self) -> Self {
+    pub(crate) fn multiply(&self, other: &Self) -> Self {
         let dim = self.dim;
         let mut result = Self::zero(dim);
         for i in 0..dim {
@@ -78,12 +78,12 @@ impl DenseMatrix {
         }
     }
 
-    fn trace(&self) -> f64 {
+    pub(crate) fn trace(&self) -> f64 {
         (0..self.dim).map(|i| self.get(i, i)).sum()
     }
 
     /// Matrix exponential exp(-beta * H) via scaling and squaring.
-    fn expm_negative(&self, beta: f64) -> Self {
+    pub(crate) fn expm_negative(&self, beta: f64) -> Self {
         let dim = self.dim;
         let mut a = self.scale(-beta);
         // Scale down so max |element| ≤ 0.5
@@ -117,7 +117,10 @@ impl DenseMatrix {
 }
 
 /// Build dense S=1/2 Hamiltonian for a set of Heisenberg/XXZ edges.
-fn build_hamiltonian(n_sites: usize, edges: &[(usize, usize, EdgeCoupling)]) -> DenseMatrix {
+pub(crate) fn build_hamiltonian(
+    n_sites: usize,
+    edges: &[(usize, usize, EdgeCoupling)],
+) -> DenseMatrix {
     let dim = 1usize << n_sites;
     let mut h = DenseMatrix::zero(dim);
     for &(i, j, coupling) in edges {

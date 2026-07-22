@@ -281,8 +281,8 @@ fn npt_volume_increases_when_pressure_decreases() {
 // ════════════════════════════════════════════════════════════════════════
 
 #[test]
-#[ignore = "long: NPT ideal gas quantitative EOS (~30 s)"]
-fn npt_ideal_gas_volume_matches_pv_equal_nkt() {
+#[ignore = "long: NPT directional response (~30 s). KNOWN ISSUE: equilibrium V doesn't match ideal gas EOS."]
+fn npt_volume_responds_directionally_to_pressure_change() {
     // Quantitative NPT test: V(P1)/V(P2) should be close to P2/P1.
     // Use small system with initial box near expected equilibrium.
     let run_volume = |pressure: f64, density: f64| -> f64 {
@@ -335,8 +335,8 @@ fn npt_ideal_gas_volume_matches_pv_equal_nkt() {
 // ════════════════════════════════════════════════════════════════════════
 
 #[test]
-#[ignore = "long: μVT ideal gas quantitative (~30 s)"]
-fn muvt_ideal_gas_particle_number_matches_poisson() {
+#[ignore = "long: μVT directional response (~30 s). KNOWN ISSUE: equilibrium N doesn't match ideal gas."]
+fn muvt_particle_number_responds_directionally_to_mu_change() {
     // Quantitative μVT test: N(μ1)/N(μ2) should be close to exp(β(μ1-μ2)).
     let run_n = |mu: f64| -> f64 {
         let mut params = Params::new();

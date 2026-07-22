@@ -27,7 +27,7 @@ fn run_model(model: &str) -> carlo_rs::Results {
 }
 
 #[test]
-fn all_impurity_catalogs_run_through_carlo() {
+fn smoke_all_impurity_catalogs_run_through_carlo() {
     for model in ["jc", "rw_crw", "xxz", "xyz", "rabi"] {
         let results = run_model(model);
         let order = results
@@ -60,5 +60,10 @@ fn free_limit_has_bounded_magnetization() {
     let magnetization = results
         .get("MagnetizationSigmaZ")
         .expect("MagnetizationSigmaZ missing");
-    assert!(magnetization.mean.abs() < 0.4);
+    // Free system (g=0, h_z=0): exact magnetization is 0.
+    assert!(
+        magnetization.mean.abs() < 0.15,
+        "free-limit ⟨σz⟩ should be near 0, got {:.4}",
+        magnetization.mean
+    );
 }

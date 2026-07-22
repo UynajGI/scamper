@@ -16,9 +16,13 @@ mod lattice_ergodicity;
 mod lattice_limits;
 #[path = "lattice/lattice_spin1.rs"]
 mod lattice_spin1;
+#[path = "lattice/lattice_zscore.rs"]
+mod lattice_zscore;
 
 // ── Impurity — spin-boson wormhole QMC ───────────────────────────────────
 
+#[path = "impurity/cluster_ergodicity.rs"]
+mod cluster_ergodicity;
 #[path = "impurity/cross_solver.rs"]
 mod cross_solver;
 #[path = "impurity/cross_solver_cluster.rs"]
@@ -29,6 +33,8 @@ mod cross_solver_numerical;
 mod impurity_ergodicity;
 #[path = "impurity/occupation.rs"]
 mod occupation;
+#[path = "impurity/occupation_ergodicity.rs"]
+mod occupation_ergodicity;
 #[path = "impurity/physics.rs"]
 mod physics;
 #[path = "impurity/rabi_long.rs"]

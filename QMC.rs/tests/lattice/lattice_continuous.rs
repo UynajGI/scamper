@@ -9,7 +9,7 @@ use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 #[test]
-fn arbitrary_graph_and_spin_are_first_class() {
+fn smoke_arbitrary_graph_and_spin_are_first_class() {
     let graph = CsrGraph::from_adjacency(&[
         vec![1, 3],
         vec![0, 2, 4],
@@ -36,7 +36,7 @@ fn arbitrary_graph_and_spin_are_first_class() {
 }
 
 #[test]
-fn carlo_adapter_runs_on_square_and_edge_list_graphs() {
+fn smoke_carlo_adapter_runs_on_square_and_edge_list_graphs() {
     for (topology, extra) in [("square", None), ("edges", Some("0-1,1-2,2-3,3-0"))] {
         let mut params = Params::new();
         params.set("beta", 2.0);

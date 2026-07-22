@@ -1,15 +1,16 @@
-//! Cross-solver validation: wormhole ↔ cluster.
+//! Smoke test: wormhole and cluster solvers both run on a longitudinal model.
 //!
-//! Both solvers handle longitudinal spin-boson coupling. For a model with
-//! only longitudinal coupling (no transverse), both should give consistent
-//! magnetization and kink/expansion order.
+//! This is NOT a cross-solver numerical comparison — the two solvers use
+//! different conventions and measure different observables. This test only
+//! verifies both produce finite, non-negative output on the same model.
+//! A real cross-solver comparison would need a shared ED reference.
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use qmc_rs::impurity::ImpurityQmc;
 use qmc_rs::LongitudinalSpinBosonClusterQmc;
 
 #[test]
-fn wormhole_and_cluster_both_run_on_longitudinal_model() {
+fn wormhole_and_cluster_smoke_both_run_on_longitudinal_model() {
     // Longitudinal spin-boson: only σz coupling to bath, no transverse.
     let beta: f64 = 4.0;
     let omega: f64 = 1.0;
