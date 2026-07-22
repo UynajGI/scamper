@@ -366,6 +366,35 @@ impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
                 })?;
         self.measurements.write_checkpoint_hdf5(&mut meas_group)?;
 
+        // Write algorithm clocks
+        let attempt_bytes = self.attempted_updates.to_ne_bytes();
+        group
+            .new_dataset_builder()
+            .with_data(&attempt_bytes)
+            .create("attempted_updates")
+            .map_err(|e| crate::CarloError::InvalidConfig {
+                field: "checkpoint".into(),
+                reason: format!("Cannot write attempted_updates: {}", e),
+            })?;
+        let accepted_bytes = self.accepted_moves.to_ne_bytes();
+        group
+            .new_dataset_builder()
+            .with_data(&accepted_bytes)
+            .create("accepted_moves")
+            .map_err(|e| crate::CarloError::InvalidConfig {
+                field: "checkpoint".into(),
+                reason: format!("Cannot write accepted_moves: {}", e),
+            })?;
+        let event_bytes = self.event_time.to_ne_bytes();
+        group
+            .new_dataset_builder()
+            .with_data(&event_bytes)
+            .create("event_time")
+            .map_err(|e| crate::CarloError::InvalidConfig {
+                field: "checkpoint".into(),
+                reason: format!("Cannot write event_time: {}", e),
+            })?;
+
         Ok(())
     }
 
@@ -427,6 +456,11 @@ impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
                 })?;
         let measurements = crate::Measurements::read_checkpoint_hdf5(&meas_group)?;
 
+        // Read algorithm clocks (fall back to 0 for checkpoints written by older versions)
+        let attempted_updates = read_u64_dataset(group, "attempted_updates").unwrap_or(0);
+        let accepted_moves = read_u64_dataset(group, "accepted_moves").unwrap_or(0);
+        let event_time = read_f64_dataset(group, "event_time").unwrap_or(0.0);
+
         Ok(Self {
             rng,
             measurements,
@@ -439,9 +473,51 @@ impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
             } else {
                 RunPhase::Thermalization
             },
-            attempted_updates: 0,
-            accepted_moves: 0,
-            event_time: 0.0,
+            attempted_updates,
+            accepted_moves,
+            event_time,
         })
     }
+}
+
+/// Read a u64 stored as NE bytes from an HDF5 dataset.
+#[cfg(feature = "hdf5")]
+fn read_u64_dataset(group: &Group, name: &str) -> Result<u64, crate::CarloError> {
+    let bytes: Vec<u8> = group
+        .dataset(name)
+        .map_err(|e| crate::CarloError::InvalidConfig {
+            field: "checkpoint".into(),
+            reason: format!("Cannot read {name}: {e}"),
+        })?
+        .read_1d::<u8>()
+        .map_err(|e| crate::CarloError::InvalidConfig {
+            field: "checkpoint".into(),
+            reason: format!("Cannot parse {name}: {e}"),
+        })?
+        .to_vec();
+    let mut arr = [0u8; 8];
+    let len = bytes.len().min(8);
+    arr[..len].copy_from_slice(&bytes[..len]);
+    Ok(u64::from_ne_bytes(arr))
+}
+
+/// Read an f64 stored as NE bytes from an HDF5 dataset.
+#[cfg(feature = "hdf5")]
+fn read_f64_dataset(group: &Group, name: &str) -> Result<f64, crate::CarloError> {
+    let bytes: Vec<u8> = group
+        .dataset(name)
+        .map_err(|e| crate::CarloError::InvalidConfig {
+            field: "checkpoint".into(),
+            reason: format!("Cannot read {name}: {e}"),
+        })?
+        .read_1d::<u8>()
+        .map_err(|e| crate::CarloError::InvalidConfig {
+            field: "checkpoint".into(),
+            reason: format!("Cannot parse {name}: {e}"),
+        })?
+        .to_vec();
+    let mut arr = [0u8; 8];
+    let len = bytes.len().min(8);
+    arr[..len].copy_from_slice(&bytes[..len]);
+    Ok(f64::from_ne_bytes(arr))
 }

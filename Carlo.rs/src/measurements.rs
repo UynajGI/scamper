@@ -178,7 +178,7 @@ impl Accumulator {
             all_bins.push(partial_mean);
         }
 
-        Estimate::from_bins(&all_bins)
+        Estimate::from_bins_with_autocorr(&all_bins, self.autocorr_time())
     }
 
     /// Check if any complete bins exist.

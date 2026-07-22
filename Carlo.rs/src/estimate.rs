@@ -23,6 +23,11 @@ pub struct Estimate {
 impl Estimate {
     /// Compute estimate from bin means.
     pub fn from_bins(bins: &[f64]) -> Self {
+        Self::from_bins_with_autocorr(bins, 1.0)
+    }
+
+    /// Compute estimate from bin means with a caller-provided autocorrelation time.
+    pub fn from_bins_with_autocorr(bins: &[f64], autocorr_time: f64) -> Self {
         if bins.is_empty() {
             return Self {
                 mean: 0.0,
@@ -35,20 +40,18 @@ impl Estimate {
         let n = bins.len() as f64;
         let mean = bins.iter().sum::<f64>() / n;
 
-        // Standard deviation of bin means
         let variance = if n > 1.0 {
             bins.iter().map(|b| (b - mean).powi(2)).sum::<f64>() / (n - 1.0)
         } else {
             0.0
         };
 
-        // Standard error = std / sqrt(n_bins)
         let stderr = variance.sqrt() / n.sqrt();
 
         Self {
             mean,
             stderr,
-            autocorr_time: 1.0, // Placeholder; proper estimation is complex
+            autocorr_time: autocorr_time.max(1.0),
             n_bins: bins.len(),
         }
     }

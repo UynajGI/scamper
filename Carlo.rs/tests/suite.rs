@@ -8,6 +8,8 @@
 
 #[path = "unit/accumulator.rs"]
 mod accumulator;
+#[path = "unit/autocorr_reference.rs"]
+mod autocorr_reference;
 #[path = "unit/clock_phase.rs"]
 mod clock_phase;
 #[path = "unit/complex.rs"]
@@ -58,6 +60,9 @@ mod workflow;
 
 // ── I/O ───────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "hdf5")]
+#[path = "io/checkpoint_hdf5.rs"]
+mod checkpoint_hdf5;
 #[path = "io/dataframe.rs"]
 mod dataframe;
 #[path = "io/job.rs"]
