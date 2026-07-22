@@ -48,6 +48,8 @@ mod worm_stage5;
 
 #[path = "physics/common.rs"]
 mod common;
+#[path = "physics/connectivity.rs"]
+mod connectivity;
 #[path = "physics/continuous_spins.rs"]
 mod continuous_spins;
 #[path = "physics/dynamics_exact.rs"]
@@ -76,3 +78,5 @@ mod transition_balance;
 mod usage_exact;
 #[path = "physics/worm_exact.rs"]
 mod worm_exact;
+#[path = "physics/zscore_validation.rs"]
+mod zscore_validation;

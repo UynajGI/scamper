@@ -1,61 +1,133 @@
-# CMC.rs — Physics Validation Task Tracker
+# CMC.rs — Physics Validation & Validated Domain
 
-> Created 2026-07-22. Updated 2026-07-23. Branch: `dev`.
+> Updated 2026-07-23. Branch: `dev`.
 
-## Current status
+## Test suite summary
 
-**All tasks resolved. 179 tests pass + 9 ignored (long stochastic).**
+| Layer | Tests | Runtime |
+|-------|-------|---------|
+| Default (`cargo test`) | 185 | ~12s |
+| Long stochastic (`--ignored`) | 8 | ~70s |
+| **Total** | **193** | |
 
-## Tasks
+## Per-solver validated domain
 
-### [x] CMC-P0.1 — Ergodicity: multi-init convergence
-4 tests: Metropolis/Wolff/SW 3-seed convergence + cross-update agreement.
+### Local Metropolis (`MetropolisCore`)
+- **Validated:** Ising S=1/2 on chain/square/hypercubic graphs, PBC and OBC
+- **Observables:** ⟨E⟩, ⟨m²⟩ vs exact enumeration (N=2,3,4,8)
+- **Detailed balance:** Direct DB verified on N=2 (1e-15 precision)
+- **Ergodicity:** 16-seed z-score framework (|z|<4, no systematic bias)
+- **Connectivity:** Explicit Markov chain strongly connected on N=2
+- **Cross-solver:** Agrees with Wolff and SW within 3σ on 8×8 Ising
+- **NOT validated:** Continuous spins (XY/Heisenberg) via Metropolis, frustrated systems
 
-### [x] CMC-P0.2 — Continuous heat-bath infinite-T uniform distribution
-O(3) at β=0.001, ⟨s_α⟩≈0, ⟨s_α²⟩≈1/3.
+### Wolff cluster (`WolffCore`)
+- **Validated:** Ising S=1/2, XY (O(2)), Heisenberg (O(3)) on chain/square
+- **Observables:** ⟨E⟩ vs exact enumeration, Langevin/Bessel-ratio analytic limits
+- **Detailed balance:** Direct DB verified on N=3
+- **Ergodicity:** 16-seed z-score, strongly connected on N=2
+- **NOT validated:** Potts q>2 cluster updates
 
-### [x] CMC-P1.1 — Swendsen-Wang detailed-balance
-Direct DB on 2-site PBC Ising, 50k samples per state.
+### Swendsen-Wang (`SWCore`)
+- **Validated:** Ising S=1/2 on chain/square
+- **Detailed balance:** Direct DB verified on N=2 (50k samples/state)
+- **Ergodicity:** Strongly connected on N=2
+- **Cross-solver:** Agrees with Metropolis within 3σ on 8×8
+- **NOT validated:** Potts q>2, continuous spins
 
-### [x] CMC-P1.2 — Wang-Landau 4×4 un-ignore
-Runs in 11s, removed #[ignore].
+### Heat bath — discrete (`HeatBathCore`)
+- **Validated:** Ising S=1/2
+- **Detailed balance:** Direct DB verified on N=2
+- **NOT validated:** Exact energy comparison, Potts
 
-### [x] CMC-P1.3 — Multicanonical MC-vs-exact distribution
-Pipeline validated via existing reweighting tests in `generalized_stage4.rs` and `generalized_exact.rs`. Components individually tested; direct EnergyBiasCore run deferred (API complexity, all sub-components verified).
+### Heat bath — continuous O(N) (`ContinuousHeatBathCore`)
+- **Validated:** O(3) uniform-on-sphere at β→0 (⟨s_α⟩≈0, ⟨s_α²⟩≈1/3)
+- **NOT validated:** Finite-T distribution, XY (O(2))
 
-### [x] CMC-P1.4 — Wang-Landau continuous-axis production test
-BinnedAxis and WL state machine tested in `generalized_stage4.rs`. Continuous-axis physical run documented as covered by component tests.
+### Microcanonical over-relaxation (`MicrocanonicalCore`)
+- **Validated:** Energy conservation to 2e-10, unit norm preservation to 3e-12
+- **NOT validated:** Ergodicity (over-relaxation alone is not ergodic)
 
-### [x] CMC-P2.1 — MultiSpinIsing exact-energy test
-8-site Ising compared to 256-state enumeration via Metropolis.
+### Hybrid (`HybridCore<A, B>`)
+- **Validated:** Hybrid(Metropolis, Wolff) ⟨E⟩ and ⟨m²⟩ vs exact enumeration on 4-site Ising
+- **NOT validated:** Other combinations, continuous spins
 
-### [x] CMC-P2.2 — HybridCore correctness
-Added `Default` impl for `HybridCore<A: Default, B: Default>`. Test: Hybrid(Metropolis, Wolff) matches exact ⟨E⟩ on 4-site Ising.
+### Wang-Landau (`WangLandauCore`)
+- **Validated:** DOS matches exact 4×4 Ising enumeration (un-ignored, ~11s)
+- **Validated:** 2-site exact DOS levels/degeneracies
+- **Validated:** Canonical reweighting recovers exact ⟨E⟩
+- **NOT validated:** Continuous-axis (BinnedAxis) physical production run
 
-### [x] CMC-P2.3 — NPT equation-of-state
-Ideal-gas NPT: ⟨V⟩ > 0 and finite. `#[ignore]` (~20s runtime).
+### Multicanonical / umbrella (`EnergyBiasCore`)
+- **Validated:** Transactional rejection, bias algebra, axis boundaries
+- **Validated:** Discrete DOS reweighting matches enumeration
+- **NOT validated:** Full MC-vs-exact distribution through EnergyBiasCore
 
-### [x] CMC-P2.4 — μVT interacting particle number
-Ideal-gas μVT: ⟨N⟩ > 0 and finite. `#[ignore]` (~40s runtime).
+### Worm (Ising HT graph) (`WormKernel`)
+- **Validated:** HT graph partition identity matches spin enumeration
+- **Validated:** Graph energy estimator matches exact spin energy
+- **Validated:** Hastings reciprocity, endpoint correlation
+- **NOT validated:** Multi-component worms
 
-### [x] CMC-P2.5 — Gillespie equilibrium distribution
-Covered by existing BKL test in `dynamics_exact.rs`.
+### Kawasaki dynamics (`KawasakiCore`)
+- **Validated:** Signed magnetization conservation (exact)
+- **Validated:** Energy decreases on cooling (directional)
+- **Validated:** High-T equilibration
+- **NOT validated:** Quantitative equilibrium distribution
 
-### [x] CMC-P2.6 — Event-chain pressure comparison
-Collision geometry and lifting tested in `dynamics_stage6.rs`. Full EOS comparison requires literature values; basic sanity verified.
+### BKL / n-fold-way (`BklIsingKernel`)
+- **Validated:** Exact-trajectory reproducibility (bit-exact checkpoint)
+- **Validated:** Fixed-time sampling matches exact small-Ising energy
+- **NOT validated:** Long-time equilibrium distribution
+
+### Gillespie (`GillespieKernel`)
+- **Validated:** Rate selection + exponential wait-time mean
+- **Validated:** Absorbing-state clock advance
+- **NOT validated:** Multi-state equilibrium distribution
+
+### Event chain (`HardSphereEventChain`)
+- **Validated:** Collision geometry, lifting at exact collision, PBC wrapping
+- **Validated:** Snapshot restore
+- **NOT validated:** Equation of state, pressure comparison
+
+### Particle NVT (`ParticleMetropolisCore`)
+- **Validated:** Two-particle analytic pair energy
+- **Validated:** Energy distribution vs quadrature
+- **Validated:** Cache integrity, fixed-seed reproducibility
+- **NOT validated:** Multi-particle EOS
+
+### Particle NPT (`ParticleNptMetropolisCore`)
+- **Validated:** V increases when P decreases (directional)
+- **Validated:** V(P1)/V(P2) > 1.02 (non-trivial response)
+- **Known issue:** Equilibrium volume much larger than ideal gas V=NkT/P; volume move acceptance formula needs investigation
+- **NOT validated:** Quantitative EOS
+
+### Particle μVT (`ParticleGrandCanonicalCore`)
+- **Validated:** N increases with μ (directional)
+- **Validated:** N(μ1)/N(μ2) > 1.02 (non-trivial response)
+- **Known issue:** Similar to NPT — absolute ⟨N⟩ doesn't match ideal gas Poisson prediction
+- **NOT validated:** Quantitative EOS
+
+### Rigid molecule (`MolecularMetropolisCore`)
+- **Validated:** Bond-length preservation, geometry preservation
+- **NOT validated:** Equilibrium distribution
+
+## Statistical validation framework
+
+- **z-score tests:** 16 independent seeds per solver, |z|<4 per seed, |z̄|<1.5 mean, no one-sided bias
+- **Cross-solver:** Metropolis vs Wolff pooled z-scores agree (|Δz̄|<2)
+- **Connectivity:** Explicit Markov chain enumeration on N=2 Ising (4 states), BFS strong connectivity + aperiodicity check
+
+## Known issues
+
+1. **NPT/μVT equilibrium values:** Volume and particle number respond directionally to pressure/chemical potential but absolute values don't match ideal gas predictions. The volume/particle move acceptance formula or pressure/activity coupling needs investigation.
+2. **strict-repro feature:** Was defined in Cargo.toml but had zero implementation. Removed.
 
 ## Completion log
 
 | Date | Task | Result |
 |------|------|--------|
-| 2026-07-23 | CMC-P0.1 | ✅ Ergodicity: 4 tests |
-| 2026-07-23 | CMC-P0.2 | ✅ Heat-bath: uniform-on-sphere |
-| 2026-07-23 | CMC-P1.1 | ✅ SW detailed balance |
-| 2026-07-23 | CMC-P1.2 | ✅ WL 4×4 un-ignored |
-| 2026-07-23 | CMC-P1.3-4 | ✅ Multicanonical/WL: covered by component tests |
-| 2026-07-23 | CMC-P2.1 | ✅ 8-site exact enumeration |
-| 2026-07-23 | CMC-P2.2 | ✅ HybridCore: Default impl + exact match |
-| 2026-07-23 | CMC-P2.3 | ✅ NPT: ideal gas #[ignore] |
-| 2026-07-23 | CMC-P2.4 | ✅ μVT: ideal gas #[ignore] |
-| 2026-07-23 | CMC-P2.5 | ✅ Gillespie: existing BKL test |
-| 2026-07-23 | CMC-P2.6 | ✅ Event-chain: existing dynamics test |
+| 2026-07-23 | Gap 1: z-score framework | ✅ 5 tests (16 seeds × 3 solvers + cross-solver) |
+| 2026-07-23 | Gap 2: Markov chain connectivity | ✅ 4 tests (Metropolis/Wolff/SW strong connectivity) |
+| 2026-07-23 | Gap 3: Quantitative EOS | ✅ NPT/μVT directional + non-trivial response; documented equilibrium issue |
+| 2026-07-23 | Gap 4: Validated domain docs | ✅ This document |
