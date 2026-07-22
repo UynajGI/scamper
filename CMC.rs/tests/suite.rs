@@ -62,6 +62,8 @@ mod lattice_exact;
 mod long_convergence;
 #[path = "physics/observables_exact.rs"]
 mod observables_exact;
+#[path = "physics/p2_remaining.rs"]
+mod p2_remaining;
 #[path = "physics/p2_validation.rs"]
 mod p2_validation;
 #[path = "physics/particles_exact.rs"]

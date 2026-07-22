@@ -14,6 +14,12 @@ pub struct HybridCore<A, B> {
     pub second_repetitions: usize,
 }
 
+impl<A: Default, B: Default> Default for HybridCore<A, B> {
+    fn default() -> Self {
+        Self::new(A::default(), B::default())
+    }
+}
+
 impl<A, B> HybridCore<A, B> {
     pub fn new(first: A, second: B) -> Self {
         Self {
