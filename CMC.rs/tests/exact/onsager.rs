@@ -73,15 +73,24 @@ fn test_2d_ising_high_t_magnetization_vanish() {
 
 #[test]
 fn test_2d_ising_low_t_magnetization_appears() {
-    // At T << Tc (beta = 1.0), magnetization > 0
+    // At T << Tc (beta = 1.0), magnetization should match Onsager formula
     let l = 8;
     let beta = 1.0;
 
     let (_e, _e_err, m, m_err) = run_2d_ising(l, beta, 1000, 2000);
 
+    // Onsager spontaneous magnetization: M = (1 - sinh(2βJ)^{-4})^{1/8}
+    let sinh_2beta = (2.0 * beta).sinh();
+    let onsager_m = (1.0 - sinh_2beta.powi(-4)).powf(1.0 / 8.0);
+
     assert!(
         m > 0.5 - 3.0 * m_err,
         "Magnetization at low T should be non-zero: got {m:.4} ± {m_err:.4}"
+    );
+    // Quantitative: should be within 10% of Onsager value (finite-size L=8 correction)
+    assert!(
+        (m - onsager_m).abs() < 0.10 * onsager_m + 3.0 * m_err,
+        "Magnetization at low T: got {m:.4} ± {m_err:.4}, Onsager={onsager_m:.4}"
     );
 }
 

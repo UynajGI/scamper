@@ -181,6 +181,12 @@ fn test_decorrelated_autocorr_time_basic() {
         assert!(v >= 0.0, "Autocorrelation time should be >= 0, got {v}");
         assert!(v.is_finite(), "Autocorrelation time should be finite");
     }
+    // Periodic data (mod 7, 11, 13) should have positive autocorrelation
+    // for at least one component
+    assert!(
+        autocorr.iter().any(|&v| v > 0.0),
+        "periodic data should have positive autocorr for at least one component, got {autocorr:?}"
+    );
 }
 
 #[test]

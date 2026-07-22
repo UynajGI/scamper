@@ -17,8 +17,8 @@ fn test_jackknife_simple_mean() {
     )
     .unwrap();
 
-    // Mean should be close to 3.0
-    assert!((mean[0] - 3.0).abs() < 0.5);
+    // Mean of [1,2,3,4,5] is exactly 3.0
+    assert!((mean[0] - 3.0).abs() < 1e-10);
     assert!(error[0] > 0.0);
 }
 

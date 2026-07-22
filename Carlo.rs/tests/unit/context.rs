@@ -115,10 +115,20 @@ fn test_context_thermalization_sweeps_accessor() {
 #[test]
 fn test_context_binsize() {
     let rng = Xoshiro256PlusPlus::seed_from_u64(42);
-    let ctx = Context::new_with_binsize(rng, 0, 100);
+    let mut ctx = Context::new_with_binsize(rng, 0, 100);
 
-    // Just verify creation with custom binsize works
     assert_eq!(ctx.sweep_count(), 0);
+
+    // Verify binsize=100 indirectly: 200 measurements → 2 bins
+    for i in 0..200 {
+        ctx.measure("Probe", i as f64);
+    }
+    let estimates = ctx.finalize_measurements();
+    let est = estimates.get("Probe").expect("Probe observable");
+    assert_eq!(
+        est.n_bins, 2,
+        "binsize=100 with 200 samples should give 2 bins"
+    );
 }
 
 #[test]
@@ -142,6 +152,12 @@ fn test_context_register_with_shape() {
     ctx.register_observable_with_shape("ArrayObs", 10, &[3, 3]);
 
     ctx.measure("ArrayObs", 1.0);
+
+    let estimates = ctx.finalize_measurements();
+    assert!(
+        estimates.contains_key("ArrayObs"),
+        "ArrayObs should exist in estimates after register + measure"
+    );
 }
 
 #[test]
@@ -259,6 +275,9 @@ fn test_context_measure_array_basic() {
 
     let estimates = ctx.finalize_measurements();
     assert!(estimates.contains_key("Correlation"));
+    let est = estimates.get("Correlation").unwrap();
+    // binsize=2, 2 array measurements → 1 bin
+    assert_eq!(est.n_bins, 1, "binsize=2 with 2 samples should give 1 bin");
 }
 
 #[test]
@@ -273,6 +292,14 @@ fn test_context_measure_array_finalize() {
     let estimates = ctx.finalize_measurements();
     let est = estimates.get("Vec").expect("Vec observable");
     assert_eq!(est.n_bins, 2);
+    // binsize=1: bin0=[10,20], bin1=[30,40] → mean=[20,30]
+    // finalize computes mean over bins then mean over components
+    // mean of component means: (20+30)/2 = 25
+    assert!(
+        (est.mean - 25.0).abs() < 1e-10,
+        "expected mean 25.0, got {}",
+        est.mean
+    );
 }
 
 // ── Measurement namespace ─────────────────────────────────────────────────

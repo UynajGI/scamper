@@ -160,8 +160,8 @@ fn wang_landau_dos_matches_exact_on_4x4_ising() {
     }
 
     assert!(
-        max_diff < 0.5,
-        "WL DOS max |Δ ln g(E)| = {max_diff:.4}, expected < 0.5"
+        max_diff < 0.15,
+        "WL DOS max |Δ ln g(E)| = {max_diff:.4}, expected < 0.15"
     );
 }
 

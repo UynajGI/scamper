@@ -175,8 +175,16 @@ fn three_d_cubic_ising_wolff_runs() {
     )
     .run_one::<ClassicalMC<IsingModel, WolffCore>>(&params);
 
-    assert!(results.get("Energy").is_some());
-    assert!(results.get("Magnetization").is_some());
+    let e = results.get("Energy").expect("Energy observable missing");
+    assert!(
+        e.mean < 0.0,
+        "3D ferromagnetic Ising at β=0.8 should have negative energy, got {}",
+        e.mean
+    );
+    assert!(
+        results.get("Magnetization").is_some(),
+        "Magnetization observable missing"
+    );
 }
 
 // ── Honeycomb lattice ─────────────────────────────────────────────────────
@@ -232,7 +240,12 @@ fn lennard_jones_nvt_runs_through_scheduler() {
     )
     .run_one::<LennardJonesNvt<3>>(&params);
 
-    assert!(results.get("Energy").is_some(), "NVT should produce Energy");
+    let e = results.get("Energy").expect("NVT should produce Energy");
+    assert!(
+        e.mean.is_finite(),
+        "NVT energy should be finite, got {}",
+        e.mean
+    );
 }
 
 #[test]
@@ -258,7 +271,12 @@ fn lennard_jones_npt_runs_through_scheduler() {
     )
     .run_one::<LennardJonesNpt<3>>(&params);
 
-    assert!(results.get("Energy").is_some(), "NPT should produce Energy");
+    let e = results.get("Energy").expect("NPT should produce Energy");
+    assert!(
+        e.mean.is_finite(),
+        "NPT energy should be finite, got {}",
+        e.mean
+    );
 }
 
 #[test]
@@ -283,7 +301,12 @@ fn lennard_jones_muvt_runs_through_scheduler() {
     )
     .run_one::<LennardJonesMuVt<3>>(&params);
 
-    assert!(results.get("Energy").is_some(), "μVT should produce Energy");
+    let e = results.get("Energy").expect("μVT should produce Energy");
+    assert!(
+        e.mean.is_finite(),
+        "μVT energy should be finite, got {}",
+        e.mean
+    );
 }
 
 // ── Scheduler-ready dynamics adapters ─────────────────────────────────────
@@ -308,9 +331,13 @@ fn kawasaki_ising_runs_through_scheduler() {
     )
     .run_one::<KawasakiIsingMC>(&params);
 
+    let e = results
+        .get("Energy")
+        .expect("Kawasaki should produce Energy");
     assert!(
-        results.get("Energy").is_some(),
-        "Kawasaki should produce Energy"
+        e.mean < 0.0,
+        "ferromagnetic Ising at β=1.0 should have negative energy, got {}",
+        e.mean
     );
 }
 

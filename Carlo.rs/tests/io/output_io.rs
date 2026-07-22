@@ -86,6 +86,13 @@ fn test_save_json_empty_results() {
 
     save_json(&results, &path).unwrap();
     assert!(path.exists());
+
+    // Verify the file contains valid JSON
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(!content.is_empty(), "saved JSON file should not be empty");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&content).expect("saved file should contain valid JSON");
+    assert!(parsed.is_object(), "top-level JSON should be an object");
 }
 
 #[test]

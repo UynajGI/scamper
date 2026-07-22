@@ -45,9 +45,13 @@ fn test_scheduler_single_task() {
     // Should have SweepCount observable
     assert!(results.get("SweepCount").is_some());
 
-    // Mean should be > 100 (thermalization) + some measurement sweeps
+    // Mean of sweep counts 101..=1100 = (101+1100)/2 = 600.5
     let est = results.get("SweepCount").unwrap();
-    assert!(est.mean > 100.0);
+    assert!(
+        (est.mean - 600.5).abs() < 50.0,
+        "expected mean ~600.5, got {}",
+        est.mean
+    );
 }
 
 #[test]
@@ -70,4 +74,12 @@ fn test_scheduler_parallel_tasks() {
     for r in &results {
         assert!(r.get("SweepCount").is_some());
     }
+
+    // Mean of sweep counts 11..=110 = (11+110)/2 = 60.5
+    let est = results[0].get("SweepCount").unwrap();
+    assert!(
+        (est.mean - 60.5).abs() < 20.0,
+        "expected mean ~60.5, got {}",
+        est.mean
+    );
 }

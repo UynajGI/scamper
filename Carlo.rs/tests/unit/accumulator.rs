@@ -28,7 +28,8 @@ fn test_accumulator_multiple_bins() {
     }
 
     let est = acc.finalize();
-    assert!(est.mean > 0.0);
+    // Mean of 1..=15 is exactly 8.0
+    assert!((est.mean - 8.0).abs() < 1e-10);
     assert!(est.stderr > 0.0);
     assert_eq!(est.n_bins, 3);
 }
@@ -118,7 +119,9 @@ fn test_accumulator_negative_values() {
     }
 
     let est = acc.finalize();
-    assert!(est.mean < 0.0);
+    // binsize=3: bin0=[-3,-2,-1] mean=-2.0, partial bin1=[0] mean=0.0
+    // finalize mean = (-2.0 + 0.0) / 2 = -1.0
+    assert!((est.mean - (-1.0)).abs() < 1e-10);
 }
 
 #[test]
@@ -130,7 +133,7 @@ fn test_accumulator_large_values() {
     acc.add(1e10);
 
     let est = acc.finalize();
-    assert!((est.mean - 1e10).abs() < 1e5);
+    assert!((est.mean - 1e10).abs() < 1.0);
 }
 
 // ── Array observable tests ────────────────────────────────────────────────
@@ -270,6 +273,7 @@ fn test_accumulator_autocorr_time_uncorrelated() {
     }
     let tau = acc.autocorr_time();
     assert!(tau >= 0.0);
+    assert!(tau.is_finite(), "autocorr_time should be finite, got {tau}");
 }
 
 #[test]

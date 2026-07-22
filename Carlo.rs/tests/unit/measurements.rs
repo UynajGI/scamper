@@ -14,7 +14,11 @@ fn test_binning_accumulation() {
     let estimate = results.get("Energy").expect("Energy observable");
 
     // Mean of bins: [0..10].mean()=4.5, [10..20].mean()=14.5 → overall ~9.5
-    assert!(estimate.mean > 0.0);
+    assert!(
+        estimate.mean > 4.0 && estimate.mean < 15.0,
+        "mean should be in (4, 15), got {}",
+        estimate.mean
+    );
     assert!(estimate.stderr > 0.0);
 }
 

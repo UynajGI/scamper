@@ -40,7 +40,10 @@ fn exact_enumeration_helper_is_self_consistent() {
     assert!(exact < 0.0, "AFM energy should be negative, got {exact}");
     // Higher β should give lower (more negative) energy
     let cold = exact_energy(3, 1.0, 2.0, true);
-    assert!(cold < exact, "colder β=2 energy {cold} should be < warmer β=0.5 energy {exact}");
+    assert!(
+        cold < exact,
+        "colder β=2 energy {cold} should be < warmer β=0.5 energy {exact}"
+    );
 }
 
 // P2.2: HybridCore needs explicit construction (no Default impl) —

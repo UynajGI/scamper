@@ -34,6 +34,12 @@ fn test_register_observable() {
     // Measure after registration
     ctx.measure("custom_obs", 1.0);
     ctx.measure("custom_obs", 2.0);
+
+    let estimates = ctx.finalize_measurements();
+    assert!(
+        estimates.contains_key("custom_obs"),
+        "custom_obs should exist in estimates after register + measure"
+    );
 }
 
 #[test]
@@ -45,6 +51,12 @@ fn test_register_observable_with_shape() {
     ctx.register_observable_with_shape("array_obs", 100, &[3, 3]);
 
     ctx.measure("array_obs", 1.0);
+
+    let estimates = ctx.finalize_measurements();
+    assert!(
+        estimates.contains_key("array_obs"),
+        "array_obs should exist in estimates after register + measure"
+    );
 }
 
 #[test]

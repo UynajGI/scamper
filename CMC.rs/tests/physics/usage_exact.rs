@@ -74,7 +74,7 @@ fn three_d_ising_every_flip_delta_matches_recomputation() {
 
 #[test]
 fn xy_cluster_activation_matches_fortuin_kasteleyn() {
-    use cmc_rs::{ClusterAuxiliary, ClusterModel};
+    use cmc_rs::{Bond, BondType, ClusterAuxiliary, ClusterModel};
     use rand::SeedableRng;
     use rand_xoshiro::Xoshiro256PlusPlus;
 
@@ -94,11 +94,29 @@ fn xy_cluster_activation_matches_fortuin_kasteleyn() {
         }
         _ => panic!("XY model should produce Reflection auxiliary"),
     }
+
+    // FK bond probability for aligned spins must be in (0, 1)
+    let bond = Bond::new(0, 1, BondType::Generic, 1.0);
+    let beta = 1.0;
+    let p = model.cluster_bond_probability(&[1.0, 0.0], &[1.0, 0.0], &bond, &aux, beta);
+    assert!(
+        p > 0.0 && p < 1.0,
+        "FK bond probability for aligned XY spins should be in (0,1), got {p}"
+    );
+    // Verify against the FK formula: p = 1 - exp(-2*beta*J*(s_i·r)*(s_j·r))
+    if let ClusterAuxiliary::Reflection(refl) = &aux {
+        let proj: f64 = [1.0, 0.0].iter().zip(refl.iter()).map(|(a, b)| a * b).sum();
+        let expected = 1.0 - (-2.0 * beta * 1.0 * proj * proj).exp();
+        assert_close(p, expected, 1e-14);
+    }
+    // Anti-aligned spins must give zero bond probability
+    let p_anti = model.cluster_bond_probability(&[1.0, 0.0], &[-1.0, 0.0], &bond, &aux, beta);
+    assert_eq!(p_anti, 0.0);
 }
 
 #[test]
 fn heisenberg_cluster_activation_uses_continuous_reflection() {
-    use cmc_rs::{ClusterAuxiliary, ClusterModel};
+    use cmc_rs::{Bond, BondType, ClusterAuxiliary, ClusterModel};
     use rand::SeedableRng;
     use rand_xoshiro::Xoshiro256PlusPlus;
 
@@ -116,6 +134,29 @@ fn heisenberg_cluster_activation_uses_continuous_reflection() {
         }
         _ => panic!("Heisenberg model should produce Reflection auxiliary"),
     }
+
+    // FK bond probability for aligned spins must be in (0, 1)
+    let bond = Bond::new(0, 1, BondType::Generic, 1.0);
+    let beta = 1.0;
+    let p = model.cluster_bond_probability(&[0.0, 0.6, 0.8], &[0.0, 0.6, 0.8], &bond, &aux, beta);
+    assert!(
+        p > 0.0 && p < 1.0,
+        "FK bond probability for aligned Heisenberg spins should be in (0,1), got {p}"
+    );
+    // Verify against the FK formula: p = 1 - exp(-2*beta*J*(s_i·r)*(s_j·r))
+    if let ClusterAuxiliary::Reflection(refl) = &aux {
+        let proj: f64 = [0.0, 0.6, 0.8]
+            .iter()
+            .zip(refl.iter())
+            .map(|(a, b)| a * b)
+            .sum();
+        let expected = 1.0 - (-2.0 * beta * 1.0 * proj * proj).exp();
+        assert_close(p, expected, 1e-14);
+    }
+    // Anti-aligned spins must give zero bond probability
+    let p_anti =
+        model.cluster_bond_probability(&[0.0, 0.6, 0.8], &[0.0, -0.6, -0.8], &bond, &aux, beta);
+    assert_eq!(p_anti, 0.0);
 }
 
 // ── Over-relaxation energy preservation for XY model ──────────────────────
@@ -199,6 +240,12 @@ fn continuous_heat_bath_heisenberg_energy_is_physical() {
         "energy {} above physical maximum {}",
         system.energy,
         n_edges
+    );
+    // At β=1.0 with ferromagnetic J=1, thermal correlations should make E < 0
+    assert!(
+        system.energy < 0.0,
+        "ferromagnetic Heisenberg at β=1.0 should have negative energy, got {}",
+        system.energy
     );
     assert_close(system.energy_error(&model), 0.0, 1e-10);
 

@@ -24,4 +24,17 @@ fn test_monte_carlo_sweep() {
     mc.sweep(&mut ctx);
 
     assert_eq!(mc.sweep_count, 1);
+
+    // Verify the measurement was recorded
+    let estimates = ctx.finalize_measurements();
+    assert!(
+        estimates.contains_key("sweeps"),
+        "sweeps observable should exist after sweep"
+    );
+    let est = &estimates["sweeps"];
+    assert!(
+        (est.mean - 1.0).abs() < 1e-10,
+        "expected mean 1.0, got {}",
+        est.mean
+    );
 }

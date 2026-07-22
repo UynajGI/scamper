@@ -125,9 +125,9 @@ fn ground_state_energy(delta: f64, omega: f64, g: f64, cutoff: usize) -> f64 {
 
 // ─── Layer 1: deterministic ED tests ─────────────────────────────────────
 
-/// The Born-Oppenheimer effective potential curvature V_eff''(0) = Ω(1-r²)
-/// changes sign at r=1. This is the analytic proof of the critical point.
-/// We verify the formula itself is correct.
+/// Tests the analytic Born-Oppenheimer formula V_eff''(0) = Ω(1-r²),
+/// not the QMC solver. This is a math identity check that documents the
+/// analytic proof of the critical point at r=1.
 #[test]
 fn born_oppenheimer_curvature_changes_sign_at_r_equals_one() {
     let delta = 1.0_f64;

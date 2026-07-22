@@ -67,6 +67,13 @@ fn ar1_correlated_data_has_higher_tau_than_uncorrelated() {
         tau_mid >= tau_uncorr,
         "expected τ(0.5)≥τ(0.0): {tau_mid} ≥ {tau_uncorr}"
     );
+    // For ρ=0.8, τ_theory = (1+0.8)/(1-0.8) = 9. The crude rebinned estimator
+    // significantly underestimates τ (~0.4 with 20k samples), but should still
+    // be clearly positive.
+    assert!(
+        tau_strong > 0.1,
+        "τ(ρ=0.8) should be > 0.1 (theory=9, crude estimator ~0.4), got {tau_strong}"
+    );
 }
 
 #[test]
@@ -97,6 +104,12 @@ fn stronger_correlation_gives_larger_autocorr_time() {
     let tau_m = make_acc_from_samples(&s_m, 5).autocorr_time();
     let tau_s = make_acc_from_samples(&s_s, 5).autocorr_time();
     assert!(tau_s >= tau_m, "τ(0.8)={tau_s} should be ≥ τ(0.5)={tau_m}");
+    // For ρ=0.8, τ_theory = 9. The crude rebinned estimator underestimates
+    // significantly (~0.4 with 20k samples), but should still be clearly positive.
+    assert!(
+        tau_s > 0.1,
+        "τ(ρ=0.8) should be > 0.1 (theory=9, crude estimator ~0.4), got {tau_s}"
+    );
 }
 
 #[test]

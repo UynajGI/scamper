@@ -91,9 +91,10 @@ fn high_temperature_limit_energy_is_small_and_magnetization_matches() {
     let measured_e = energy_sum / samples as f64;
     let measured_m2 = m2_sum / samples as f64;
 
-    // At high T, E is small (thermal energy ~ β * coupling² for small β)
+    // Leading-order high-T expansion: E ≈ -β·J²·N_bonds/4 = -0.1·1·4/4 = -0.1
+    // (PBC 4-site chain has 4 bonds). Tolerance covers higher-order corrections.
     assert!(
-        measured_e.abs() < 0.3,
+        measured_e.abs() < 0.15,
         "high-T energy should be small: got {measured_e}"
     );
     // ⟨m²⟩ → 1/(4N) for N independent S=1/2 at infinite T
