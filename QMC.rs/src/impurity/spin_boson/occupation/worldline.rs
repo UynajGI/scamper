@@ -30,6 +30,10 @@ pub struct OccupationObservables {
     pub parity: f64,
     /// Purity of the exact finite-cutoff thermal reduced spin density matrix.
     pub reduced_spin_purity: f64,
+    /// Variance of the bosonic quadrature x = a + a†, i.e. ⟨x²⟩_thermal.
+    pub quadrature_variance: f64,
+    /// Fourth moment of the bosonic quadrature, i.e. ⟨x⁴⟩_thermal.
+    pub quadrature_fourth_moment: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +45,8 @@ pub struct OccupationWorldlineSampler {
     transfer: Vec<Vec<f64>>,
     h_transfer: Vec<Vec<f64>>,
     sx_transfer: Vec<Vec<f64>>,
+    x2_transfer: Vec<Vec<f64>>,
+    x4_transfer: Vec<Vec<f64>>,
     eigensystem: SymmetricEigensystem,
     transfer_powers: Vec<Vec<Vec<f64>>>,
     reduced_spin_purity: f64,
@@ -91,8 +97,29 @@ impl OccupationWorldlineSampler {
         for state in 0..model.basis().dimension() {
             sx[state][model.basis().flipped_spin(state)] = 1.0;
         }
+        // x² = (a+a†)² in the occupation basis (spin-diagonal).
+        // x²|n,s⟩ = (2n+1)|n,s⟩ + √((n+1)(n+2))|n+2,s⟩ + √(n(n-1))|n-2,s⟩.
+        let dim = model.basis().dimension();
+        let cutoff = model.basis().boson_dimension();
+        let mut x2 = vec![vec![0.0; dim]; dim];
+        #[allow(clippy::needless_range_loop)]
+        for state in 0..dim {
+            let n = model.basis().occupation(state, 0) as f64;
+            let s = state & 1;
+            x2[state][state] = 2.0 * n + 1.0;
+            let np2 = n as usize + 2;
+            if np2 < cutoff {
+                let target = 2 * np2 + s;
+                let amp = ((n + 1.0) * (n + 2.0)).sqrt();
+                x2[state][target] = amp;
+                x2[target][state] = amp;
+            }
+        }
         let h_transfer = multiply(&hamiltonian, &transfer);
         let sx_transfer = multiply(&sx, &transfer);
+        let x2_transfer = multiply(&x2, &transfer);
+        let x4 = multiply(&x2, &x2);
+        let x4_transfer = multiply(&x4, &transfer);
         let rho = eigensystem.thermal_density_matrix(beta);
         let reduced_spin_purity = reduced_spin_purity(model.basis(), &rho);
         let mut transfer_powers = Vec::with_capacity(slices + 1);
@@ -108,6 +135,8 @@ impl OccupationWorldlineSampler {
             transfer,
             h_transfer,
             sx_transfer,
+            x2_transfer,
+            x4_transfer,
             eigensystem,
             transfer_powers,
             reduced_spin_purity,
@@ -214,6 +243,8 @@ impl OccupationWorldlineSampler {
         let mut parity = 0.0;
         let mut energy = 0.0;
         let mut sigma_x = 0.0;
+        let mut quadrature_variance = 0.0;
+        let mut quadrature_fourth = 0.0;
         for index in 0..self.slices {
             let state = self.states[index];
             let next = self.states[(index + 1) % self.slices];
@@ -227,6 +258,8 @@ impl OccupationWorldlineSampler {
             }
             energy += self.h_transfer[state][next] / denominator;
             sigma_x += self.sx_transfer[state][next] / denominator;
+            quadrature_variance += self.x2_transfer[state][next] / denominator;
+            quadrature_fourth += self.x4_transfer[state][next] / denominator;
             let mut total_n = 0usize;
             for mode in 0..basis.modes() {
                 let n = basis.occupation(state, mode) as f64;
@@ -250,6 +283,8 @@ impl OccupationWorldlineSampler {
         total_boson *= inv;
         energy *= inv;
         sigma_x *= inv;
+        quadrature_variance *= inv;
+        quadrature_fourth *= inv;
         parity *= inv;
         for value in &mut mode_occupations {
             *value *= inv;
@@ -297,6 +332,8 @@ impl OccupationWorldlineSampler {
             mode_cross_correlations: cross,
             spin_boson_covariance_z_n: zn,
             parity,
+            quadrature_variance,
+            quadrature_fourth_moment: quadrature_fourth,
             reduced_spin_purity: self.reduced_spin_purity,
         })
     }
