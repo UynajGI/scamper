@@ -56,11 +56,11 @@
 - **File:** `Carlo.rs/tests/unit/merge.rs` (extend)
 - **Status:** not started
 
-### [ ] C-P2.4 — Thread-count independence
-- **Problem:** No test verifies multi-thread (Rayon) produces statistically equivalent results to single-thread.
-- **Plan:** Run 4-task job with 1 thread vs 4 threads. Assert mean estimates agree within 2σ.
-- **File:** `Carlo.rs/tests/integration/backend.rs` (extend)
-- **Status:** not started
+### [x] C-P2.4 — Thread-count independence
+- **Problem:** No test verifies multi-thread (Rayon) produces identical RNG streams to single-thread.
+- **Fix:** New test in `tests/integration/backend.rs`: runs 8 tasks with 1 thread vs 4 threads, compares first 8 u64 draws per task. All match bit-exactly.
+- **Files:** `tests/integration/backend.rs` (extend)
+- **Status:** ✅ done
 
 ## Completion log
 

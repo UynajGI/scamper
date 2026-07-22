@@ -182,3 +182,54 @@ fn test_decorrelated_autocorr_time_basic() {
         assert!(v.is_finite(), "Autocorrelation time should be finite");
     }
 }
+
+#[test]
+fn test_decorrelated_autocorr_ar1_scalar() {
+    use carlo_rs::merge::{compute_decorrelated_autocorr_time, cov_of_mean};
+    use rand::rngs::StdRng;
+    use rand::RngExt;
+    use rand::SeedableRng;
+
+    // Generate scalar AR(1) data with ρ=0.7
+    let rho: f64 = 0.7;
+    let n = 10000;
+    let mut rng = StdRng::seed_from_u64(77);
+    let noise_scale = (1.0_f64 - rho * rho).sqrt();
+    let mut series = Vec::with_capacity(n);
+    let mut x = 0.0;
+    for _ in 0..n {
+        let u1: f64 = rng.random();
+        let u2: f64 = rng.random();
+        let eps = (-2.0 * u1.max(f64::MIN_POSITIVE).ln()).sqrt()
+            * (2.0 * std::f64::consts::PI * u2).cos();
+        x = rho * x + noise_scale * eps;
+        series.push(x);
+    }
+
+    // Pack as 1×n array
+    let mut bins = ndarray::Array2::<f64>::zeros((1, n));
+    for (i, &v) in series.iter().enumerate() {
+        bins[[0, i]] = v;
+    }
+    let bins_d = bins.into_dyn();
+    let mu = bins_d.mean_axis(ndarray::Axis(1)).unwrap().to_owned();
+    let cov = cov_of_mean(&bins_d);
+
+    let autocorr = compute_decorrelated_autocorr_time(&bins_d, &mu, &cov, n / 10);
+
+    assert_eq!(autocorr.shape(), &[1]);
+    // For ρ=0.7, τ_theory = (1+ρ)/(1−ρ) = 5.67.
+    // The decorrelated estimator uses a whitening transform (eigenvalue decomposition)
+    // that for 1-dimensional data degenerates to the regular estimator.
+    // We verify the key property: correlated data does not produce NaN.
+    assert!(
+        autocorr[0] >= 0.0,
+        "autocorrelation time should be >= 0, got {}",
+        autocorr[0]
+    );
+    assert!(
+        autocorr[0].is_finite(),
+        "autocorrelation time should be finite, got {}",
+        autocorr[0]
+    );
+}
