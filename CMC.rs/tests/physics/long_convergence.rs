@@ -277,21 +277,26 @@ fn npt_volume_increases_when_pressure_decreases() {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// 5b. NPT: ideal gas quantitative — PV = NkT (within 10%)
+// 5b. NPT: finite-N ideal gas quantitative — ⟨V⟩ = (N+1)kT/P
 // ════════════════════════════════════════════════════════════════════════
 
 #[test]
-#[ignore = "long: NPT directional response (~30 s). KNOWN ISSUE: equilibrium V doesn't match ideal gas EOS."]
-fn npt_volume_responds_directionally_to_pressure_change() {
-    // Quantitative NPT test: V(P1)/V(P2) should be close to P2/P1.
-    // Use small system with initial box near expected equilibrium.
-    let run_volume = |pressure: f64, density: f64| -> f64 {
+#[ignore = "long: NPT finite-N ideal gas quantitative (~40 s)"]
+fn npt_ideal_gas_volume_matches_finite_n_exact() {
+    // Finite-N NPT ideal gas: exact ⟨V⟩ = (N+1)kT/P (not NkT/P).
+    // The +1 comes from the volume integration measure dV in the partition function.
+    // Thermodynamic limit recovers NkT/P as N→∞.
+    //
+    // Use box_length (not density) to control initial volume directly —
+    // density-based box uses reference_particles=108 which creates a huge box
+    // for small N.
+    let run_volume = |pressure: f64, box_length: f64| -> f64 {
         let mut params = Params::new();
-        params.set("n_particles", 4);
-        params.set("density", density);
+        params.set("n_particles", 4usize);
+        params.set("box_length", box_length);
         params.set("beta", 1.0);
         params.set("pressure", pressure);
-        params.set("cutoff", 2.5);
+        params.set("cutoff", box_length * 0.5); // large cutoff → nearly ideal
         params.set("max_displacement", 0.3);
         params.set("max_log_volume_change", 0.5);
 
@@ -310,48 +315,54 @@ fn npt_volume_responds_directionally_to_pressure_change() {
         results.get("Volume").expect("Volume observable").mean
     };
 
-    // Ideal gas: V = NkT/P = 4/P
-    // P=0.1 → V=40 → density=4/40=0.1, P=0.4 → V=10 → density=4/10=0.4
-    let v_low_p = run_volume(0.1, 0.1);
-    let v_high_p = run_volume(0.4, 0.4);
+    // Finite-N exact: ⟨V⟩ = (N+1)kT/P = 5/P for N=4
+    // P=0.1 → 50, P=0.5 → 10.  Ratio = 5.0
+    let v_low_p = run_volume(0.1, 3.68); // initial V ≈ 50
+    let v_high_p = run_volume(0.5, 2.15); // initial V ≈ 10
 
-    // Debug: print actual volumes
-    eprintln!("NPT debug: V(P=0.1)={v_low_p:.4}, V(P=0.4)={v_high_p:.4}");
+    eprintln!("NPT finite-N: V(P=0.1)={v_low_p:.4}, V(P=0.5)={v_high_p:.4}");
 
+    // At low density (large V/N ≈ 12.5), LJ repulsion is negligible,
+    // so the system is nearly ideal. Expect ratio close to P2/P1 = 5.0.
     let ratio = v_low_p / v_high_p;
-    // NPT implementation note: the volume responds directionally correctly
-    // (V decreases with increasing P) but the equilibrium volume is much
-    // larger than the ideal gas prediction V=NkT/P. This suggests the
-    // volume move acceptance formula or pressure coupling needs investigation.
-    // For now, verify directional correctness with non-trivial response.
+    let exact_ratio = 5.0 / 1.0; // P(high)/P(low) = 0.5/0.1
     assert!(
-        ratio > 1.02,
-        "NPT: V(P=0.1)/V(P=0.4) = {ratio:.4}, should be > 1.02 (non-trivial response)"
+        (ratio - exact_ratio).abs() / exact_ratio < 0.25,
+        "NPT: V(P=0.1)/V(P=0.5) = {ratio:.4}, exact finite-N = {exact_ratio:.1}"
     );
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// 6b. μVT: ideal gas ⟨N⟩ matches Poisson mean zV
+// 6b. μVT: ideal gas quantitative — ⟨N⟩ = zV = exp(βμ)Λ⁻³V
 // ════════════════════════════════════════════════════════════════════════
 
 #[test]
-#[ignore = "long: μVT directional response (~30 s). KNOWN ISSUE: equilibrium N doesn't match ideal gas."]
-fn muvt_particle_number_responds_directionally_to_mu_change() {
-    // Quantitative μVT test: N(μ1)/N(μ2) should be close to exp(β(μ1-μ2)).
-    let run_n = |mu: f64| -> f64 {
+#[ignore = "long: μVT ideal gas quantitative (~40 s)"]
+fn muvt_ideal_gas_particle_number_matches_poisson_most_probable() {
+    // Ideal gas μVT: exact ⟨N⟩ = zV where z = exp(βμ)Λ⁻³.
+    // N follows Poisson(zV). Ratio N(μ=0)/N(μ=-2) = exp(2β) ≈ 7.39 for β=1.
+    //
+    // Use box_length (not density) — density-based box uses reference_particles=108
+    // which gives a huge box for small N. Use large cutoff to suppress LJ repulsion.
+    // thermal_wavelength=1.0 for simplicity (Λ=1).
+    let run_n = |mu: f64, box_length: f64| -> f64 {
         let mut params = Params::new();
-        params.set("n_particles", 4);
+        params.set("n_particles", 4usize);
+        params.set("box_length", box_length);
         params.set("beta", 1.0);
-        params.set("cutoff", 2.5);
+        params.set("sigma", 0.1); // tiny particles → nearly ideal gas
+        params.set("cutoff", 0.25); // cutoff = 2.5*sigma
         params.set("max_displacement", 0.3);
         params.set("chemical_potential", mu);
-        params.set("initial_box", 3.0);
+        params.set("thermal_wavelength", 1.0);
+        params.set("maximum_particles", 40usize);
+        params.set("exchange_attempts", 4u64);
 
         let results = Scheduler::new(
             RayonBackend::new(1),
             RunConfig {
-                thermalization_sweeps: 2000,
-                measurement_sweeps: 8000,
+                thermalization_sweeps: 4000,
+                measurement_sweeps: 16000,
                 binsize: 200,
                 base_seed: 42,
                 ..Default::default()
@@ -365,15 +376,17 @@ fn muvt_particle_number_responds_directionally_to_mu_change() {
             .mean
     };
 
-    let n_low_mu = run_n(-2.0);
-    let n_high_mu = run_n(0.0);
+    // Box V=10: at μ=0, ⟨N⟩ = V × 1.0 × 1.0 = 10. At μ=-2, ⟨N⟩ = V × 0.135 × 1.0 ≈ 1.4.
+    // Ratio ≈ 7.4. Use small box to keep particle counts manageable.
+    let n_low_mu = run_n(-2.0, 2.154); // V ≈ 10
+    let n_high_mu = run_n(0.0, 2.154); // same V
 
-    // Ideal gas: N(μ=0)/N(μ=-2) = exp(2) ≈ 7.39
-    // μVT implementation note: similar to NPT, the particle number responds
-    // directionally but the absolute values may not match ideal gas predictions.
+    eprintln!("μVT: N(μ=0)={n_high_mu:.4}, N(μ=-2)={n_low_mu:.4}");
+
     let ratio = n_high_mu / n_low_mu;
+    let exact = (2.0f64).exp(); // exp(β(μ_high - μ_low)) = exp(2) ≈ 7.39
     assert!(
-        ratio > 1.02,
-        "μVT: N(μ=0)/N(μ=-2) = {ratio:.4}, should be > 1.02 (non-trivial response)"
+        (ratio - exact).abs() / exact < 0.25,
+        "μVT: N(μ=0)/N(μ=-2) = {ratio:.4}, exact = {exact:.2}"
     );
 }
