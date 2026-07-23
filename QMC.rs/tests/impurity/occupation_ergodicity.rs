@@ -33,6 +33,50 @@ fn run_occupation_rabi(seed: u64) -> (f64, f64, f64, f64) {
     (sigma_z.mean, sigma_z.stderr, boson_n.mean, boson_n.stderr)
 }
 
+/// z-score check against the pooled mean.
+///
+/// For each observable the per-seed means should scatter around the
+/// pooled (inverse-variance weighted) mean with z-scores well within
+/// ±4, and the mean |z| should be under 2.
+fn assert_z_scores(name: &str, values: &[f64], stderrs: &[f64]) {
+    let n = values.len() as f64;
+
+    // Pooled mean (inverse-variance weighted)
+    let mut sum_w = 0.0;
+    let mut sum_wm = 0.0;
+    for i in 0..values.len() {
+        let w = 1.0 / stderrs[i].max(0.01).powi(2);
+        sum_w += w;
+        sum_wm += w * values[i];
+    }
+    let pooled_mean = sum_wm / sum_w;
+
+    // Pooled variance (sample variance of the per-seed means)
+    let pooled_var = values
+        .iter()
+        .map(|&v| (v - pooled_mean).powi(2))
+        .sum::<f64>()
+        / (n - 1.0);
+
+    // z-scores
+    let mut z_values: Vec<f64> = Vec::new();
+    for i in 0..values.len() {
+        let denom = (pooled_var / n + stderrs[i].max(0.01).powi(2)).sqrt();
+        let z = (values[i] - pooled_mean) / denom.max(1e-10);
+        z_values.push(z);
+        assert!(
+            z.abs() < 4.0,
+            "{name}: z-score for seed {i} = {z:.4} exceeds 4σ (values: {values:?})",
+        );
+    }
+
+    let mean_abs_z: f64 = z_values.iter().map(|z| z.abs()).sum::<f64>() / n;
+    assert!(
+        mean_abs_z < 2.0,
+        "{name}: mean |z| = {mean_abs_z:.4} exceeds 2 (z-values: {z_values:?})",
+    );
+}
+
 #[test]
 fn occupation_ergodicity_multi_seed_convergence() {
     let seeds = [42u64, 123, 456, 789];
@@ -62,4 +106,8 @@ fn occupation_ergodicity_multi_seed_convergence() {
         "⟨n⟩ spread={n_spread:.6} exceeds 4σ={:.6} (values: {n_values:?})",
         4.0 * n_max_stderr.max(0.01)
     );
+
+    // z-score checks against pooled mean
+    assert_z_scores("⟨σz⟩", &sz_values, &sz_stderrs);
+    assert_z_scores("⟨n⟩", &n_values, &n_stderrs);
 }

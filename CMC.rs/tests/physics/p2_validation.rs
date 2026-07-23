@@ -2,7 +2,7 @@
 //! that already have basic validation but need more coverage.
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
-use cmc_rs::{ClassicalMC, Hamiltonian, IsingModel};
+use cmc_rs::{ClassicalMC, Hamiltonian, IsingModel, MultiSpinIsing};
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
@@ -78,6 +78,38 @@ fn metropolis_8site_energy_matches_exact_enumeration() {
     assert!(
         (e.mean - exact).abs() < 0.15,
         "Metropolis 8-site E={:.4}, exact={:.4}",
+        e.mean,
+        exact
+    );
+}
+
+#[test]
+fn multispin_ising_8site_energy_matches_exact_enumeration() {
+    // 8-site Ising chain: MultiSpinIsing (64 packed replicas) vs exact
+    // 256-state enumeration.  MultiSpinIsing implements both `MonteCarlo`
+    // and `FromParams`, so it runs through the standard Carlo scheduler.
+    // The scalar "Energy" observable is replica 0's energy; with enough
+    // thermalization and measurement sweeps it converges to ⟨E⟩.
+    let exact = exact_energy(8, 1.0, 0.5, true);
+    assert!(exact < 0.0, "AFM energy should be negative, got {exact}");
+
+    let mut params = Params::new();
+    params.set("L", 8);
+    params.set("J", 1.0);
+    params.set("beta", 0.5);
+    let config = RunConfig {
+        thermalization_sweeps: 5000,
+        measurement_sweeps: 20000,
+        binsize: 500,
+        base_seed: 42,
+        ..Default::default()
+    };
+    let scheduler = Scheduler::new(RayonBackend::new(1), config);
+    let results = scheduler.run_one::<MultiSpinIsing>(&params);
+    let e = results.get("Energy").expect("Energy");
+    assert!(
+        (e.mean - exact).abs() < 0.15,
+        "MultiSpinIsing 8-site E={:.4}, exact={:.4}",
         e.mean,
         exact
     );

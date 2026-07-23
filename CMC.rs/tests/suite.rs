@@ -56,6 +56,8 @@ mod continuous_spins;
 mod dynamics_exact;
 #[path = "physics/ergodicity.rs"]
 mod ergodicity;
+#[path = "physics/ergodicity_extended.rs"]
+mod ergodicity_extended;
 #[path = "physics/generalized_exact.rs"]
 mod generalized_exact;
 #[path = "physics/lattice_exact.rs"]
@@ -78,5 +80,7 @@ mod transition_balance;
 mod usage_exact;
 #[path = "physics/worm_exact.rs"]
 mod worm_exact;
+#[path = "physics/zscore_extended.rs"]
+mod zscore_extended;
 #[path = "physics/zscore_validation.rs"]
 mod zscore_validation;

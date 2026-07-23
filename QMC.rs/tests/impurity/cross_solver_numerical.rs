@@ -1,10 +1,11 @@
 //! Cross-solver validation: wormhole↔occupation.
 //!
-//! The occupation solver is compared against exact analytic results for the
-//! free two-level system. The wormhole solver is run on the same model but
-//! only checked for finite output (convention differences prevent direct
-//! observable comparison). A true cross-solver test would compare both
-//! against a shared ED reference.
+//! Both solvers are compared against the exact analytic result for the
+//! free two-level system (g=0): |⟨σ⟩| = tanh(βΔ/2). The wormhole and
+//! occupation solvers use different basis conventions (see
+//! `cross_solver.rs` for the full catalogue), so the sign of the
+//! measured observable differs, but the magnitude must agree and each
+//! must match the exact result individually.
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use qmc_rs::impurity::ImpurityQmc;
@@ -13,15 +14,23 @@ use qmc_rs::OccupationWorldlineQmc;
 // ─── P1.1: Wormhole ↔ Occupation (free two-level system) ────────────────
 
 #[test]
-fn occupation_matches_exact_free_two_level_wormhole_smoke() {
-    // Free two-level system: g=0, only tunnelling Δ.
-    // Both solvers should give ⟨σz⟩ = -tanh(βΔ/2) (occupation convention)
-    // and ⟨E⟩ = -(Δ/2)tanh(βΔ/2).
+fn occupation_and_wormhole_match_exact_free_two_level() {
+    // Free two-level system: g=0, only splitting Δ.
+    //
+    // The two solvers use different basis conventions (see cross_solver.rs):
+    //   • Wormhole (rotated basis, σz_sampled = σx_physical):
+    //       H = -(Δ/2)σx  →  MagnetizationSigmaZ = +tanh(βΔ/2)
+    //   • Occupation (occupation basis):
+    //       H = +(Δ/2)σz  →  OccupationSigmaZ = -tanh(βΔ/2)
+    //
+    // The sign flip is convention difference #4. Both solvers measure the
+    // SAME physical splitting Δ, so their magnitudes must agree and each
+    // must match the exact result individually.
     let beta: f64 = 4.0;
-    let delta: f64 = 0.5;
-    let exact_sz: f64 = -(beta * delta / 2.0).tanh();
+    let delta: f64 = 1.0;
+    let exact_tanh: f64 = (beta * delta / 2.0).tanh(); // tanh(2.0) ≈ 0.964
 
-    // Occupation solver
+    // ── Occupation solver ──────────────────────────────────────────
     let mut params_occ = Params::new();
     params_occ.set("beta", beta);
     params_occ.set("kind", "rabi");
@@ -42,11 +51,8 @@ fn occupation_matches_exact_free_two_level_wormhole_smoke() {
         .get("OccupationSigmaZ")
         .expect("OccupationSigmaZ");
 
-    // Wormhole solver (rotated basis: σz_sampled = σx_physical)
-    // For free system with only tunnelling, the wormhole measures
-    // MagnetizationSigmaZ which corresponds to physical σx.
-    // In the free limit, ⟨σx⟩_physical = 0 (no σx term in H).
-    // So we compare expansion order instead.
+    // ── Wormhole solver ───────────────────────────────────────────
+    // NOTE: the wormhole uses `tunnelling` (not `spin_splitting`).
     let mut params_wh = Params::new();
     params_wh.set("beta", beta);
     params_wh.set("model", "rabi");
@@ -64,22 +70,46 @@ fn occupation_matches_exact_free_two_level_wormhole_smoke() {
     };
     let results_wh =
         Scheduler::new(RayonBackend::new(1), config_wh).run_one::<ImpurityQmc>(&params_wh);
-    let order_wh = results_wh.get("ExpansionOrder").expect("ExpansionOrder");
+    let sz_wh = results_wh
+        .get("MagnetizationSigmaZ")
+        .expect("MagnetizationSigmaZ");
 
-    // Occupation ⟨σz⟩ should match exact
+    // ── 1. Occupation ⟨σz⟩ vs exact ──────────────────────────────
+    // Occupation convention: ⟨σz⟩ = -tanh(βΔ/2)
+    let exact_occ = -exact_tanh;
     assert!(
-        (sz_occ.mean - exact_sz).abs() < 4.0 * sz_occ.stderr.max(0.02),
+        (sz_occ.mean - exact_occ).abs() < 4.0 * sz_occ.stderr.max(0.02),
         "Occupation ⟨σz⟩={:.4}±{:.4}, exact={:.4}",
         sz_occ.mean,
         sz_occ.stderr,
-        exact_sz
+        exact_occ
     );
 
-    // Wormhole expansion order should be non-negative (free system has few vertices)
+    // ── 2. Wormhole ⟨σz⟩ (= physical ⟨σx⟩) vs exact ──────────────
+    // Wormhole convention: MagnetizationSigmaZ = +tanh(βΔ/2)
+    let exact_wh = exact_tanh;
     assert!(
-        order_wh.mean >= 0.0,
-        "Wormhole expansion order should be ≥ 0, got {:.4}",
-        order_wh.mean
+        (sz_wh.mean - exact_wh).abs() < 4.0 * sz_wh.stderr.max(0.02),
+        "Wormhole ⟨σz⟩={:.4}±{:.4}, exact={:.4}",
+        sz_wh.mean,
+        sz_wh.stderr,
+        exact_wh
+    );
+
+    // ── 3. Cross-solver: occupation vs wormhole ──────────────────
+    // Sign-corrected comparison: -⟨σz⟩_occ should agree with ⟨σz⟩_wh
+    // within combined 4σ (sqrt of sum of squared stderrs).
+    let combined_sigma = (sz_occ.stderr.powi(2) + sz_wh.stderr.powi(2))
+        .sqrt()
+        .max(0.02);
+    assert!(
+        ((-sz_occ.mean) - sz_wh.mean).abs() < 4.0 * combined_sigma,
+        "Cross-solver mismatch: -occ⟨σz⟩={:.4}±{:.4}, wh⟨σz⟩={:.4}±{:.4}, combined 4σ={:.4}",
+        -sz_occ.mean,
+        sz_occ.stderr,
+        sz_wh.mean,
+        sz_wh.stderr,
+        4.0 * combined_sigma
     );
 }
 
