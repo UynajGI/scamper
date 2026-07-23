@@ -70,6 +70,8 @@ mod observables_exact;
 mod p2_remaining;
 #[path = "physics/p2_validation.rs"]
 mod p2_validation;
+#[path = "physics/particle_zscore.rs"]
+mod particle_zscore;
 #[path = "physics/particles_exact.rs"]
 mod particles_exact;
 #[path = "physics/statistical_regression.rs"]

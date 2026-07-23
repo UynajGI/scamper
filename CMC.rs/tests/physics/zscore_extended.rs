@@ -32,7 +32,10 @@
 //! compared against the Onsager exact thermodynamic-limit internal energy.
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
-use cmc_rs::{ClassicalMC, HeatBathCore, IsingModel, KawasakiCore};
+use cmc_rs::{
+    ClassicalMC, ContinuousHeatBathCore, HeatBathCore, HeisenbergModel, IsingGraphWormMC,
+    IsingModel, KawasakiCore, KineticIsingBklMC,
+};
 
 const N_SEEDS: usize = 16;
 const L: usize = 8;
@@ -350,6 +353,268 @@ fn kawasaki_zscore_m2_16_seeds() {
         .collect();
 
     assert_scatter_z(&results, "Kawasaki M2");
+}
+
+// ── Worm simulation helpers ───────────────────────────────────
+
+/// Run IsingGraphWormMC for one seed.
+/// Returns (energy_mean, energy_stderr). Energy is measured only in the
+/// physical sector; worm-sector sweeps produce no energy data.
+fn run_worm(seed: u64) -> (f64, f64) {
+    let mut params = Params::new();
+    params.set("lattice_type", "square");
+    params.set("Lx", L);
+    params.set("Ly", L);
+    params.set("pbc", true);
+    params.set("J", J);
+    params.set("beta", BETA);
+    params.set("worm_updates_per_sweep", L * L * 2);
+    let config = RunConfig {
+        thermalization_sweeps: THERM_SWEEPS,
+        measurement_sweeps: MEAS_SWEEPS,
+        binsize: BINSIZE,
+        base_seed: seed,
+        ..Default::default()
+    };
+    let r = Scheduler::new(RayonBackend::new(1), config).run_one::<IsingGraphWormMC>(&params);
+    let e = r.get("Energy").expect("Energy missing");
+    (e.mean, e.stderr)
+}
+
+// ── BKL simulation helpers ────────────────────────────────────
+
+/// Run KineticIsingBklMC for one seed.
+/// Returns (energy_mean, energy_stderr).
+fn run_bkl(seed: u64) -> (f64, f64) {
+    let mut params = Params::new();
+    params.set("lattice_type", "square");
+    params.set("Lx", L);
+    params.set("Ly", L);
+    params.set("pbc", true);
+    params.set("J", J);
+    params.set("beta", BETA);
+    params.set("event_time_per_sweep", 1.0);
+    params.set("kinetic_rate", "glauber");
+    let config = RunConfig {
+        thermalization_sweeps: THERM_SWEEPS,
+        measurement_sweeps: MEAS_SWEEPS,
+        binsize: BINSIZE,
+        base_seed: seed,
+        ..Default::default()
+    };
+    let r = Scheduler::new(RayonBackend::new(1), config).run_one::<KineticIsingBklMC>(&params);
+    let e = r.get("Energy").expect("Energy missing");
+    (e.mean, e.stderr)
+}
+
+// ── Worm tests ─────────────────────────────────────────────────
+
+#[test]
+fn worm_zscore_energy_16_seeds() {
+    // Finite-L transfer-matrix exact energy as the z-score reference.
+    // The worm samples the finite system correctly; Onsager is the
+    // thermodynamic limit and would create a systematic finite-size bias
+    // at L=8.
+    let exact_e = tm_exact_energy(L, L, BETA, J);
+    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64).map(|s| run_worm(s)).collect();
+
+    assert_exact_z(&results, exact_e, "Worm Energy");
+
+    // Onsager thermodynamic-limit sanity check
+    let e_onsager = onsager_energy_per_site(BETA, J) * (L * L) as f64;
+    let pooled_mean: f64 = results.iter().map(|(m, _)| m).sum::<f64>() / N_SEEDS as f64;
+    let tol = (L * L) as f64 * 0.10; // 10% finite-size tolerance
+    assert!(
+        (pooled_mean - e_onsager).abs() < tol,
+        "Worm energy: pooled {pooled_mean:.4}, Onsager {e_onsager:.4} (tol {tol:.4})"
+    );
+}
+
+// ── BKL tests ─────────────────────────────────────────────────
+
+#[test]
+fn bkl_zscore_energy_16_seeds() {
+    // BKL/n-fold-way dynamics samples the canonical ensemble through
+    // continuous-time rejection-free Glauber events. The Fenwick-tree
+    // kernel uses discrete spin-flip events, so its dynamics may differ
+    // from Metropolis in finite time-windows. Use scatter z-scores for
+    // self-consistency (same pattern as Kawasaki).
+    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64).map(|s| run_bkl(s)).collect();
+
+    assert_scatter_z(&results, "BKL Energy");
+
+    // Onsager sanity check (generous tolerance for kinetics)
+    let e_onsager = onsager_energy_per_site(BETA, J) * (L * L) as f64;
+    let pooled_mean: f64 = results.iter().map(|(m, _)| m).sum::<f64>() / N_SEEDS as f64;
+    let tol = (L * L) as f64 * 0.20; // 20% tolerance for BKL kinetics
+    assert!(
+        (pooled_mean - e_onsager).abs() < tol,
+        "BKL energy: pooled {pooled_mean:.4}, Onsager {e_onsager:.4} (tol {tol:.4})"
+    );
+}
+
+// ── Wang-Landau DOS-based energy reweighting ──────────────────
+
+/// Canonical energy from a log-density-of-states at inverse temperature β.
+///
+/// ```text
+/// E(β) = Σ_E E · exp(ln g(E) − βE) / Σ_E exp(ln g(E) − βE)
+/// ```
+fn canonical_energy(log_dos: &[f64], energies: &[f64], beta: f64) -> f64 {
+    let mut z = 0.0_f64;
+    let mut weighted_sum = 0.0_f64;
+    for (&ln_g, &e) in log_dos.iter().zip(energies.iter()) {
+        let weight = (ln_g - beta * e).exp();
+        z += weight;
+        weighted_sum += weight * e;
+    }
+    if z == 0.0 {
+        return f64::NAN;
+    }
+    weighted_sum / z
+}
+
+#[test]
+#[ignore = "long: WL 16-seed z-score (~60s)"]
+fn wang_landau_zscore_energy_16_seeds() {
+    use cmc_rs::{
+        build_square, enumerate_ising_density_of_states, IsingWangLandau, MacrostateAxis,
+        WangLandauRunControl,
+    };
+
+    const WL_N_SEEDS: usize = 16;
+    const WL_BETA: f64 = 0.5;
+
+    // Exact canonical energy for 4×4 Ising at β = 0.5.
+    let lattice = build_square(4, 4, true);
+    let model = IsingModel::new(1.0);
+    let exact_dos = enumerate_ising_density_of_states(&lattice, &model).unwrap();
+    let exact_log = exact_dos.log_density().unwrap();
+    let exact_energies = exact_dos.energies().to_vec();
+    let exact_log_values: Vec<f64> = (0..exact_log.bins()).map(|b| exact_log.value(b)).collect();
+    let exact_e = canonical_energy(&exact_log_values, &exact_energies, WL_BETA);
+
+    let estimates: Vec<f64> = (0..WL_N_SEEDS as u64)
+        .map(|seed| {
+            let mut params = Params::new();
+            params.set("Lx", 4);
+            params.set("Ly", 4);
+            params.set("J", 1.0);
+            params.set("beta", WL_BETA);
+            params.set("wl_final_log_f", 1e-6);
+            params.set("wl_flatness", 0.8);
+            params.set("wl_flatness_check_interval", 100);
+            params.set("wl_discovery_sweeps", 0);
+            params.set("wl_minimum_visited_fraction", 0.8);
+            params.set("wl_max_adaptation_sweeps", 150_000);
+
+            let scheduler = Scheduler::new(
+                RayonBackend::new(1),
+                RunConfig {
+                    base_seed: seed,
+                    ..Default::default()
+                },
+            );
+            let (mc, _results) = scheduler
+                .run_controlled_with_state::<IsingWangLandau, WangLandauRunControl>(
+                    &params,
+                    WangLandauRunControl::new(0),
+                )
+                .expect("WL run should succeed");
+
+            let wl_log = mc.estimator().log_density();
+            let wl_centers = mc.chain.algorithm.axis().centers();
+            let wl_log_values: Vec<f64> = (0..wl_log.bins()).map(|b| wl_log.value(b)).collect();
+            canonical_energy(&wl_log_values, &wl_centers, WL_BETA)
+        })
+        .collect();
+
+    // Scatter z-scores: each seed produces a single estimate via DOS
+    // reweighting, so we use the sample standard deviation as σ.
+    let n = estimates.len() as f64;
+    let mean_e = estimates.iter().sum::<f64>() / n;
+    let var = estimates.iter().map(|e| (e - mean_e).powi(2)).sum::<f64>() / (n - 1.0);
+    let std_sample = var.sqrt().max(1e-10);
+
+    // z_i = (E_i − E_exact) / σ_sample
+    let z_scores: Vec<f64> = estimates
+        .iter()
+        .map(|&e| (e - exact_e) / std_sample)
+        .collect();
+    let max_abs_z = z_scores.iter().map(|z| z.abs()).fold(0.0_f64, f64::max);
+    let mean_z = z_scores.iter().sum::<f64>() / n;
+
+    assert!(
+        max_abs_z < 4.0,
+        "WL Energy: max |z| = {max_abs_z:.2} should be < 4 (exact = {exact_e:.6})"
+    );
+    assert!(
+        mean_z.abs() < 2.0,
+        "WL Energy: mean z = {mean_z:.2} should be |z̄| < 2"
+    );
+
+    // The pooled DOS-based mean should match exact canonical energy.
+    let diff = (mean_e - exact_e).abs();
+    assert!(
+        diff < 0.15,
+        "WL Energy: pooled {mean_e:.4} vs exact {exact_e:.4}, diff {diff:.4}"
+    );
+}
+
+// ── O(3) Heisenberg simulation helpers ──────────────────────────
+
+/// Run ClassicalMC<HeisenbergModel, ContinuousHeatBathCore> for one seed on a
+/// 4×4 square lattice at β=0.3 (high temperature, equilibrates quickly).
+///
+/// Returns `(energy_mean, energy_stderr, m2_mean, m2_stderr)` where
+/// `m2` is the squared-magnitude of the O(3) magnetization vector.
+fn run_heisenberg_4x4(seed: u64) -> (f64, f64, f64, f64) {
+    let mut params = Params::new();
+    params.set("Lx", 4);
+    params.set("Ly", 4);
+    params.set("J", 1.0);
+    params.set("beta", 0.3);
+    let config = RunConfig {
+        thermalization_sweeps: 2000,
+        measurement_sweeps: 10000,
+        binsize: 200,
+        base_seed: seed,
+        ..Default::default()
+    };
+    let r = Scheduler::new(RayonBackend::new(1), config)
+        .run_one::<ClassicalMC<HeisenbergModel, ContinuousHeatBathCore>>(&params);
+    let e = r.get("Energy").expect("Energy missing");
+    let m2 = r.get("M2").expect("M2 missing");
+    (e.mean, e.stderr, m2.mean, m2.stderr)
+}
+
+// ── O(3) Heisenberg tests ──────────────────────────────────────
+
+#[test]
+fn heisenberg_zscore_energy_16_seeds() {
+    // No closed-form exact energy exists for the 4×4 Heisenberg model
+    // at β=0.3. Scatter z-scores test cross-seed self-consistency
+    // (same pattern as the Kawasaki tests above).
+    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64)
+        .map(|s| {
+            let (e_mean, e_se, _, _) = run_heisenberg_4x4(s);
+            (e_mean, e_se)
+        })
+        .collect();
+
+    assert_scatter_z(&results, "Heisenberg Energy (L=4, β=0.3)");
+}
+
+#[test]
+fn heisenberg_zscore_magnetization_squared_16_seeds() {
+    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64)
+        .map(|s| {
+            let (_, _, m2_mean, m2_se) = run_heisenberg_4x4(s);
+            (m2_mean, m2_se)
+        })
+        .collect();
+
+    assert_scatter_z(&results, "Heisenberg ⟨M²⟩ (L=4, β=0.3)");
 }
 
 // ── Microcanonical over-relaxation ────────────────────────────
