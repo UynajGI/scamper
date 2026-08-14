@@ -20,7 +20,12 @@
 //!
 //! 4-seed pairwise convergence: ⟨Energy⟩ and ⟨EnergyPerParticle⟩ must agree
 //! within 4 combined standard errors across independent seeds.
+//!
+//! Setting `SCUTTLE_ZSCORE_SEEDS=<n>` raises the z-score seed count for
+//! nightly high-power monitoring (unset → the default 16 seeds, unchanged
+//! for CI).
 
+use super::common::zscore_seed_count;
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use cmc_rs::LennardJonesNvt;
 
@@ -121,7 +126,8 @@ fn assert_particle_z(results: &[(f64, f64)], label: &str) {
 #[test]
 #[ignore = "~100s — 16 independent seeds × 10000 sweeps each; run via --ignored"]
 fn particle_nvt_energy_per_particle_zscore_16_seeds() {
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64).map(run_particle_nvt_epp).collect();
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64).map(run_particle_nvt_epp).collect();
     assert_particle_z(&results, "ParticleNVT EnergyPerParticle");
 }
 

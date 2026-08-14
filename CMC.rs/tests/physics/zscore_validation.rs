@@ -1,12 +1,16 @@
 //! Gap 1: z-score statistical validation framework.
 //!
-//! Runs 16 independent seeds for each solver on a 3-site PBC Ising chain
-//! at β=0.5, computes standardized residuals z = (⟨E⟩_MC − ⟨E⟩_exact) / SE,
+//! Runs 16 independent seeds (default) for each solver on a 3-site PBC Ising
+//! chain at β=0.5, computes standardized residuals z = (⟨E⟩_MC − ⟨E⟩_exact) / SE,
 //! and asserts:
 //!   - Each individual seed: |z| < 4
 //!   - Mean z-score across seeds: |z̄| < 1 (no systematic bias)
 //!   - z-scores are not all same sign (no one-sided bias)
+//!
+//! Setting `SCUTTLE_ZSCORE_SEEDS=<n>` raises the seed count for nightly
+//! high-power monitoring (unset → the default 16 seeds, unchanged for CI).
 
+use super::common::zscore_seed_count;
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use cmc_rs::{ClassicalMC, Hamiltonian, IsingModel, MetropolisCore, SWCore, WolffCore};
 
@@ -121,7 +125,8 @@ fn analyze_z_scores(results: &[(f64, f64)], exact: f64) -> (Vec<f64>, f64, f64, 
 #[test]
 fn metropolis_zscore_energy_16_seeds() {
     let exact = exact_3site_energy(BETA, J);
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64).map(run_metropolis).collect();
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64).map(run_metropolis).collect();
     let (_, max_z, mean_z, frac_pos) = analyze_z_scores(&results, exact);
 
     assert!(max_z < 4.0, "max |z| = {max_z:.2} should be < 4");
@@ -139,7 +144,8 @@ fn metropolis_zscore_energy_16_seeds() {
 #[test]
 fn metropolis_zscore_magnetization_16_seeds() {
     let exact = exact_3site_m2(BETA, J);
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64)
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64)
         .map(|seed| {
             let mut params = Params::new();
             params.set("L", 3);
@@ -174,7 +180,8 @@ fn metropolis_zscore_magnetization_16_seeds() {
 #[test]
 fn wolff_zscore_energy_16_seeds() {
     let exact = exact_3site_energy(BETA, J);
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64).map(run_wolff).collect();
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64).map(run_wolff).collect();
     let (_, max_z, mean_z, frac_pos) = analyze_z_scores(&results, exact);
 
     assert!(max_z < 4.0, "Wolff max |z| = {max_z:.2} should be < 4");
@@ -188,7 +195,8 @@ fn wolff_zscore_energy_16_seeds() {
 #[test]
 fn swendsen_wang_zscore_energy_16_seeds() {
     let exact = exact_3site_energy(BETA, J);
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64).map(run_sw).collect();
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64).map(run_sw).collect();
     let (_, max_z, mean_z, frac_pos) = analyze_z_scores(&results, exact);
 
     assert!(max_z < 4.0, "SW max |z| = {max_z:.2} should be < 4");
@@ -203,8 +211,9 @@ fn swendsen_wang_zscore_energy_16_seeds() {
 fn cross_solver_zscores_agree() {
     // Metropolis and Wolff z-score distributions should overlap.
     let exact = exact_3site_energy(BETA, J);
-    let metro: Vec<(f64, f64)> = (0..N_SEEDS as u64).map(run_metropolis).collect();
-    let wolff: Vec<(f64, f64)> = (0..N_SEEDS as u64).map(run_wolff).collect();
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let metro: Vec<(f64, f64)> = (0..n_seeds as u64).map(run_metropolis).collect();
+    let wolff: Vec<(f64, f64)> = (0..n_seeds as u64).map(run_wolff).collect();
     let (z_metro, _, mean_metro, _) = analyze_z_scores(&metro, exact);
     let (z_wolff, _, mean_wolff, _) = analyze_z_scores(&wolff, exact);
 

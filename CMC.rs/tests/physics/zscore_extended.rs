@@ -15,10 +15,11 @@
 //!    ```text
 //!    z_i = (mean_i − exact) / stderr_i
 //!    ```
-//!    Asserts: |z| < 4 per seed, |z̄| < 2, Σz > −8.
+//!    Asserts: |z| < 4 per seed, |z̄| < 2, Σz > −2√n (one-sided bias at
+//!    2σ of the mean; equals −8 at the default n = 16).
 //!
 //! 2. **Scatter z-scores** (used for Kawasaki M², where magnetization
-//!    conservation makes individual stderrs degenerate): the 16 seed means
+//!    conservation makes individual stderrs degenerate): the seed means
 //!    are standardized against their sample mean and sample standard
 //!    deviation:
 //!    ```text
@@ -30,7 +31,11 @@
 //!
 //! As a physical-correctness sanity check, the pooled energy mean is
 //! compared against the Onsager exact thermodynamic-limit internal energy.
+//!
+//! Setting `SCUTTLE_ZSCORE_SEEDS=<n>` raises the seed count for nightly
+//! high-power monitoring (unset → the default 16 seeds, unchanged for CI).
 
+use super::common::zscore_seed_count;
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use cmc_rs::{
     ClassicalMC, ContinuousHeatBathCore, HeatBathCore, HeisenbergModel, IsingGraphWormMC,
@@ -196,8 +201,13 @@ fn scatter_z_analysis(results: &[(f64, f64)]) -> (Vec<f64>, f64, f64, f64) {
 }
 
 /// Assert exact-value z-score criteria.
+///
+/// The one-sided-bias bound scales as √n so its power stays constant when
+/// the seed count is raised via `SCUTTLE_ZSCORE_SEEDS` (at the default
+/// n = 16 it evaluates to exactly −8.0, the original fixed threshold).
 fn assert_exact_z(results: &[(f64, f64)], exact: f64, label: &str) {
     let (_, max_z, mean_z, sum_z) = exact_z_analysis(results, exact);
+    let sum_z_floor = -2.0 * (results.len() as f64).sqrt();
     assert!(
         max_z < 4.0,
         "{label}: max |z| = {max_z:.2} should be < 4 (exact = {exact:.6})"
@@ -207,14 +217,19 @@ fn assert_exact_z(results: &[(f64, f64)], exact: f64, label: &str) {
         "{label}: mean z = {mean_z:.2} should be |z̄| < 2"
     );
     assert!(
-        sum_z > -8.0,
-        "{label}: sum z = {sum_z:.2} should be > −8 (no one-sided bias)"
+        sum_z > sum_z_floor,
+        "{label}: sum z = {sum_z:.2} should be > {sum_z_floor:.2} (no one-sided bias)"
     );
 }
 
 /// Assert scatter z-score criteria (self-consistency check).
+///
+/// Scatter z-scores are standardized against their own sample mean, so
+/// Σz = 0 exactly by construction; the √n bound is kept for symmetry with
+/// [`assert_exact_z`].
 fn assert_scatter_z(results: &[(f64, f64)], label: &str) {
     let (_, max_z, mean_z, sum_z) = scatter_z_analysis(results);
+    let sum_z_floor = -2.0 * (results.len() as f64).sqrt();
     assert!(
         max_z < 4.0,
         "{label}: max |z| = {max_z:.2} should be < 4 (scatter)"
@@ -224,8 +239,8 @@ fn assert_scatter_z(results: &[(f64, f64)], label: &str) {
         "{label}: mean z = {mean_z:.2} should be |z̄| < 2"
     );
     assert!(
-        sum_z > -8.0,
-        "{label}: sum z = {sum_z:.2} should be > −8 (no one-sided bias)"
+        sum_z > sum_z_floor,
+        "{label}: sum z = {sum_z:.2} should be > {sum_z_floor:.2} (no one-sided bias)"
     );
 }
 
@@ -279,7 +294,8 @@ fn run_kawasaki(seed: u64) -> (f64, f64, f64, f64) {
 #[test]
 fn heat_bath_zscore_energy_16_seeds() {
     let exact_e = tm_exact_energy(L, L, BETA, J);
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64)
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64)
         .map(|s| {
             let (e_mean, e_se, _, _) = run_heat_bath(s);
             (e_mean, e_se)
@@ -291,7 +307,7 @@ fn heat_bath_zscore_energy_16_seeds() {
 
     // Onsager thermodynamic-limit sanity check
     let e_onsager = onsager_energy_per_site(BETA, J) * (L * L) as f64;
-    let pooled_mean: f64 = results.iter().map(|(m, _)| m).sum::<f64>() / N_SEEDS as f64;
+    let pooled_mean: f64 = results.iter().map(|(m, _)| m).sum::<f64>() / results.len() as f64;
     let tol = (L * L) as f64 * 0.10; // 10% finite-size tolerance
     assert!(
         (pooled_mean - e_onsager).abs() < tol,
@@ -302,7 +318,8 @@ fn heat_bath_zscore_energy_16_seeds() {
 #[test]
 fn heat_bath_zscore_m2_16_seeds() {
     let exact_m2 = tm_exact_m2(L, L, BETA, J);
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64)
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64)
         .map(|s| {
             let (_, _, m2_mean, m2_se) = run_heat_bath(s);
             (m2_mean, m2_se)
@@ -317,7 +334,8 @@ fn heat_bath_zscore_m2_16_seeds() {
 
 #[test]
 fn kawasaki_zscore_energy_16_seeds() {
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64)
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64)
         .map(|s| {
             let (e_mean, e_se, _, _) = run_kawasaki(s);
             (e_mean, e_se)
@@ -332,7 +350,7 @@ fn kawasaki_zscore_energy_16_seeds() {
 
     // Onsager sanity check (generous tolerance for conserved-M sector)
     let e_onsager = onsager_energy_per_site(BETA, J) * (L * L) as f64;
-    let pooled_mean: f64 = results.iter().map(|(m, _)| m).sum::<f64>() / N_SEEDS as f64;
+    let pooled_mean: f64 = results.iter().map(|(m, _)| m).sum::<f64>() / results.len() as f64;
     let tol = (L * L) as f64 * 0.20; // 20% tolerance (conserved-M sector)
     assert!(
         (pooled_mean - e_onsager).abs() < tol,
@@ -345,7 +363,8 @@ fn kawasaki_zscore_m2_16_seeds() {
     // Kawasaki conserves magnetization, so M² is constant within each seed
     // and individual stderrs are degenerate. Use scatter z-scores to test
     // cross-seed self-consistency of the initial-state distribution.
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64)
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64)
         .map(|s| {
             let (_, _, m2_mean, m2_se) = run_kawasaki(s);
             (m2_mean, m2_se)
@@ -416,13 +435,14 @@ fn worm_zscore_energy_16_seeds() {
     // thermodynamic limit and would create a systematic finite-size bias
     // at L=8.
     let exact_e = tm_exact_energy(L, L, BETA, J);
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64).map(|s| run_worm(s)).collect();
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64).map(run_worm).collect();
 
     assert_exact_z(&results, exact_e, "Worm Energy");
 
     // Onsager thermodynamic-limit sanity check
     let e_onsager = onsager_energy_per_site(BETA, J) * (L * L) as f64;
-    let pooled_mean: f64 = results.iter().map(|(m, _)| m).sum::<f64>() / N_SEEDS as f64;
+    let pooled_mean: f64 = results.iter().map(|(m, _)| m).sum::<f64>() / results.len() as f64;
     let tol = (L * L) as f64 * 0.10; // 10% finite-size tolerance
     assert!(
         (pooled_mean - e_onsager).abs() < tol,
@@ -439,13 +459,14 @@ fn bkl_zscore_energy_16_seeds() {
     // kernel uses discrete spin-flip events, so its dynamics may differ
     // from Metropolis in finite time-windows. Use scatter z-scores for
     // self-consistency (same pattern as Kawasaki).
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64).map(|s| run_bkl(s)).collect();
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64).map(run_bkl).collect();
 
     assert_scatter_z(&results, "BKL Energy");
 
     // Onsager sanity check (generous tolerance for kinetics)
     let e_onsager = onsager_energy_per_site(BETA, J) * (L * L) as f64;
-    let pooled_mean: f64 = results.iter().map(|(m, _)| m).sum::<f64>() / N_SEEDS as f64;
+    let pooled_mean: f64 = results.iter().map(|(m, _)| m).sum::<f64>() / results.len() as f64;
     let tol = (L * L) as f64 * 0.20; // 20% tolerance for BKL kinetics
     assert!(
         (pooled_mean - e_onsager).abs() < tol,
@@ -494,7 +515,8 @@ fn wang_landau_zscore_energy_16_seeds() {
     let exact_log_values: Vec<f64> = (0..exact_log.bins()).map(|b| exact_log.value(b)).collect();
     let exact_e = canonical_energy(&exact_log_values, &exact_energies, WL_BETA);
 
-    let estimates: Vec<f64> = (0..WL_N_SEEDS as u64)
+    let wl_n_seeds = zscore_seed_count(WL_N_SEEDS);
+    let estimates: Vec<f64> = (0..wl_n_seeds as u64)
         .map(|seed| {
             let mut params = Params::new();
             params.set("Lx", 4);
@@ -595,7 +617,8 @@ fn heisenberg_zscore_energy_16_seeds() {
     // No closed-form exact energy exists for the 4×4 Heisenberg model
     // at β=0.3. Scatter z-scores test cross-seed self-consistency
     // (same pattern as the Kawasaki tests above).
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64)
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64)
         .map(|s| {
             let (e_mean, e_se, _, _) = run_heisenberg_4x4(s);
             (e_mean, e_se)
@@ -607,7 +630,8 @@ fn heisenberg_zscore_energy_16_seeds() {
 
 #[test]
 fn heisenberg_zscore_magnetization_squared_16_seeds() {
-    let results: Vec<(f64, f64)> = (0..N_SEEDS as u64)
+    let n_seeds = zscore_seed_count(N_SEEDS);
+    let results: Vec<(f64, f64)> = (0..n_seeds as u64)
         .map(|s| {
             let (_, _, m2_mean, m2_se) = run_heisenberg_4x4(s);
             (m2_mean, m2_se)
