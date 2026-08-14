@@ -99,14 +99,14 @@
 ### Particle NPT (`ParticleNptMetropolisCore`)
 - **Validated:** V increases when P decreases (directional)
 - **Validated:** V(P1)/V(P2) > 1.02 (non-trivial response)
-- **Known issue:** Equilibrium volume much larger than ideal gas V=NkT/P; volume move acceptance formula needs investigation
-- **NOT validated:** Quantitative EOS
+- **Validated:** Finite-N ideal gas exact: ⟨V⟩ = (N+1)kT/P (long test, `npt_ideal_gas_volume_matches_finite_n_exact`)
+- **Resolved:** Earlier "equilibrium volume mismatch" was a missing finite-N correction in the reference formula, not a solver bug
 
 ### Particle μVT (`ParticleGrandCanonicalCore`)
 - **Validated:** N increases with μ (directional)
 - **Validated:** N(μ1)/N(μ2) > 1.02 (non-trivial response)
-- **Known issue:** Similar to NPT — absolute ⟨N⟩ doesn't match ideal gas Poisson prediction
-- **NOT validated:** Quantitative EOS
+- **Validated:** Ideal gas Poisson ⟨N⟩ exact (long test, `muvt_ideal_gas_particle_number_matches_poisson_most_probable`; plus `ideal_gas_grand_canonical_number_mean_is_poisson`)
+- **Resolved:** Same finite-N reference correction as NPT
 
 ### Rigid molecule (`MolecularMetropolisCore`)
 - **Validated:** Bond-length preservation, geometry preservation
@@ -120,7 +120,7 @@
 
 ## Known issues
 
-1. **NPT/μVT equilibrium values:** Volume and particle number respond directionally to pressure/chemical potential but absolute values don't match ideal gas predictions. The volume/particle move acceptance formula or pressure/activity coupling needs investigation.
+1. ~~NPT/μVT equilibrium values~~ → Resolved 2026-08-14 (fixed in e1a07e4): the finite-N reference formulas (⟨V⟩=(N+1)kT/P, Poisson ⟨N⟩) match exactly; the old "mismatch" was a test-side formula error.
 2. **strict-repro feature:** Was defined in Cargo.toml but had zero implementation. Removed.
 
 ## Completion log
