@@ -5,7 +5,7 @@
 //! initial states, and compare ⟨E⟩ and ⟨m²⟩ across initial conditions.
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
-use cmc_rs::{ClassicalMC, Hamiltonian, IsingModel};
+use cmc_rs::{ClassicalMC, Hamiltonian};
 
 /// Run a 4-site Ising chain at β=0.4407 (Tc for 2D, warm for 1D) and
 /// return (mean_E, mean_M2).

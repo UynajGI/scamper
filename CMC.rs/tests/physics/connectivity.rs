@@ -8,10 +8,9 @@
 //!   - The chain is aperiodic (self-loops exist)
 
 use cmc_rs::{
-    build_chain, Algorithm, Hamiltonian, IsingModel, MetropolisCore, SWCore, SimulationPhase,
-    System, WolffCore,
+    build_chain, Algorithm, IsingModel, MetropolisCore, SWCore, SimulationPhase, System, WolffCore,
 };
-use rand::{RngExt, SeedableRng};
+use rand::SeedableRng;
 
 type Rng = rand_xoshiro::Xoshiro256PlusPlus;
 

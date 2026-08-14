@@ -3,8 +3,6 @@
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use cmc_rs::{ClassicalMC, Hamiltonian, IsingModel, MultiSpinIsing};
-use rand::{RngExt, SeedableRng};
-use rand_xoshiro::Xoshiro256PlusPlus;
 
 // ═══════════════════════════════════════════════════════════════════════
 // P2.1: MultiSpinIsing exact energy for 8-spin system
