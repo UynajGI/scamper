@@ -5,6 +5,8 @@
 .claude/
 .agents/
 .qoder/
+.qwen/
+QWEN.md
 .zcode/
 skills-lock.json
 
