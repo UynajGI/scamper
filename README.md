@@ -35,7 +35,9 @@ is set in `[workspace.lints]` (`Cargo.toml`). Skip with `LEFTHOOK=0`. CI runs
 fmt + clippy + test + deny as parallel jobs with `--all-features`, and a
 [nightly workflow](.github/workflows/nightly.yml) runs the long (`--ignored`)
 physics tests plus multi-seed z-score monitoring (`just nightly-zscore`
-reproduces it locally).
+reproduces it locally), and a `carlo-framework` job exercises the Carlo.rs
+HDF5 suite and every MPI test under `mpirun` at 1/2/4 ranks
+(`just mpi-test [np]` reproduces it locally).
 
 ## Acknowledgments
 

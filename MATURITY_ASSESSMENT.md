@@ -34,13 +34,13 @@
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| MC loop / Scheduler / Context | **stable** | 306 tests, lifecycle, reproducibility |
+| MC loop / Scheduler / Context | **stable** | 302 suite tests (297 + 5 MPI-ignored), lifecycle, reproducibility |
 | Measurements / Accumulators | **stable** | Binning, covariance, jackknife, real autocorr_time |
 | Checkpoint (in-memory) | **stable** | JSON serde, clock round-trip |
-| Checkpoint (HDF5) | **research-grade** | 5 tests: sweep_count, clocks, measurements, RNG, legacy |
-| Error analysis / merge | **research-grade** | Regular + decorrelated autocorr tested |
-| Parallel tempering (non-MPI) | **research-grade** | Wrapper tested; exchange dynamics untested |
-| MPI backend | **research-grade** | PT exchange verified under mpirun -np 2 |
+| Checkpoint (HDF5) | **production-ready** | 7 tests: sweep/clocks/measurements/RNG round-trip, legacy back-compat + loud `CheckpointLoadReport` fallback |
+| Error analysis / merge | **research-grade** | Regular + decorrelated autocorr tested; no error-bar coverage calibration |
+| Parallel tempering (MPI) | **production-ready** | Exchange acceptance vs analytic (5σ, 50k attempts), np 4 replica round-trip, clean mismatch errors |
+| MPI backend | **production-ready** | np 1/2/4 exact fan-out (multiset + exact sum), RNG stream pinning, single-init exclusivity |
 | RNG stream derivation | **stable** | Domain separation, reproducibility, thread-count independence |
 
 ### CMC.rs (19 solvers)
@@ -249,6 +249,13 @@ Same as NUTS minus U-turn tests.
 12. ~~MCMC: No non-Gaussian recovery~~ → 2026-08-14: bimodal mixture + Student-t ν=5, 4 solvers.
 13. ~~CMC NPT/μVT equilibrium values wrong~~ → Resolved by e1a07e4: finite-N reference (⟨V⟩=(N+1)kT/P, Poisson ⟨N⟩) matches exactly; earlier mismatch was a test-formula error.
 14. ~~Nightly z-score infrastructure~~ → 2026-08-14: `zscore-monitor` job @64 seeds via `SCUTTLE_ZSCORE_SEEDS`; `just nightly-zscore` locally.
+15. ~~Carlo PT exchange dynamics untested; MPI only at -np 2; HDF5 legacy fallback silent~~ → 2026-08-14: analytic acceptance-rate validation (5σ), np 1/2/4 backend exactness + replica round-trips, loud `CheckpointLoadReport`; nightly `carlo-framework` job (`just mpi-test`).
+
+### Still open (2026-08-14, Carlo production hardening residue)
+
+16. Carlo error analysis / merge remains research-grade: no error-bar coverage-calibration test (fraction of independent replicas whose truth falls within 1σ ≈ 68%).
+17. `Measurements::read_checkpoint_hdf5` still contains 4 silent fallbacks (shape→zeros, flag→false, member_names→empty ×2) — potential silent data loss on corrupt files; report-only for now.
+18. MPI failure modes: a rank-local test panic under mpirun deadlocks peers in collectives (finalize semantics); `with_ranks_per_run(k>1)` topology is untestable in-process (single-init exclusivity). The `pt_exchange` end-to-end entry-point test is np 2 only (its entry point owns the MPI init and cannot probe world size).
 
 ---
 
@@ -297,7 +304,7 @@ Same as NUTS minus U-turn tests.
 
 **Repository: research-grade. All four crates' physics validation complete (tracker 22/22).**
 
-- **Carlo.rs**: stable framework core; HDF5 checkpoint and MPI now research-grade with tests; autocorr_time real estimation; strict-repro removed
+- **Carlo.rs**: stable framework core; HDF5 checkpoint, MPI backend, and PT exchange now **production-ready** (analytic exchange-acceptance validation, np 1/2/4 exact fan-out, loud legacy fallback; nightly `carlo-framework` regression job) — 302 suite tests (297 + 5 MPI-ignored); error analysis/merge still research-grade
 - **CMC.rs**: 281 tests (268 + 13 long). Metropolis/Wolff/SW have z-score + connectivity + DB; WL 4×4 CI-ready; NPT/μVT exact finite-N ideal-gas equilibrium (long tests)
 - **QMC.rs**: 178 tests (171 + 7 long). All 4 solvers research-grade with ED cross-checks, cross-solver validation, ergodicity, and z-score framework
 - **MCMC.rs**: 72 tests (69 + 3 long). All 6 kernels research-grade: detailed balance (machine-precision + statistical), ESS calibrated on AR(1), 6-solver posterior agreement, non-Gaussian recovery; nightly z-score monitoring covers CMC/QMC at 64 seeds
