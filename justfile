@@ -55,6 +55,14 @@ test-mpi:
         exit 1
     fi
 
+# Multi-seed z-score monitoring — local equivalent of the nightly.yml
+# `zscore-monitor` job (P2.8). Raises the seed count of every z-score test
+# via SCUTTLE_ZSCORE_SEEDS. Usage: just nightly-zscore [seeds=64]
+nightly-zscore seeds="64":
+    SCUTTLE_ZSCORE_SEEDS={{seeds}} cargo test --release -p cmc-rs --all-features --test suite zscore -- --nocapture --include-ignored
+    SCUTTLE_ZSCORE_SEEDS={{seeds}} cargo test --release -p qmc-rs --all-features --test suite zscore -- --nocapture --include-ignored
+    SCUTTLE_ZSCORE_SEEDS={{seeds}} cargo test --release -p qmc-rs --all-features --test suite ergodicity_multi_seed -- --nocapture --include-ignored
+
 # Generate docs
 doc:
     cargo doc --workspace --no-deps --open

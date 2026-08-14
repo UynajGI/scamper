@@ -66,6 +66,38 @@ jobs:
           sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
       - run: cargo test --release -p mcmc-rs --all-features -- --ignored --nocapture
 
+  # ── Multi-seed z-score monitoring (P2.8) ────────────────────────────────
+  # Re-runs every z-score test at a much higher seed count than every-PR CI
+  # (64 vs the 3–16 defaults) via SCUTTLE_ZSCORE_SEEDS, giving the per-test
+  # |z| / |z̄| assertions far more statistical power to detect a slow drift
+  # in sampler correctness. Failure signal = a failed test with per-seed
+  # z-scores in the --nocapture log.
+  zscore-monitor:
+    name: z-score monitor (64 seeds)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SCUTTLE_ZSCORE_SEEDS: "64"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-zscore
+      - name: Install system dependencies (hdf5, mpi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
+      # `--test suite` restricts the run to the integration-test binary that
+      # holds the z-score tests; `--include-ignored` picks up the long ones
+      # (Wang-Landau, particle NVT, wormhole ED) at the raised seed count.
+      - name: cmc-rs multi-seed z-scores
+        run: cargo test --release -p cmc-rs --all-features --test suite zscore -- --nocapture --include-ignored
+      - name: qmc-rs multi-seed z-scores
+        run: cargo test --release -p qmc-rs --all-features --test suite zscore -- --nocapture --include-ignored
+      - name: qmc-rs multi-seed pooled-z ergodicity
+        run: cargo test --release -p qmc-rs --all-features --test suite ergodicity_multi_seed -- --nocapture --include-ignored
+
   # ── Full workspace ignored tests (belt-and-suspenders) ─────────────────
   workspace-ignored:
     name: workspace (all crates, --ignored)
