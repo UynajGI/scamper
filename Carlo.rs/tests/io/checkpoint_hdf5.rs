@@ -7,6 +7,9 @@
 //! - RNG state (next draw matches)
 //! - measurements (registered + populated)
 //! - algorithm clocks (attempted_updates, accepted_moves, event_time)
+//!
+//! `read_checkpoint_hdf5_with_report` additionally exposes which datasets
+//! were missing and defaulted to zero (legacy checkpoints).
 
 #![cfg(feature = "hdf5")]
 
@@ -232,4 +235,116 @@ fn hdf5_context_roundtrip_legacy_checkpoint_without_clocks() {
             panic!("legacy checkpoint read failed: {e:?}");
         }
     }
+}
+
+#[test]
+fn hdf5_checkpoint_with_report_modern_roundtrip_has_no_defaults() {
+    use hdf5::File as Hdf5File;
+
+    let path = make_temp_path("ctx_report_modern.h5");
+
+    let mut ctx = Context::new(Xoshiro256PlusPlus::seed_from_u64(1234), 20);
+    for _ in 0..7 {
+        ctx.advance_sweep();
+    }
+    ctx.record_attempts(111);
+    ctx.record_accepted_moves(222);
+    ctx.advance_event_time(3.5);
+
+    {
+        let file = Hdf5File::create(&path).unwrap();
+        let mut group = file.create_group("rank_0").unwrap();
+        ctx.write_checkpoint_hdf5(&mut group).unwrap();
+    }
+
+    let file = Hdf5File::open(&path).unwrap();
+    let group = file.group("rank_0").unwrap();
+    let (restored, report) =
+        Context::<Xoshiro256PlusPlus>::read_checkpoint_hdf5_with_report(&group, 20).unwrap();
+
+    // Modern checkpoint: nothing defaulted
+    assert!(
+        report.legacy_defaults.is_empty(),
+        "modern checkpoint should report no defaults, got {:?}",
+        report.legacy_defaults
+    );
+    assert!(!report.defaulted_any());
+
+    // Clock values preserved
+    assert_eq!(restored.sweep_count(), 7);
+    assert_eq!(restored.attempted_updates(), 111);
+    assert_eq!(restored.accepted_moves(), 222);
+    assert!(
+        (restored.event_time() - 3.5).abs() < 1e-10,
+        "event_time should be preserved, got {}",
+        restored.event_time()
+    );
+}
+
+#[test]
+fn hdf5_checkpoint_with_report_legacy_reports_missing_clocks() {
+    use hdf5::File as Hdf5File;
+
+    let path = make_temp_path("ctx_report_legacy.h5");
+
+    // Write a modern checkpoint, then strip the clock datasets to emulate
+    // one written by an older library version.
+    let mut ctx = Context::new(Xoshiro256PlusPlus::seed_from_u64(4321), 10);
+    for _ in 0..31 {
+        ctx.advance_sweep();
+    }
+    ctx.record_attempts(9876);
+    ctx.record_accepted_moves(5432);
+    ctx.advance_event_time(17.25);
+    ctx.register_observable("Energy", 4);
+    ctx.measure("Energy", 1.0);
+    ctx.measure("Energy", 2.0);
+
+    {
+        let file = Hdf5File::create(&path).unwrap();
+        let mut group = file.create_group("rank_0").unwrap();
+        ctx.write_checkpoint_hdf5(&mut group).unwrap();
+    }
+    {
+        let file = Hdf5File::open_rw(&path).unwrap();
+        let group = file.group("rank_0").unwrap();
+        group.unlink("attempted_updates").unwrap();
+        group.unlink("accepted_moves").unwrap();
+        group.unlink("event_time").unwrap();
+    }
+
+    let file = Hdf5File::open(&path).unwrap();
+    let group = file.group("rank_0").unwrap();
+    let (restored, report) =
+        Context::<Xoshiro256PlusPlus>::read_checkpoint_hdf5_with_report(&group, 10).unwrap();
+
+    // Exactly the three stripped datasets are reported (compare as a set)
+    let mut names = report.legacy_defaults.clone();
+    names.sort();
+    assert_eq!(
+        names,
+        vec![
+            "accepted_moves".to_string(),
+            "attempted_updates".to_string(),
+            "event_time".to_string(),
+        ],
+        "legacy checkpoint should report the three missing clock datasets"
+    );
+    assert!(report.defaulted_any());
+
+    // Clocks defaulted to zero, everything else still loads
+    assert_eq!(restored.attempted_updates(), 0);
+    assert_eq!(restored.accepted_moves(), 0);
+    assert_eq!(restored.event_time(), 0.0);
+    assert_eq!(restored.sweep_count(), 31);
+    assert_eq!(restored.thermalization_sweeps(), 10);
+    let estimates = restored.finalize_measurements();
+    let e = estimates
+        .get("Energy")
+        .expect("measurements should survive legacy load");
+    assert!(
+        (e.mean - 1.5).abs() < 1e-10,
+        "Energy mean should be 1.5, got {}",
+        e.mean
+    );
 }

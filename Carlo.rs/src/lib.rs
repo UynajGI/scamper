@@ -185,6 +185,8 @@ pub use backend::{
 };
 pub use backend::{Backend, RayonBackend};
 pub use clock::SimulationClock;
+#[cfg(feature = "hdf5")]
+pub use context::CheckpointLoadReport;
 pub use context::{Context, ContextCheckpoint};
 pub use error::CarloError;
 pub use estimate::{ComplexEstimate, Estimate};

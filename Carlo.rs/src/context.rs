@@ -322,6 +322,26 @@ use hdf5::Group;
 #[cfg(feature = "hdf5")]
 use crate::RngCheckpointHdf5;
 
+/// Report of non-fatal fallbacks applied while loading an HDF5 checkpoint.
+///
+/// Produced by [`Context::read_checkpoint_hdf5_with_report`] so callers can
+/// detect checkpoints written by older library versions and react instead of
+/// silently restarting the affected clocks from zero.
+#[cfg(feature = "hdf5")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckpointLoadReport {
+    /// Dataset names that were missing and therefore defaulted to zero.
+    pub legacy_defaults: Vec<String>,
+}
+
+#[cfg(feature = "hdf5")]
+impl CheckpointLoadReport {
+    /// Whether any dataset was missing and defaulted to zero.
+    pub fn defaulted_any(&self) -> bool {
+        !self.legacy_defaults.is_empty()
+    }
+}
+
 #[cfg(feature = "hdf5")]
 impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
     /// Write context state to HDF5 group (includes RNG state).
@@ -399,10 +419,34 @@ impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
     }
 
     /// Read context from HDF5 group (includes RNG state).
+    ///
+    /// Delegates to [`Self::read_checkpoint_hdf5_with_report`] and emits a
+    /// warning on stderr when the checkpoint is a legacy one (algorithm-clock
+    /// datasets missing and defaulted to zero).
     pub fn read_checkpoint_hdf5_full(
         group: &Group,
-        _binsize: usize,
+        binsize: usize,
     ) -> Result<Self, crate::CarloError> {
+        let (context, report) = Self::read_checkpoint_hdf5_with_report(group, binsize)?;
+        if report.defaulted_any() {
+            eprintln!(
+                "carlo-rs: legacy HDF5 checkpoint — defaulting to 0: {}",
+                report.legacy_defaults.join(", ")
+            );
+        }
+        Ok(context)
+    }
+
+    /// Read context from HDF5 group, reporting legacy-format fallbacks.
+    ///
+    /// Returns the context together with a [`CheckpointLoadReport`] listing
+    /// every algorithm-clock dataset that was missing and defaulted to zero
+    /// (checkpoints written before these clocks existed). Everything else
+    /// matches [`Self::read_checkpoint_hdf5_full`].
+    pub fn read_checkpoint_hdf5_with_report(
+        group: &Group,
+        _binsize: usize,
+    ) -> Result<(Self, CheckpointLoadReport), crate::CarloError> {
         let sweep_bytes: Vec<u8> = group
             .dataset("sweep_count")
             .map_err(|e| crate::CarloError::InvalidConfig {
@@ -456,27 +500,42 @@ impl<R: Rng + SeedableRng + RngCheckpointHdf5> Context<R> {
                 })?;
         let measurements = crate::Measurements::read_checkpoint_hdf5(&meas_group)?;
 
-        // Read algorithm clocks (fall back to 0 for checkpoints written by older versions)
-        let attempted_updates = read_u64_dataset(group, "attempted_updates").unwrap_or(0);
-        let accepted_moves = read_u64_dataset(group, "accepted_moves").unwrap_or(0);
-        let event_time = read_f64_dataset(group, "event_time").unwrap_or(0.0);
+        // Read algorithm clocks. Missing datasets mean the checkpoint predates
+        // them: default to zero but record each fallback in the report so
+        // callers are not left unaware.
+        let mut legacy_defaults = Vec::new();
+        let attempted_updates = read_u64_dataset(group, "attempted_updates").unwrap_or_else(|_| {
+            legacy_defaults.push("attempted_updates".to_string());
+            0
+        });
+        let accepted_moves = read_u64_dataset(group, "accepted_moves").unwrap_or_else(|_| {
+            legacy_defaults.push("accepted_moves".to_string());
+            0
+        });
+        let event_time = read_f64_dataset(group, "event_time").unwrap_or_else(|_| {
+            legacy_defaults.push("event_time".to_string());
+            0.0
+        });
 
-        Ok(Self {
-            rng,
-            measurements,
-            measurement_namespace: None,
-            sweep_count,
-            thermalization_sweeps,
-            thermalized: sweep_count >= thermalization_sweeps,
-            phase: if sweep_count >= thermalization_sweeps {
-                RunPhase::Measurement
-            } else {
-                RunPhase::Thermalization
+        Ok((
+            Self {
+                rng,
+                measurements,
+                measurement_namespace: None,
+                sweep_count,
+                thermalization_sweeps,
+                thermalized: sweep_count >= thermalization_sweeps,
+                phase: if sweep_count >= thermalization_sweeps {
+                    RunPhase::Measurement
+                } else {
+                    RunPhase::Thermalization
+                },
+                attempted_updates,
+                accepted_moves,
+                event_time,
             },
-            attempted_updates,
-            accepted_moves,
-            event_time,
-        })
+            CheckpointLoadReport { legacy_defaults },
+        ))
     }
 }
 
