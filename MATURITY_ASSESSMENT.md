@@ -34,7 +34,7 @@
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| MC loop / Scheduler / Context | **stable** | 294 tests, lifecycle, reproducibility |
+| MC loop / Scheduler / Context | **stable** | 306 tests, lifecycle, reproducibility |
 | Measurements / Accumulators | **stable** | Binning, covariance, jackknife, real autocorr_time |
 | Checkpoint (in-memory) | **stable** | JSON serde, clock round-trip |
 | Checkpoint (HDF5) | **research-grade** | 5 tests: sweep_count, clocks, measurements, RNG, legacy |
@@ -298,6 +298,6 @@ Same as NUTS minus U-turn tests.
 **Repository: research-grade. All four crates' physics validation complete (tracker 22/22).**
 
 - **Carlo.rs**: stable framework core; HDF5 checkpoint and MPI now research-grade with tests; autocorr_time real estimation; strict-repro removed
-- **CMC.rs**: 193+ tests. Metropolis/Wolff/SW have z-score + connectivity + DB; WL 4×4 CI-ready; NPT/μVT exact finite-N ideal-gas equilibrium (long tests)
-- **QMC.rs**: 51+ tests. All 4 solvers research-grade with ED cross-checks, cross-solver validation, ergodicity, and z-score framework
-- **MCMC.rs**: 69 tests. All 6 kernels research-grade: detailed balance (machine-precision + statistical), ESS calibrated on AR(1), 6-solver posterior agreement, non-Gaussian recovery; nightly z-score monitoring covers CMC/QMC at 64 seeds
+- **CMC.rs**: 281 tests (268 + 13 long). Metropolis/Wolff/SW have z-score + connectivity + DB; WL 4×4 CI-ready; NPT/μVT exact finite-N ideal-gas equilibrium (long tests)
+- **QMC.rs**: 178 tests (171 + 7 long). All 4 solvers research-grade with ED cross-checks, cross-solver validation, ergodicity, and z-score framework
+- **MCMC.rs**: 72 tests (69 + 3 long). All 6 kernels research-grade: detailed balance (machine-precision + statistical), ESS calibrated on AR(1), 6-solver posterior agreement, non-Gaussian recovery; nightly z-score monitoring covers CMC/QMC at 64 seeds

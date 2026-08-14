@@ -32,7 +32,10 @@ Git hooks (via [lefthook](https://github.com/evilmartians/lefthook)) enforce
 and `cargo deny` on push. Tests run in CI, not the pre-push hook — use
 `just test` locally before pushing. Lint level (including `unsafe_code = "deny"`)
 is set in `[workspace.lints]` (`Cargo.toml`). Skip with `LEFTHOOK=0`. CI runs
-fmt + clippy + test + deny as parallel jobs with `--all-features`.
+fmt + clippy + test + deny as parallel jobs with `--all-features`, and a
+[nightly workflow](.github/workflows/nightly.yml) runs the long (`--ignored`)
+physics tests plus multi-seed z-score monitoring (`just nightly-zscore`
+reproduces it locally).
 
 ## Acknowledgments
 

@@ -114,7 +114,7 @@
 
 ## Statistical validation framework
 
-- **z-score tests:** 16 independent seeds per solver, |z|<4 per seed, |z̄|<1.5 mean, no one-sided bias
+- **z-score tests:** 16 independent seeds per solver, |z|<4 per seed, |z̄|<1.5 mean, no one-sided bias. Seed counts scale via `SCUTTLE_ZSCORE_SEEDS` (unset → default 16 unchanged; nightly `zscore-monitor` uses 64; `just nightly-zscore` reproduces locally). Σz thresholds are scale-invariant (−2√n).
 - **Cross-solver:** Metropolis vs Wolff pooled z-scores agree (|Δz̄|<2)
 - **Connectivity:** Explicit Markov chain enumeration on N=2 Ising (4 states), BFS strong connectivity + aperiodicity check
 

@@ -1,14 +1,14 @@
 # QMC.rs — Physics Validation Task Tracker
 
-> Updated 2026-07-23. Branch: `dev`.
+> Updated 2026-08-14. Branch: `dev`.
 
 ## Test suite summary
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 47 | ~14s |
-| Long stochastic (`--ignored`) | 7 | ~127s |
-| **Total** | **54** | |
+| Default (`cargo test`) | 171 | ~15s |
+| Long stochastic (`--ignored`) | 7 | ~2 min |
+| **Total** | **178** | |
 
 ## Tasks — all completed
 
@@ -49,7 +49,7 @@ S=1 Heisenberg open chain produces finite results. Escape hatch removed — test
 1-thread vs 4-thread expansion order agrees within 3σ.
 
 ### [x] QMC-P2.5 — Lattice z-score framework
-4-seed z-score for 3-site Heisenberg energy vs ED. |z| < 4 per seed, mean |z| < 2.
+4-seed z-score for 3-site Heisenberg energy vs ED. |z| < 4 per seed, mean |z| < 2. Seed counts in all z-score tests scale via `SCUTTLE_ZSCORE_SEEDS` (default arrays untouched when unset; nightly runs 64 via `zscore-monitor`; `just nightly-zscore` reproduces locally).
 
 ## Audit fixes (2026-07-23)
 
