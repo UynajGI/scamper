@@ -1,0 +1,36 @@
+[package]
+name = "rabi-research"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone workspace — not part of the scuttle main workspace
+[workspace]
+
+[dependencies]
+qmc-rs = { path = "../../QMC.rs" }
+nalgebra = "0.33"
+rand = "0.10"
+rand_xoshiro = "0.8"
+
+[[bin]]
+name = "rabi-research"
+path = "src/main.rs"
+
+[[bin]]
+name = "wormhole-fss"
+path = "src/wormhole_fss.rs"
+
+[[bin]]
+name = "ed-fss"
+path = "src/ed_fss.rs"
+
+[[bin]]
+name = "qmc-verify"
+path = "src/qmc_verify.rs"
+
+[[bin]]
+name = "u4n-scan"
+path = "src/u4n_scan.rs"
+
+[profile.release]
+opt-level = 3
