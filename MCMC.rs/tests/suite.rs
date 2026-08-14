@@ -41,6 +41,8 @@ mod transform_gradients;
 
 #[path = "covariance/dense_covariance.rs"]
 mod dense_covariance;
+#[path = "covariance/non_gaussian.rs"]
+mod non_gaussian;
 
 // ── Tempering — replica exchange ─────────────────────────────────────────
 
@@ -56,6 +58,10 @@ mod adaptation_freeze;
 
 #[path = "diagnostics/convergence.rs"]
 mod convergence;
+#[path = "diagnostics/detailed_balance.rs"]
+mod detailed_balance;
+#[path = "diagnostics/ess_ar1.rs"]
+mod ess_ar1;
 #[path = "diagnostics/gaussian_moments.rs"]
 mod gaussian_moments;
 
@@ -65,5 +71,7 @@ mod gaussian_moments;
 mod carlo_adapter;
 #[path = "integration/checkpoint_equivalence.rs"]
 mod checkpoint_equivalence;
+#[path = "integration/cross_solver.rs"]
+mod cross_solver;
 #[path = "integration/multichain_reproducibility.rs"]
 mod multichain_reproducibility;
