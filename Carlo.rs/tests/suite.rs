@@ -28,6 +28,8 @@ mod measurements;
 mod merge;
 #[path = "unit/params.rs"]
 mod params;
+#[path = "unit/pt_exchange_rule.rs"]
+mod pt_exchange_rule;
 #[path = "unit/results.rs"]
 mod results;
 #[path = "unit/version.rs"]
@@ -77,8 +79,14 @@ mod output_io;
 
 // ── MPI (feature-gated) ───────────────────────────────────────────────────
 
+#[cfg(feature = "mpi")]
+#[path = "mpi/backend_distributed.rs"]
+mod mpi_backend_distributed;
 #[path = "mpi/distributed.rs"]
 mod mpi_distributed;
+#[cfg(feature = "mpi")]
+#[path = "mpi/pt_dynamics.rs"]
+mod mpi_pt_dynamics;
 #[cfg(feature = "mpi")]
 #[path = "mpi/pt_exchange.rs"]
 mod mpi_pt_exchange;

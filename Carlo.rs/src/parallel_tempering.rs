@@ -190,9 +190,6 @@ impl<MC: ParallelTemperingCompatible> ParallelTemperingMC<MC> {
 ///
 /// loop {
 ///     exchange.try_step()?;
-///     if exchange.should_exchange() {
-///         exchange.try_exchange()?;
-///     }
 ///     if exchange.is_complete() {
 ///         break;
 ///     }

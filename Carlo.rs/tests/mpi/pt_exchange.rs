@@ -1,9 +1,12 @@
-//! MPI parallel-tempering exchange protocol test.
+//! MPI parallel-tempering exchange protocol test (end-to-end entry point).
 //!
-//! Run under mpirun:
+//! Hardcodes a 2-chain config through `run_parallel_tempering`, which owns
+//! its MPI initialization and therefore cannot probe the world size first —
+//! run it under exactly 2 ranks:
 //! ```bash
-//! mpirun -np 2 cargo test --features mpi --test mpi_pt_exchange -- --ignored --nocapture
+//! mpirun -np 2 cargo test --features mpi --test suite -- --ignored --exact mpi_pt_exchange::pt_exchange_completes_and_returns_results --nocapture
 //! ```
+//! Multi-rank exchange physics lives in `mpi/pt_dynamics.rs` instead.
 
 #![cfg(feature = "mpi")]
 
