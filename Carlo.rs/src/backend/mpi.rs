@@ -1455,7 +1455,7 @@ where
     let local_init_ok = if run_result.is_ok() { 1i32 } else { 0i32 };
     let mut init_ok = vec![0i32; run_comm.size() as usize];
     run_comm.all_gather_into(&local_init_ok, init_ok.as_mut_slice());
-    if init_ok.iter().any(|&ok| ok == 0) {
+    if init_ok.contains(&0) {
         return match run_result {
             Err(error) => Err(error),
             Ok(_) => Err(MpiError::Worker(
@@ -1470,7 +1470,7 @@ where
     let mut limits = TimeLimits::from_start(config.checkpoint_time, config.run_time, job_started);
     #[allow(unused_mut)]
     let mut last_checkpoint_sweep = run.sweep_count();
-    let poll_sweeps = config.run_config.progress_interval.max(1).min(10_000);
+    let poll_sweeps = config.run_config.progress_interval.clamp(1, 10_000);
 
     loop {
         for _ in 0..poll_sweeps {
@@ -1658,7 +1658,7 @@ where
     let local_write_ok = if local_write.is_ok() { 1i32 } else { 0i32 };
     let mut write_ok = vec![0i32; run_comm.size() as usize];
     run_comm.all_gather_into(&local_write_ok, write_ok.as_mut_slice());
-    if write_ok.iter().any(|&ok| ok == 0) {
+    if write_ok.contains(&0) {
         let _ = remove_if_exists(staging);
         return match local_write {
             Err(error) => Err(error),
@@ -1679,7 +1679,7 @@ where
     let local_publish_ok = if local_publish.is_ok() { 1i32 } else { 0i32 };
     let mut publish_ok = vec![0i32; run_comm.size() as usize];
     run_comm.all_gather_into(&local_publish_ok, publish_ok.as_mut_slice());
-    if publish_ok.iter().any(|&ok| ok == 0) {
+    if publish_ok.contains(&0) {
         return match local_publish {
             Err(error) => Err(error),
             Ok(()) => Err(CarloError::InvalidConfig {

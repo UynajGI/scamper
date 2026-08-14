@@ -9,7 +9,7 @@
 
 use carlo_rs::{
     CarloError, Context, FromParams, MonteCarlo, ParallelTemperingCompatible,
-    ParallelTemperingConfig, Params, Results,
+    ParallelTemperingConfig, Params,
 };
 use rand_xoshiro::Xoshiro256PlusPlus;
 

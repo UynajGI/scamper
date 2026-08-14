@@ -346,7 +346,12 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
 
         // Check if we should attempt exchange. Errors are collective failures
         // and must be propagated instead of silently desynchronizing ranks.
-        if self.ctx.sweep_count() > 0 && self.ctx.sweep_count() % self.mc.tempering_interval == 0 {
+        if self.ctx.sweep_count() > 0
+            && self
+                .ctx
+                .sweep_count()
+                .is_multiple_of(self.mc.tempering_interval)
+        {
             self.try_exchange()?;
         }
 
@@ -654,7 +659,7 @@ where
     let local_init_ok = if exchange_result.is_ok() { 1i32 } else { 0i32 };
     let mut init_ok = vec![0i32; status_comm.size() as usize];
     status_comm.all_gather_into(&local_init_ok, init_ok.as_mut_slice());
-    if init_ok.iter().any(|&ok| ok == 0) {
+    if init_ok.contains(&0) {
         return match exchange_result {
             Err(error) => Err(error),
             Ok(_) => Err(CarloError::InvalidConfig {
@@ -718,7 +723,7 @@ fn gather_parallel_tempering_results(
     let local_ok = if local_bytes.is_ok() { 1i32 } else { 0i32 };
     let mut all_ok = vec![0i32; comm.size() as usize];
     comm.all_gather_into(&local_ok, all_ok.as_mut_slice());
-    if all_ok.iter().any(|&ok| ok == 0) {
+    if all_ok.contains(&0) {
         return match local_bytes {
             Err(error) => Err(error),
             Ok(_) => Err(CarloError::InvalidConfig {

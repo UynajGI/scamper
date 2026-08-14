@@ -11,7 +11,7 @@
 #![cfg(feature = "hdf5")]
 
 use carlo_rs::Context;
-use rand_core::{RngCore, SeedableRng};
+use rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 fn make_temp_path(name: &str) -> std::path::PathBuf {
@@ -32,7 +32,7 @@ fn hdf5_context_roundtrip_preserves_sweep_count_and_rng() {
     }
 
     {
-        let mut file = Hdf5File::create(&path).unwrap();
+        let file = Hdf5File::create(&path).unwrap();
         let mut group = file.create_group("rank_0").unwrap();
         ctx.write_checkpoint_hdf5(&mut group).unwrap();
     }
@@ -59,7 +59,7 @@ fn hdf5_context_roundtrip_preserves_algorithm_clocks() {
     ctx.advance_event_time(42.75);
 
     {
-        let mut file = Hdf5File::create(&path).unwrap();
+        let file = Hdf5File::create(&path).unwrap();
         let mut group = file.create_group("rank_0").unwrap();
         ctx.write_checkpoint_hdf5(&mut group).unwrap();
     }
@@ -99,7 +99,7 @@ fn hdf5_context_roundtrip_preserves_measurements() {
     ctx.measure("Energy", 3.5);
 
     {
-        let mut file = Hdf5File::create(&path).unwrap();
+        let file = Hdf5File::create(&path).unwrap();
         let mut group = file.create_group("rank_0").unwrap();
         ctx.write_checkpoint_hdf5(&mut group).unwrap();
     }
@@ -141,7 +141,7 @@ fn hdf5_context_roundtrip_rng_state_matches() {
     ctx.advance_sweep();
 
     {
-        let mut file = Hdf5File::create(&path).unwrap();
+        let file = Hdf5File::create(&path).unwrap();
         let mut group = file.create_group("rank_0").unwrap();
         ctx.write_checkpoint_hdf5(&mut group).unwrap();
     }
@@ -170,7 +170,7 @@ fn hdf5_context_roundtrip_legacy_checkpoint_without_clocks() {
     // Write a minimal checkpoint without clock datasets
     {
         let file = Hdf5File::create(&path).unwrap();
-        let mut group = file.create_group("rank_0").unwrap();
+        let group = file.create_group("rank_0").unwrap();
 
         let sweep_bytes = 25u64.to_ne_bytes();
         group
@@ -186,7 +186,7 @@ fn hdf5_context_roundtrip_legacy_checkpoint_without_clocks() {
             .unwrap();
 
         // Minimal RNG checkpoint matching Xoshiro256PlusPlus format
-        let mut rng_group = group.create_group("rng").unwrap();
+        let rng_group = group.create_group("rng").unwrap();
         rng_group
             .new_dataset_builder()
             .with_data(b"xoroshiro256++")
@@ -206,7 +206,7 @@ fn hdf5_context_roundtrip_legacy_checkpoint_without_clocks() {
             .unwrap();
 
         // Empty measurements group with required structure
-        let mut meas_group = group.create_group("measurements").unwrap();
+        let meas_group = group.create_group("measurements").unwrap();
         meas_group
             .new_dataset_builder()
             .with_data(&[10u64])
