@@ -98,6 +98,53 @@ jobs:
       - name: qmc-rs multi-seed pooled-z ergodicity
         run: cargo test --release -p qmc-rs --all-features --test suite ergodicity_multi_seed -- --nocapture --include-ignored
 
+  # ── Carlo.rs framework regression (HDF5 I/O + MPI backend) ─────────────
+  # Serial full suite (including the HDF5 I/O tests) first, then every MPI
+  # test under mpirun at several world sizes. Runners are non-root, so plain
+  # `mpirun -np N` works with the OpenMPI packages installed above.
+  carlo-framework:
+    name: carlo-rs framework (hdf5 + mpi)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-carlo
+      - name: Install system dependencies (hdf5, mpi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
+      # Serial run of the full Carlo.rs suite; the MPI tests are #[ignore]d
+      # here (they need mpirun) and are exercised one-by-one below.
+      - name: Serial full suite (incl. hdf5)
+        run: |
+          cargo test --release -p carlo-rs --all-features --test suite
+      # Every MPI test gets its own mpirun invocation with an --exact filter:
+      # MPI cannot be initialized twice in one process, and cargo runs all
+      # matched #[test]s in a single process per rank (double-init abort).
+      - name: MPI distributed backend (np 1, degenerate single-rank path)
+        run: |
+          mpirun -np 1 cargo test --release -p carlo-rs --features mpi,hdf5 --test suite -- --ignored --nocapture --exact mpi_backend_distributed::mpi_backend_distributed_suite
+      - name: MPI tests (np 2 and np 4)
+        run: |
+          for np in 2 4; do
+            for test in \
+              mpi_backend_distributed::mpi_backend_distributed_suite \
+              mpi_test::mpi_tests::mpi_backend_smoke_suite \
+              mpi_distributed::distributed_tests::dynamic_scheduler_completes_and_merges_runs \
+              mpi_pt_dynamics::pt_exchange_dynamics_suite
+            do
+              echo "=== np=${np} :: ${test} ==="
+              mpirun -np "${np}" cargo test --release -p carlo-rs --features mpi,hdf5 --test suite -- --ignored --nocapture --exact "${test}"
+            done
+          done
+          # pt_exchange hardcodes a 2-chain config through the
+          # run_parallel_tempering entry point (which owns its MPI init and
+          # cannot probe the world size first) — np 2 only.
+          mpirun -np 2 cargo test --release -p carlo-rs --features mpi,hdf5 --test suite -- --ignored --nocapture --exact mpi_pt_exchange::pt_exchange_completes_and_returns_results
+
   # ── Full workspace ignored tests (belt-and-suspenders) ─────────────────
   workspace-ignored:
     name: workspace (all crates, --ignored)

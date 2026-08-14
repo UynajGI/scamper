@@ -43,11 +43,42 @@ test-unit:
 test-integration:
     cargo test --test '*'
 
-# Test MPI backend (requires MPI and mpirun)
-test-mpi:
+# Test the MPI backend (requires MPI and mpirun; this machine uses MPICH).
+# Each MPI test runs in its OWN mpirun invocation with an --exact filter:
+# MPI cannot be initialized twice in one process, and a single cargo test
+# process per rank would otherwise run every matched #[test] back-to-back.
+# Usage: just mpi-test [np=2] — np 1/2/4 recommended. Rank-count notes:
+# np 1 runs only the singleton-safe suites; the pt_exchange end-to-end test
+# hardcodes a 2-chain config (its entry point owns the MPI init, so it
+# cannot probe the world size first) and therefore runs at np 2 only.
+mpi-test np="2":
     #!/usr/bin/env bash
     if command -v mpirun &> /dev/null; then
-        mpirun -np 4 cargo test --features mpi --test mpi_test
+        if [ "{{ np }}" -eq 2 ]; then
+            tests=(
+                "mpi_backend_distributed::mpi_backend_distributed_suite"
+                "mpi_test::mpi_tests::mpi_backend_smoke_suite"
+                "mpi_distributed::distributed_tests::dynamic_scheduler_completes_and_merges_runs"
+                "mpi_pt_exchange::pt_exchange_completes_and_returns_results"
+                "mpi_pt_dynamics::pt_exchange_dynamics_suite"
+            )
+        elif [ "{{ np }}" -gt 2 ]; then
+            tests=(
+                "mpi_backend_distributed::mpi_backend_distributed_suite"
+                "mpi_test::mpi_tests::mpi_backend_smoke_suite"
+                "mpi_distributed::distributed_tests::dynamic_scheduler_completes_and_merges_runs"
+                "mpi_pt_dynamics::pt_exchange_dynamics_suite"
+            )
+        else
+            tests=(
+                "mpi_backend_distributed::mpi_backend_distributed_suite"
+                "mpi_pt_dynamics::pt_exchange_dynamics_suite"
+            )
+        fi
+        for test in "${tests[@]}"; do
+            echo "=== mpirun -np {{ np }} :: ${test} ==="
+            mpirun -np {{ np }} cargo test -p carlo-rs --features mpi,hdf5 --test suite -- --ignored --nocapture --exact "${test}" || exit 1
+        done
     else
         echo "MPI not installed. Install with:"
         echo "  Ubuntu/Debian: sudo apt-get install libopenmpi-dev openmpi-bin"
