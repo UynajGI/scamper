@@ -4,7 +4,11 @@
 //! the same thermal expectation values for ⟨Sz⟩ and kink count,
 //! confirming that the cluster update is ergodic across spin-flip
 //! sectors and bosonic configurations.
+//!
+//! `SCUTTLE_ZSCORE_SEEDS=<n>` raises the seed count for nightly
+//! high-power monitoring (unset → the default 4 seeds, unchanged for CI).
 
+use crate::zscore_seeds::zscore_seeds;
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use qmc_rs::LongitudinalSpinBosonClusterQmc;
 
@@ -79,7 +83,7 @@ fn assert_z_scores(name: &str, values: &[f64], stderrs: &[f64]) {
 
 #[test]
 fn cluster_ergodicity_multi_seed_convergence() {
-    let seeds = [42u64, 123, 456, 789];
+    let seeds = zscore_seeds(&[42u64, 123, 456, 789]);
     let results: Vec<(f64, f64, f64, f64)> = seeds.iter().map(|&s| run_cluster(s)).collect();
 
     // ⟨Sz⟩ consistency: max−min < 4 × max(stderr)

@@ -4,6 +4,11 @@
 //! attributes so the directory tree mirrors the test taxonomy without
 //! requiring `mod.rs` files.
 
+// ── Shared seed management for multi-seed z-score tests ──────────────────
+
+#[path = "zscore_seeds.rs"]
+mod zscore_seeds;
+
 // ── Lattice — continuous-time lattice QMC ────────────────────────────────
 
 #[path = "lattice/lattice_continuous.rs"]

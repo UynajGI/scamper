@@ -18,6 +18,7 @@
 
 #![allow(clippy::needless_range_loop)]
 
+use crate::zscore_seeds::zscore_seeds;
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use qmc_rs::impurity::spin_boson::occupation::transfer::SymmetricEigensystem;
 use qmc_rs::impurity::ImpurityQmc;
@@ -324,8 +325,11 @@ fn wormhole_interacting_matches_ed() {
     }
 }
 
-/// Run three independent seeds and verify that the z-score of
+/// Run three independent seeds (default) and verify that the z-score of
 /// `MagnetizationSigmaZ` relative to the ED reference stays below 4.
+///
+/// `SCUTTLE_ZSCORE_SEEDS=<n>` raises the seed count for nightly
+/// high-power monitoring (unset → the default 3 seeds, unchanged for CI).
 #[test]
 #[ignore = "long: wormhole interacting ED comparison"]
 fn wormhole_interacting_zscore_3_seeds() {
@@ -338,7 +342,7 @@ fn wormhole_interacting_zscore_3_seeds() {
     let (ed_sigma_x, _, _) = ed_rabi_observables(omega, g, tunnelling, beta, cutoff);
     eprintln!("ED ⟨σx⟩ = {ed_sigma_x:.6}");
 
-    let seeds = [7u64, 99, 314];
+    let seeds = zscore_seeds(&[7u64, 99, 314]);
     for &seed in &seeds {
         let results = run_wormhole(beta, omega, g, tunnelling, seed);
         let mag = results

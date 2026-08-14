@@ -417,8 +417,7 @@ fn occupation_and_wormhole_both_match_ed_reference_interacting() {
     );
 
     // ── Wormhole ED reference ────────────────────────────────────
-    let (ed_wh_e, ed_wh_sz, ed_wh_sx) =
-        ed_wormhole_rabi(beta, omega, spin_splitting, g, cutoff);
+    let (ed_wh_e, ed_wh_sz, ed_wh_sx) = ed_wormhole_rabi(beta, omega, spin_splitting, g, cutoff);
     eprintln!(
         "ED (wormhole, cutoff={cutoff}):   ⟨E⟩={ed_wh_e:.8}, ⟨σz⟩={ed_wh_sz:.8}, ⟨σx⟩={ed_wh_sx:.8}"
     );

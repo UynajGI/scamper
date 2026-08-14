@@ -1,10 +1,13 @@
 //! Multi-seed z-score test for the lattice directed-loop solver.
 //!
-//! Runs a 3-site AFM Heisenberg chain at β=3.0 from 4 independent seeds,
-//! computes the z-score of the MC energy against the exact-diagonalization
-//! reference, and verifies statistical consistency:
+//! Runs a 3-site AFM Heisenberg chain at β=3.0 from 4 independent seeds
+//! (default), computes the z-score of the MC energy against the
+//! exact-diagonalization reference, and verifies statistical consistency:
 //!   - |z| < 4 for each individual seed
 //!   - mean |z| < 2 (no systematic bias)
+//!
+//! Setting `SCUTTLE_ZSCORE_SEEDS=<n>` raises the seed count for nightly
+//! high-power monitoring (unset → the default 4 seeds, unchanged for CI).
 
 use qmc_rs::lattice::ContinuousLatticeEngine;
 use qmc_rs::{
@@ -15,6 +18,7 @@ use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::lattice_ed::build_hamiltonian;
+use crate::zscore_seeds::zscore_seeds;
 
 /// Batch-means standard error of the mean.
 fn batch_means_stderr(samples: &[f64], binsize: usize) -> f64 {
@@ -90,7 +94,7 @@ fn lattice_zscore_energy_4_seeds() {
     let exact_energy = h.multiply(&rho).trace() / z;
 
     // ── MC runs ──────────────────────────────────────────────────────────
-    let seeds = [42u64, 123, 456, 789];
+    let seeds = zscore_seeds(&[42u64, 123, 456, 789]);
     let results: Vec<(f64, f64)> = seeds.iter().map(|&s| run_lattice_seed(s)).collect();
 
     let z_scores: Vec<f64> = results

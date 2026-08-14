@@ -3,7 +3,11 @@
 //! The wormhole solver starts from an empty worldline. This test verifies
 //! that the solver produces consistent results regardless of seed,
 //! which implicitly tests sector accessibility.
+//!
+//! The z-score test honours `SCUTTLE_ZSCORE_SEEDS=<n>` for nightly
+//! high-power monitoring (unset → the default 4 seeds, unchanged for CI).
 
+use crate::zscore_seeds::zscore_seeds;
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use qmc_rs::impurity::ImpurityQmc;
 
@@ -60,8 +64,8 @@ fn wormhole_ergodicity_multi_seed_convergence() {
 
 #[test]
 fn wormhole_ergodicity_zscore_4_seeds() {
-    // z-score framework: 4 seeds, check |z| < 4 for magnetization
-    let seeds = [42u64, 123, 777, 2026];
+    // z-score framework: 4 seeds (default), check |z| < 4 for magnetization
+    let seeds = zscore_seeds(&[42u64, 123, 777, 2026]);
     let results: Vec<(f64, f64)> = seeds
         .iter()
         .map(|&s| {
