@@ -475,7 +475,7 @@ fn three_site_heisenberg_susceptibility_matches_ed() {
     let mut configuration = LatticeConfiguration::new(beta, vec![0, 1, 0], &model).expect("config");
     let mut engine = ContinuousLatticeEngine::new(model, UpdateSchedule::new(8, 4, 64));
     engine.set_validate_each_sweep(true);
-    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xC41_0);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xC410);
 
     let mut m_sum = 0.0;
     let mut m2_sum = 0.0;
