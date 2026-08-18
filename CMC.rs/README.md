@@ -38,7 +38,7 @@ Source code is organised into five subdirectories plus three top-level adapter m
 | `lattice/` | `CsrLattice` graph, `System` state, `Hamiltonian` traits, built-in models, `ProposalStrategy` |
 | `algorithms/` | `Algorithm<H>` trait, 6 kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
 | `observables/` | `Observable<H>`, `DefaultObservableSet`, energy, magnetisation, correlation |
-| `particle/` | Periodic cells, AoS coordinates, pair potentials, packed cell lists, translations and NVT/NPT/μVT adapters |
+| `particle/` | Periodic cells, AoS coordinates, pair potentials, packed cell lists, translations and NVT/NPT/μVT adapters, rigid molecules with an optional dipolar external field |
 | `generalized/` | Wang-Landau, frozen biases, DOS/histograms, exact enumeration and reweighting |
 | `worm/` | Persistent physical/worm sectors, generic local driver and Ising graph representation |
 | `dynamics/` | Kawasaki exchange, direct Gillespie, Fenwick BKL/n-fold way and hard-sphere event chains |
@@ -159,6 +159,8 @@ For convergence-driven samplers, Carlo.rs provides `AdaptiveRunControl`, `Schedu
 
 `IsingGraphWormMC` samples the ferromagnetic Ising high-temperature graph representation in explicit physical and two-defect worm sectors. Open, close and local head moves include their complete Hastings factors and are accepted in log space. The chain may remain open across sweep and checkpoint boundaries; optional endpoint-pair samples provide two-point correlation estimators.
 
+The worm's single defect pair diffuses within one connected component of the bond graph, so `IsingGraphWormModel::new` requires a **connected (single-component) lattice**: a disconnected graph (including isolated sites) is rejected loudly instead of silently freezing the unreachable components at their initial occupation. Multi-defect / multi-leg (multi-component) worm algorithms are not implemented.
+
 ```rust,ignore
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use cmc_rs::IsingGraphWormMC;
@@ -175,6 +177,18 @@ let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
 ```
 
 The reusable `WormModel`/`WormKernel` boundary is intended for future integer-current, dimer and loop-gas representations without pretending that their defect constraints are identical.
+
+## Rigid molecules and external fields
+
+`MolecularMetropolisCore` moves whole rigid molecules (topology-grouped translations and plane rotations) with the same transactional Metropolis-Hastings path as the particle kernels. An optional one-body `DipolarExternalField` couples per-atom point charges to a uniform field: the molecular dipole is measured through minimum-image displacements (wrap-invariant), every trial's acceptance includes the `-E·μ` energy change, and the one-body energy is available through `external_field_energy`. Non-neutral molecules are rejected loudly, because a net charge would couple to the wrapped absolute position and break periodicity. `ParticleSystem::energy` remains the pair energy.
+
+```rust,ignore
+use cmc_rs::{DipolarExternalField, MolecularMetropolisCore};
+
+let field = DipolarExternalField::new([2.0, 0.0], vec![0.5, -0.5])?;
+let kernel = MolecularMetropolisCore::new(topology, 0.3, 0.4)?
+    .with_external_field(field)?; // validates neutrality + charge-table size
+```
 
 ## Classical dynamics and event time
 
@@ -232,3 +246,15 @@ impl PairInteraction for MyModel {
 ```
 
 Models with genuine multi-site/factor interactions can implement `Hamiltonian` directly and inherit the correct scratch-backed batch path.
+
+## Validated domain
+
+Per-solver validated domains, exact references, analytic limits and known
+limitations live in [VALIDATION.md](VALIDATION.md). Highlights: q-state
+Potts (q = 3, 4) is validated against full enumeration for the heat-bath,
+Swendsen-Wang and Wolff kernels; the rigid-molecule solver reproduces the
+Langevin/von Mises free-rotor answers under a dipolar external field; and
+the Wang–Landau estimator terminates loudly (`UnreachableBins`) when the
+configured visited fraction exceeds the physically reachable set. Invalid
+input is rejected with errors across all solvers — never silently accepted
+(see the input-validation audit in VALIDATION.md).

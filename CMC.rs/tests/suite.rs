@@ -68,6 +68,8 @@ mod event_chain_eos;
 mod generalized_exact;
 #[path = "physics/heat_bath_exact.rs"]
 mod heat_bath_exact;
+#[path = "physics/input_validation.rs"]
+mod input_validation;
 #[path = "physics/kawasaki_exact.rs"]
 mod kawasaki_exact;
 #[path = "physics/lattice_exact.rs"]
@@ -90,6 +92,8 @@ mod p2_validation;
 mod particle_zscore;
 #[path = "physics/particles_exact.rs"]
 mod particles_exact;
+#[path = "physics/potts_exact.rs"]
+mod potts_exact;
 #[path = "physics/statistical_regression.rs"]
 mod statistical_regression;
 #[path = "physics/transition_balance.rs"]

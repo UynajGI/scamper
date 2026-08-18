@@ -1,6 +1,6 @@
 # Physics Validation Task Tracker
 
-> Created 2026-07-22 on `dev` branch. Updated 2026-07-23.
+> Created 2026-07-22 on `dev` branch. Updated 2026-08-19.
 > Goal: bring every solver from "compiles and runs" to "physics verified".
 > Assessment baseline: `MATURITY_ASSESSMENT.md`.
 
@@ -144,3 +144,4 @@ Per-crate VALIDATION.md trackers: Carlo.rs ✅ · CMC.rs ✅ · QMC.rs ✅ · MC
 | 2026-08-14 | MCMC.rs (4 tasks) | Detailed balance (machine-precision + binned empirical flow), AR(1) ESS calibration, 6-solver posterior agreement, non-Gaussian recovery (bimodal + Student-t) |
 | 2026-08-14 | P2.8 nightly monitoring | SCUTTLE_ZSCORE_SEEDS scaling + zscore-monitor job @64 seeds + `just nightly-zscore`; Σz thresholds scale-invariant |
 | 2026-08-14 | P2.3 upgraded to full | NPT/μVT absolute equilibrium exact vs finite-N ideal gas (⟨V⟩=(N+1)kT/P, Poisson ⟨N⟩); long tests re-run green |
+| 2026-08-19 | CMC production hardening (beyond tracker) | Item-19 residues closed: Potts q=3/4 exact-enumeration validation for heat bath/SW/Wolff (8 tests), molecule dipolar external field vs Langevin/von Mises (4), WL `UnreachableBins` loud termination (4), worm multi-component rejection + cross-solver (2), criterion-G input-validation audit across all 19 solvers (10 tests, 3 source holes fixed). CMC.rs now 273 suite tests; 15/19 solvers production-ready — see `MATURITY_ASSESSMENT.md` and `CMC.rs/VALIDATION.md` |

@@ -83,7 +83,14 @@ impl MonteCarlo for KawasakiIsingMC {
 }
 
 impl FromParams for KawasakiIsingMC {
+    fn validate_params(params: &Params) -> Result<(), CarloError> {
+        validate_kinetic_ising_params(params)?;
+        parse_param::<usize>(params, "kawasaki_attempts_per_sweep")?;
+        Ok(())
+    }
+
     fn from_params(params: &Params, rng: &mut Self::Rng) -> Result<Self, CarloError> {
+        Self::validate_params(params)?;
         let beta = parse_param::<f64>(params, "beta")?.unwrap_or(1.0);
         let coupling = parse_param::<f64>(params, "J")?.unwrap_or(1.0);
         let lattice = build_lattice_from_params(params, parse_bool(params, "pbc", true)?)?;
@@ -158,7 +165,33 @@ impl MonteCarlo for KineticIsingBklMC {
 }
 
 impl FromParams for KineticIsingBklMC {
+    fn validate_params(params: &Params) -> Result<(), CarloError> {
+        validate_kinetic_ising_params(params)?;
+        let frequency = parse_param::<f64>(params, "attempt_frequency")?;
+        match params
+            .get::<String>("kinetic_rate")
+            .unwrap_or_else(|| "glauber".to_string())
+            .as_str()
+        {
+            "glauber" => KineticRateLaw::glauber(frequency.unwrap_or(1.0)).map(|_| ()),
+            "metropolis" => KineticRateLaw::metropolis(frequency.unwrap_or(1.0)).map(|_| ()),
+            other => Err(DynamicsError::new(format!(
+                "unknown kinetic_rate `{other}`"
+            ))),
+        }
+        .map_err(|error| invalid("kinetic_rate", error.to_string()))?;
+        let window = parse_param::<f64>(params, "event_time_per_sweep")?.unwrap_or(1.0);
+        if !window.is_finite() || window <= 0.0 {
+            return Err(invalid(
+                "event_time_per_sweep",
+                "must be finite and positive",
+            ));
+        }
+        Ok(())
+    }
+
     fn from_params(params: &Params, rng: &mut Self::Rng) -> Result<Self, CarloError> {
+        Self::validate_params(params)?;
         let beta = parse_param::<f64>(params, "beta")?.unwrap_or(1.0);
         let coupling = parse_param::<f64>(params, "J")?.unwrap_or(1.0);
         let lattice = build_lattice_from_params(params, parse_bool(params, "pbc", true)?)?;
@@ -261,6 +294,30 @@ impl<const D: usize> FromParams for HardSphereEventChainMC<D> {
         Self::new(kernel, chains_per_sweep)
             .map_err(|error| invalid("event_chain", error.to_string()))
     }
+}
+
+/// Validate the parameters shared by the Kawasaki and BKL Ising adapters.
+///
+/// Both feed `beta` and `J` into assert-backed constructors
+/// (`System::new`, `IsingModel::new`), so a non-finite or negative value
+/// must be rejected here as an `InvalidConfig` error rather than reaching
+/// the assertion as an unintended panic on user data.
+fn validate_kinetic_ising_params(params: &Params) -> Result<(), CarloError> {
+    let beta = parse_param::<f64>(params, "beta")?.unwrap_or(1.0);
+    if !beta.is_finite() || beta < 0.0 {
+        return Err(invalid("beta", "must be finite and non-negative"));
+    }
+    let coupling = parse_param::<f64>(params, "J")?.unwrap_or(1.0);
+    if !coupling.is_finite() {
+        return Err(invalid("J", "must be finite"));
+    }
+    let pbc = parse_bool(params, "pbc", true)?;
+    build_lattice_from_params(params, pbc)?;
+    let up_fraction = parse_param::<f64>(params, "up_fraction")?.unwrap_or(0.5);
+    if !up_fraction.is_finite() || !(0.0..=1.0).contains(&up_fraction) {
+        return Err(invalid("up_fraction", "must lie in [0, 1]"));
+    }
+    Ok(())
 }
 
 fn initialize_ising_spins(

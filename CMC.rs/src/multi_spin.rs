@@ -308,6 +308,9 @@ impl FromParams for MultiSpinIsing {
                 reason: "must be finite".into(),
             });
         }
+        // Lattice parameters must be validated here too: the scheduler can
+        // call validate_params without ever running from_params.
+        build_lattice_from_params(params, parse_bool(params, "pbc", true)?)?;
         Ok(())
     }
 

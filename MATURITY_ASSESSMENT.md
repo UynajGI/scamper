@@ -1,8 +1,12 @@
 # Maturity Assessment — Physics Validation Coverage
 
-> Updated 2026-08-14. Covers all 4 crates: Carlo.rs, CMC.rs, QMC.rs, MCMC.rs.
+> Updated 2026-08-19. Covers all 4 crates: Carlo.rs, CMC.rs, QMC.rs, MCMC.rs.
 > Per-solver assessment against 8 production-readiness criteria.
 > All four crates' physics validation complete (tracker 22/22).
+> CMC.rs production hardening complete 2026-08-19: named residues closed,
+> input validation audited for all 19 solvers (criterion G evidence in
+> `CMC.rs/tests/physics/input_validation.rs`, per-solver domains in
+> `CMC.rs/VALIDATION.md`).
 
 ## Maturity levels
 
@@ -45,27 +49,33 @@
 
 ### CMC.rs (19 solvers)
 
-| Solver | Status | Key gap |
+Production status since 2026-08-19: every solver has criterion-G evidence
+(input-validation audit; three source-side holes found and fixed) and an
+up-to-date validated domain (criterion H, `CMC.rs/VALIDATION.md`). 15 of 19
+are **production-ready**; 4 remain research-grade for physics/evidence
+reasons documented below.
+
+| Solver | Status | Key gap / evidence beyond research-grade |
 |--------|--------|---------|
-| Local Metropolis | **research-grade** | z-score + connectivity validated; continuous-spin (XY/Heisenberg) and frustrated-triangle cross-solver validated |
-| Wolff cluster | **research-grade** | z-score validated |
-| Swendsen-Wang | **research-grade** | Direct DB on 2-site Ising; z-score validated |
-| Heat bath (discrete) | **research-grade** | Exact energies N=4/8 z-scores + direct DB |
-| Heat bath (continuous O(N)) | **research-grade** | Finite-T conditional vs Bessel/Langevin (O(2)+O(3)); infinite-T uniform |
-| Microcanonical over-relaxation | **research-grade** | Energy conservation tested |
-| Hybrid (composed) | **research-grade** | ⟨E⟩ and ⟨m²⟩ vs exact enumeration |
-| MultiSpinIsing (64-replica) | **research-grade** | 8-site exact enumeration cross-check |
-| Wang-Landau DOS | **research-grade** | 2/4-site exact + 4×4 (11s, CI-ready) + BinnedAxis production run |
-| Multicanonical / umbrella | **research-grade** | Full MC-vs-exact distribution (moments + P(E) + flatness) |
-| Worm (Ising HT graph) | **research-grade** | Exact energy + endpoint correlation |
-| Kawasaki dynamics | **research-grade** | Sector-restricted exact equilibrium (BFS-reachable sector); zombie cross-seed test removed |
-| BKL / n-fold-way | **research-grade** | Residence-time-weighted equilibrium vs exact (N=4/8, 3 β) |
-| Gillespie | **research-grade** | 3-state CTMC exact stationary π + Ising equilibrium |
-| Event chain (hard sphere) | **research-grade** | EOS via exact virial B₂/B₃ (contact-value + Richardson); cross-solver vs Metropolis NVT |
-| Particle NVT | **research-grade** | Energy distribution vs quadrature |
-| Particle NPT | **research-grade** | Finite-N ideal gas ⟨V⟩ = (N+1)kT/P exact (long test) + directional response |
-| Particle μVT | **research-grade** | Ideal gas Poisson ⟨N⟩ exact (long test) + directional response |
-| Rigid molecule | **research-grade** | Equilibrium vs quadrature references (pair/probe/rotor-locking); no one-body external field API |
+| Local Metropolis | **production-ready** | z-score + connectivity + direct DB; continuous-spin and frustrated-triangle cross-solver; Potts q=3/4 cross-solver + analytic limits; input validation audited |
+| Wolff cluster | **production-ready** | z-score; direct DB N=3; Potts q=3/4 exact enumeration (E, m², C) |
+| Swendsen-Wang | **production-ready** | Direct DB on 2-site Ising; Potts q=3/4 exact enumeration (E, m², C); β=0 uniform limit; 4-solver cross-solver at q=3 βc |
+| Heat bath (discrete) | **production-ready** | Exact energies N=4/8 z-scores + direct DB; Potts q=3/4 exact enumeration |
+| Heat bath (continuous O(N)) | **production-ready** | Finite-T conditional vs Bessel/Langevin (O(2)+O(3)); infinite-T uniform; DB by construction (exact conditional sampling) |
+| Microcanonical over-relaxation | **research-grade** | Energy conservation tested; not ergodic alone (physical, documented) — use composed with ergodic kernels |
+| Hybrid (composed) | **research-grade** | Hybrid(Metropolis, Wolff) ⟨E⟩/⟨m²⟩ vs exact enumeration; other compositions and hybrid-specific ergodicity/cross-solver evidence untested (documented) |
+| MultiSpinIsing (64-replica) | **research-grade** | 8-site exact enumeration cross-check; no cross-solver vs scalar Metropolis, no multi-seed z coverage (documented) |
+| Wang-Landau DOS | **production-ready** | 2/4-site exact + 4×4 (11s, CI-ready) + BinnedAxis production run; unattainable `minimum_visited_fraction` now terminates loudly (`UnreachableBins`) instead of silently non-converging |
+| Multicanonical / umbrella | **production-ready** | Full MC-vs-exact distribution (moments + P(E) + flatness); transactional bias algebra |
+| Worm (Ising HT graph) | **production-ready** | Exact energy + endpoint correlation; cross-solver vs spin Metropolis; multi-component lattices rejected loudly (silent-freeze failure mode closed); multi-defect worms documented as not implemented |
+| Kawasaki dynamics | **production-ready** | Sector-restricted exact equilibrium (BFS-reachable sector); β/J input validation fixed (was a panic path) |
+| BKL / n-fold-way | **production-ready** | Residence-time-weighted equilibrium vs exact (N=4/8, 3 β); input validation fixed (β/J/event window) |
+| Gillespie | **production-ready** | 3-state CTMC exact stationary π + Ising equilibrium |
+| Event chain (hard sphere) | **production-ready** | EOS via exact virial B₂/B₃ (contact-value + Richardson); cross-solver vs Metropolis NVT |
+| Particle NVT | **production-ready** | Energy distribution vs quadrature; input validation audited |
+| Particle NPT | **production-ready** | Finite-N ideal gas ⟨V⟩ = (N+1)kT/P exact (long test) + directional response |
+| Particle μVT | **production-ready** | Ideal gas Poisson ⟨N⟩ exact (long test) + directional response |
+| Rigid molecule | **production-ready** | Equilibrium vs quadrature references; one-body dipolar external field (`DipolarExternalField`) validated vs 2D von Mises + 3D Langevin free-rotor answers with a machine-precision −E·μ identity |
 
 ### QMC.rs (4 solvers)
 
@@ -101,8 +111,8 @@
 | C | Analytic limits | ✅ PASS | g=0, high-T ⟨m²⟩→1/4N, strong field polarizes, dimer exact |
 | D | Per-update balance | ✅ PASS | `asymmetric_hastings_detailed_balance_n2` (direct DB) |
 | E | Ergodicity | ✅ PASS | Multi-seed convergence + BFS strong connectivity (N=2) + aperiodicity |
-| F | Cross-solver | ✅ PASS | Metropolis vs Wolff vs SW on 8×8 (3σ) |
-| G | Input validation | ✅ PASS | Topology mismatch, malformed params, unknown lattice |
+| F | Cross-solver | ✅ PASS | Metropolis vs Wolff vs SW on 8×8 (3σ); Potts q=3 4-solver at βc (2026-08-19) |
+| G | Input validation | ✅ PASS | Topology mismatch, malformed params, unknown lattice; `input_validation.rs` audit (2026-08-19) |
 | H | Documented limits | ✅ PASS | VALIDATION.md: 19 solvers with validated domain |
 
 ### CMC.rs — Wolff cluster
@@ -110,12 +120,12 @@
 | # | Criterion | Status | Evidence |
 |---|-----------|--------|----------|
 | A | ✅ PASS | `wolff_batch_cache_matches_exact_energy` |
-| B | ✅ PASS | Langevin O(3), Bessel-ratio O(2) exact; 8×8 cross-solver |
-| C | ✅ PASS | XY/Heisenberg cluster activation, low-T M→1 |
+| B | ✅ PASS | Langevin O(3), Bessel-ratio O(2) exact; 8×8 cross-solver; Potts q=3/4 full enumeration E+m²+C (2026-08-19) |
+| C | ✅ PASS | XY/Heisenberg cluster activation, low-T M→1; Potts β=0 uniform, β=8 frozen |
 | D | ✅ PASS | `wolff_detailed_balance_n3` (direct DB) |
 | E | ✅ PASS | Multi-seed convergence test |
-| F | ✅ PASS | Cross-solver 8×8 |
-| G | ✅ PASS | Sign-problem rejection, model manifold |
+| F | ✅ PASS | Cross-solver 8×8; Potts q=3 4-solver at βc |
+| G | ✅ PASS | Sign-problem rejection, model manifold; input-validation audit |
 | H | ✅ PASS | VALIDATION.md documents validated domain |
 
 ### CMC.rs — Swendsen-Wang
@@ -123,12 +133,12 @@
 | # | Criterion | Status | Evidence |
 |---|-----------|--------|----------|
 | A | ✅ PASS | Batch delta cache |
-| B | ⚠️ PARTIAL | beta=0 ergodicity smoke + 8×8 cross-solver; no direct exact |
-| C | ⚠️ PARTIAL | SW assign independent states at beta=0 |
+| B | ✅ PASS | Potts q=3/4 full q^N enumeration: ⟨E⟩, ⟨m²⟩, C at β=0.3/0.8 on N=4/N=8 (2026-08-19; q=2 mapped onto Ising by the enumerator anchor) |
+| C | ✅ PASS | β=0 exactly-uniform states (⟨E⟩ = −JΣw/q closed form); strong-coupling frozen ground state |
 | D | ✅ PASS | Direct DB on 2-site Ising |
-| E | ✅ PASS | Multi-seed convergence test |
-| F | ✅ PASS | 8×8 cross-solver |
-| G | ✅ PASS | |
+| E | ✅ PASS | Multi-seed convergence test; strongly connected N=2 |
+| F | ✅ PASS | 8×8 cross-solver; Potts q=3 4-solver at βc = ln(1+√3) |
+| G | ✅ PASS | Input-validation audit |
 | H | ✅ PASS | VALIDATION.md documents validated domain |
 
 ### QMC.rs — Lattice directed-loop
@@ -256,7 +266,16 @@ Same as NUTS minus U-turn tests.
 16. Carlo error analysis / merge remains research-grade: no error-bar coverage-calibration test (fraction of independent replicas whose truth falls within 1σ ≈ 68%).
 17. `Measurements::read_checkpoint_hdf5` still contains 4 silent fallbacks (shape→zeros, flag→false, member_names→empty ×2) — potential silent data loss on corrupt files; report-only for now.
 18. MPI failure modes: a rank-local test panic under mpirun deadlocks peers in collectives (finalize semantics); `with_ranks_per_run(k>1)` topology is untestable in-process (single-init exclusivity). The `pt_exchange` end-to-end entry-point test is np 2 only (its entry point owns the MPI init and cannot probe world size).
-19. CMC named gaps closed 2026-08-14 (all 3 experimental solvers → research-grade); residue: Potts q>2 unvalidated (heat bath/SW/Wolff), multi-component worm, molecule API lacks a one-body external-field term (blocks the true Langevin dipole case), Wang-Landau `minimum_visited_fraction` needs hand-tuning to the reachable-bin count (silent non-convergence risk otherwise).
+19. ~~CMC named gaps residue~~ → Closed 2026-08-19:
+    - **Potts q>2**: heat bath + SW + Wolff validated against full q^N enumeration (⟨E⟩, ⟨m²⟩, C; N=4/N=8; q=3/4; β=0.3/0.8), plus β=0/strong-coupling analytic limits, 4-solver cross-solver at q=3 βc, q=4 βc = ln 3 anchor (`CMC.rs/tests/physics/potts_exact.rs`).
+    - **Molecule one-body external field**: `DipolarExternalField` API added (additive, backward-compatible; neutral molecules enforced loudly); validated against 2D von Mises and 3D Langevin free-rotor moments with a machine-precision −E·μ identity (`CMC.rs/tests/physics/molecule_external_field.rs`).
+    - **Wang-Landau `minimum_visited_fraction`**: unattainable fractions now terminate loudly (`WangLandauTermination::UnreachableBins`) once the discovery plateau establishes the reachable set, instead of silently running to the sweep guard; checkpoints carry the evidence (`CMC.rs/tests/physics/wang_landau_convergence.rs`).
+    - **Multi-component worm**: honest-limitation route — multi-component (disconnected/isolated-site) lattices, whose components beyond the defect pair would silently freeze, are rejected loudly at construction; multi-defect/multi-leg worms are documented as not implemented; worm-vs-Metropolis cross-solver added.
+    - **Input validation (criterion G) for all 19 solvers**: audited with rejection tests (`CMC.rs/tests/physics/input_validation.rs`); three source holes fixed (Kawasaki/BKL β+J panic path, MultiSpinIsing lattice validation, BKL event-window validation).
+
+### Still open (2026-08-19, CMC production residue)
+
+20. CMC solvers remaining research-grade and why: **microcanonical over-relaxation** (not ergodic alone — physical; use in composition), **hybrid compositions** (only Metropolis+Wolff validated), **MultiSpinIsing** (no cross-solver vs scalar Metropolis, no multi-seed z coverage). Their criterion-G input validation and criterion-H domains are covered.
 
 ---
 
@@ -303,9 +322,9 @@ Same as NUTS minus U-turn tests.
 
 ## 5. Status statement
 
-**Repository: research-grade. All four crates' physics validation complete (tracker 22/22).**
+**Repository: research-grade overall (QMC/MCMC physics complete); CMC.rs and the Carlo.rs framework core reached their target maturity on 2026-08-19.**
 
 - **Carlo.rs**: stable framework core; HDF5 checkpoint, MPI backend, and PT exchange now **production-ready** (analytic exchange-acceptance validation, np 1/2/4 exact fan-out, loud legacy fallback; nightly `carlo-framework` regression job) — 302 suite tests (297 + 5 MPI-ignored); error analysis/merge still research-grade
-- **CMC.rs**: 245 suite tests (230 + 15 long) + 69 lib. All named validation gaps closed (2026-08-14): the 3 experimental solvers (multicanonical, event chain, rigid molecule) are research-grade; Kawasaki has sector-restricted exact equilibrium; heat baths have exact/Bessel references; BKL/Gillespie have exact stationary distributions; Metropolis-continuous + frustrated validated vs Wolff/quadrature; a physically-wrong Kawasaki zombie test removed. Residue: Potts q>2, multi-component worm, molecule one-body external field API
+- **CMC.rs**: 273 suite tests (258 + 15 long) + 69 lib. **Production hardening complete (2026-08-19)**: 15 of 19 solvers **production-ready** (physics A–F + audited input validation G + documented domains H); Potts q=3/4 validated against full enumeration for heat bath/SW/Wolff with cross-solver and analytic limits; molecule one-body dipolar external field validated against the Langevin/von Mises free-rotor answers; Wang-Landau unattainable-visited-fraction runs fail loudly (`UnreachableBins`); the worm rejects multi-component lattices loudly and carries a cross-solver check. Remaining research-grade with documented reasons: microcanonical over-relaxation (not ergodic alone), hybrid compositions (one combination validated), MultiSpinIsing (no cross-solver/multi-seed coverage)
 - **QMC.rs**: 178 tests (171 + 7 long). All 4 solvers research-grade with ED cross-checks, cross-solver validation, ergodicity, and z-score framework
 - **MCMC.rs**: 72 tests (69 + 3 long). All 6 kernels research-grade: detailed balance (machine-precision + statistical), ESS calibrated on AR(1), 6-solver posterior agreement, non-Gaussian recovery; nightly z-score monitoring covers CMC/QMC at 64 seeds

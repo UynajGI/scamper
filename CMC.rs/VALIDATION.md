@@ -1,46 +1,47 @@
 # CMC.rs — Physics Validation & Validated Domain
 
-> Updated 2026-08-14. Branch: `dev`.
+> Updated 2026-08-19. Branch: `dev`.
 
 ## Test suite summary
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 230 | ~30s |
-| Long stochastic (`--ignored`) | 15 | ~120s |
-| **Suite total** | **245** | (+69 lib unit tests) |
+| Default (`cargo test`) | 258 | ~50s |
+| Long stochastic (`--ignored`) | 15 | ~20s |
+| **Suite total** | **273** | (+69 lib unit tests) |
 
 ## Per-solver validated domain
 
 ### Local Metropolis (`MetropolisCore`)
-- **Validated:** Ising S=1/2 on chain/square/hypercubic graphs, PBC and OBC
+- **Validated:** Ising S=1/2 on chain/square/hypercubic graphs, PBC and OBC; q-state Potts (q=3,4) via cross-solver and β=0/strong-coupling limits
 - **Observables:** ⟨E⟩, ⟨m²⟩ vs exact enumeration (N=2,3,4,8)
 - **Detailed balance:** Direct DB verified on N=2 (1e-15 precision)
 - **Ergodicity:** 16-seed z-score framework (|z|<4, no systematic bias)
 - **Connectivity:** Explicit Markov chain strongly connected on N=2
-- **Cross-solver:** Agrees with Wolff and SW within 3σ on 8×8 Ising; continuous-spin cross-solver XY (O(2)) and Heisenberg (O(3)) vs Wolff on 8×8 (pooled |z|<4 at β=0.7/0.9 and 0.5/0.9)
+- **Cross-solver:** Agrees with Wolff and SW within 3σ on 8×8 Ising; continuous-spin cross-solver XY (O(2)) and Heisenberg (O(3)) vs Wolff on 8×8 (pooled |z|<4 at β=0.7/0.9 and 0.5/0.9); 8×8 q=3 Potts 4-solver agreement (see Potts section)
 - **Frustrated:** AFM XY triangle (J<0): full equilibrium vs spectral quadrature reference — ⟨E⟩ and chirality ⟨κ²⟩ at β=1,3 (per-seed |z|<3, ground-state algebra exact)
-- **NOT validated:** — (continuous spins and frustrated systems validated 2026-08-14)
+- **NOT validated:** —
 
 ### Wolff cluster (`WolffCore`)
-- **Validated:** Ising S=1/2, XY (O(2)), Heisenberg (O(3)) on chain/square
-- **Observables:** ⟨E⟩ vs exact enumeration, Langevin/Bessel-ratio analytic limits
+- **Validated:** Ising S=1/2, XY (O(2)), Heisenberg (O(3)) on chain/square; q-state Potts q=3,4 (2026-08-19)
+- **Observables:** ⟨E⟩ vs exact enumeration, Langevin/Bessel-ratio analytic limits; Potts ⟨E⟩, ⟨m²⟩, C vs full q^N enumeration (N=4, 8; β=0.3/0.8; per-seed |z|<4, pooled Σz gate)
 - **Detailed balance:** Direct DB verified on N=3
 - **Ergodicity:** 16-seed z-score, strongly connected on N=2
-- **NOT validated:** Potts q>2 cluster updates
+- **NOT validated:** —
 
 ### Swendsen-Wang (`SWCore`)
-- **Validated:** Ising S=1/2 on chain/square
+- **Validated:** Ising S=1/2 on chain/square; q-state Potts q=3,4 (2026-08-19)
 - **Detailed balance:** Direct DB verified on N=2 (50k samples/state)
+- **Exact equilibrium:** Potts ⟨E⟩, ⟨m²⟩, C vs full q^N enumeration on N=4/N=8 at β=0.3/0.8 (16-seed z-scores); β=0 exactly-uniform state distribution (⟨E⟩ = −JΣw/q closed form)
 - **Ergodicity:** Strongly connected on N=2
-- **Cross-solver:** Agrees with Metropolis within 3σ on 8×8
-- **NOT validated:** Potts q>2, continuous spins
+- **Cross-solver:** Agrees with Metropolis within 3σ on 8×8; 8×8 q=3 near βc = ln(1+√3) 4-solver agreement
+- **NOT validated:** continuous-spin cluster updates
 
 ### Heat bath — discrete (`HeatBathCore`)
-- **Validated:** Ising S=1/2
+- **Validated:** Ising S=1/2; q-state Potts q=3,4 (2026-08-19)
 - **Detailed balance:** Direct DB verified on N=2
-- **Exact energies:** ⟨E⟩ and ⟨m²⟩ vs exact enumeration on N=4 and N=8 at β=0.3/0.8 (16-seed z-scores, max|z|<2.5)
-- **NOT validated:** Potts q>2
+- **Exact energies:** ⟨E⟩ and ⟨m²⟩ vs exact enumeration on N=4 and N=8 at β=0.3/0.8 (16-seed z-scores, max|z|<2.5); Potts adds ⟨E⟩, ⟨m²⟩, C on N=4/N=8 (2026-08-19)
+- **NOT validated:** —
 
 ### Heat bath — continuous O(N) (`ContinuousHeatBathCore`)
 - **Validated:** O(3) uniform-on-sphere at β→0 (⟨s_α⟩≈0, ⟨s_α²⟩≈1/3)
@@ -60,7 +61,8 @@
 - **Validated:** 2-site exact DOS levels/degeneracies
 - **Validated:** Canonical reweighting recovers exact ⟨E⟩
 - **BinnedAxis production run:** binned DOS vs exact binned degeneracies (8-level weighted 6-ring, 14-bin axis; per-bin |Δln g| RMS 0.013, gate 0.05); canonical reweighting ⟨E⟩(T) at 3 temperatures vs exact (|z|≤1.2); flat-histogram-only route error floor documented (RMS ≤0.1)
-- **NOT validated:** — (continuous-axis production run validated 2026-08-14)
+- **Convergence robustness (2026-08-19):** an unattainable `minimum_visited_fraction` (more visited bins demanded than physically reachable) terminates loudly with `WangLandauTermination::UnreachableBins` after the discovery plateau is established (500 stalled flatness checks), instead of silently burning sweeps to the maximum-sweep guard; checkpoint round-trips the failure and its evidence; version-1 checkpoints without the stall fields still load
+- **NOT validated:** —
 
 ### Multicanonical / umbrella (`EnergyBiasCore`)
 - **Validated:** Transactional rejection, bias algebra, axis boundaries
@@ -72,7 +74,9 @@
 - **Validated:** HT graph partition identity matches spin enumeration
 - **Validated:** Graph energy estimator matches exact spin energy
 - **Validated:** Hastings reciprocity, endpoint correlation
-- **NOT validated:** Multi-component worms
+- **Cross-solver (2026-08-19):** 4×4 square ⟨E⟩ at β=0.44 agrees with spin Metropolis within pooled 4σ
+- **Input rejection (2026-08-19):** multi-component (disconnected or isolated-site) lattices are rejected loudly at construction — the defect pair is confined to one component and the remaining components would stay frozen at their initial occupation, silently sampling a wrong ensemble
+- **NOT validated:** multi-defect / multi-leg (multi-component) worm algorithms — not implemented; the kernel is a two-defect kernel by design (documented in `worm` module docs)
 
 ### Kawasaki dynamics (`KawasakiCore`)
 - **Validated:** Signed magnetization conservation (exact)
@@ -121,12 +125,32 @@
 ### Rigid molecule (`MolecularMetropolisCore`)
 - **Validated:** Bond-length preservation, geometry preservation
 - **Equilibrium distribution:** three analytic cases against in-code quadrature references through the real solver (translation + plane-rotation moves): two-molecule pair ⟨U⟩ and bound fraction (1D Simpson); dumbbell+atom probe nematic ⟨cos 2α⟩ and ⟨U⟩ (2D midpoint); rotor-pair alignment ⟨cos 2Δθ⟩ across a coupling sweep ε=1→3 (linear response → saturation, the Langevin-x analog; max|z|=1.26 default, 7-coupling long variant max|z|=1.7). Thermalization-length pitfall documented (20k+ sweeps needed at strong coupling)
-- **NOT validated:** external-field Langevin case — the API has no one-body external term (report-only; see completion log 2026-08-14)
+- **External field (2026-08-19):** one-body dipolar term `DipolarExternalField` (per-atom charges, wrap-safe minimum-image dipoles, non-neutral molecules rejected loudly); free-rotor equilibrium vs the analytic Langevin-dipole answers through the real kernel — 2D: ⟨cosθ⟩=I₁(x)/I₀(x), ⟨cos²θ⟩=(1+I₂/I₀)/2; 3D: ⟨cosθ⟩=L(x), ⟨cos²θ⟩=1−2L(x)/x; x=βpE grid 0.5–5, per-seed |z|<4; machine-precision identity `external_field_energy = −E·μ` (1e-12) every sweep
+- **NOT validated:** — (external-field Langevin case validated 2026-08-19)
+
+## Input-validation coverage (criterion G)
+
+`tests/physics/input_validation.rs` (2026-08-19) sweeps the parameter and
+constructor surface of every scheduler-ready solver; invalid input must
+return `InvalidConfig` (or the kernel error type), never a silent accept and
+never an unintended panic:
+
+- Lattice kernels (Metropolis/Wolff/SW/heat baths/continuous heat
+  bath/microcanonical/hybrid): negative/NaN β, unknown lattice names, zero
+  or malformed dimensions, OBC triangles, Potts q<2, non-finite J, unknown
+  `initial_state`.
+- MultiSpinIsing, Wang-Landau (fraction/flatness/log_f/interval ranges,
+  24-site exact-axis limit), worm (β, coupling sign, close probability,
+  fugacity), Kawasaki/BKL (incl. the fixed β/J validation — previously
+  `J = NaN` panicked in an assert-backed constructor), BKL event windows,
+  event chain (box/particles/diameter/chain lengths), particle NVT/NPT/μVT
+  (density, cutoff, displacement, pressure, activity) and the molecule
+  kernel (scales, D≥2, topology corruption).
 
 ## Statistical validation framework
 
-- **z-score tests:** 16 independent seeds per solver, |z|<4 per seed, |z̄|<1.5 mean, no one-sided bias. Seed counts scale via `SCUTTLE_ZSCORE_SEEDS` (unset → default 16 unchanged; nightly `zscore-monitor` uses 64; `just nightly-zscore` reproduces locally). Σz thresholds are scale-invariant (−2√n).
-- **Cross-solver:** Metropolis vs Wolff pooled z-scores agree (|Δz̄|<2)
+- **z-score tests:** 16 independent seeds per solver (8 where chains are more expensive), |z|<4 per seed, |z̄|<2 mean, no one-sided bias. Seed counts scale via `SCUTTLE_ZSCORE_SEEDS` (unset → default unchanged; nightly `zscore-monitor` uses 64; `just nightly-zscore` reproduces locally). Σz thresholds are scale-invariant (−2√n); in test files with many configuration cells (Potts, external field) the Σz gate is pooled over all scores of one solver/test to control the multiple-comparisons false-alarm rate.
+- **Cross-solver:** Metropolis vs Wolff pooled z-scores agree (|Δz̄|<2); Potts 4-solver pairwise |z|<4 at βc; worm vs Metropolis pooled |z|<4
 - **Connectivity:** Explicit Markov chain enumeration on N=2 Ising (4 states), BFS strong connectivity + aperiodicity check
 
 ## Known issues
@@ -134,6 +158,7 @@
 1. ~~NPT/μVT equilibrium values~~ → Resolved 2026-08-14 (fixed in e1a07e4): the finite-N reference formulas (⟨V⟩=(N+1)kT/P, Poisson ⟨N⟩) match exactly; the old "mismatch" was a test-side formula error.
 2. **strict-repro feature:** Was defined in Cargo.toml but had zero implementation. Removed.
 3. ~~Kawasaki cross-seed zombie test~~ → Removed 2026-08-14: `kawasaki_2d_ising_energy_converges_same_regardless_of_seed` was #[ignore]'d with a reason stating it cannot pass (random starts land in different fixed-M sectors whose ⟨E⟩ genuinely differ), yet `--ignored` runs executed it anyway and it failed deterministically at HEAD. Physically-wrong criterion; superseded by the sector-restricted exact validation in `kawasaki_exact.rs`.
+4. ~~Kawasaki/BKL β/J validation~~ → Fixed 2026-08-19: `from_params` previously forwarded user `beta`/`J` into assert-backed constructors, so `J = "NaN"` panicked instead of returning `InvalidConfig`. Both adapters now validate through a shared `validate_kinetic_ising_params`.
 
 ## Completion log
 
@@ -145,3 +170,8 @@
 | 2026-07-23 | Gap 4: Validated domain docs | ✅ This document |
 | 2026-08-14 | Production hardening: 8 solvers | ✅ 31 new tests: multicanonical full-MC (4), WL binned (4), event-chain EOS (4+1 long), molecule equilibrium (4+1 long), Kawasaki sector-exact (2), heat-bath discrete+O(N) (5), BKL/Gillespie equilibrium (4), continuous-spin cross-solver + frustrated triangle (6) |
 | 2026-08-14 | Zombie test removal | ✅ Physically-wrong Kawasaki cross-seed test deleted; superseded by sector-exact validation |
+| 2026-08-19 | Production: Potts q>2 | ✅ 8 tests (`potts_exact.rs`): full q^N enumeration on 2×2 square and N=8 chain, q ∈ {3,4}, β ∈ {0.3, 0.8}, observables ⟨E⟩/⟨m²⟩/C for heat bath + SW + Wolff; enumeration anchors (q=1 degenerate, q=2 ≡ Ising with J/2); β=0 uniform and β=8 frozen analytic limits; 8×8 q=3 4-solver cross-solver at βc; q=4 βc = ln 3 directional anchor |
+| 2026-08-19 | Production: molecule external field | ✅ 4 tests (`molecule_external_field.rs`): `DipolarExternalField` API (additive, backward-compatible), 2D von Mises + 3D Langevin free-rotor moments, −E·μ machine-precision identity, loud rejection of non-neutral/short/non-finite charge tables |
+| 2026-08-19 | Production: WL convergence robustness | ✅ 4 tests (`wang_landau_convergence.rs`): unattainable `minimum_visited_fraction` → loud `UnreachableBins` termination (not Converged/MaximumSweeps), auto-derived reachable set matches enumeration, checkpoint evidence guards, version-1 back-compat |
+| 2026-08-19 | Production: multi-component worm | ✅ Honest limitation route: multi-component (disconnected/isolated-site) lattices now rejected loudly at `IsingGraphWormModel::new` (defect pair confined to one component would silently freeze the rest); multi-defect/multi-leg worms documented as not implemented; + worm-vs-Metropolis cross-solver test |
+| 2026-08-19 | Production: input-validation audit | ✅ 10 tests (`input_validation.rs`) across all 19 solvers; fixed three source holes (Kawasaki/BKL β+J panic path, MultiSpinIsing lattice validation, BKL event-window validation) |
