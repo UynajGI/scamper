@@ -47,25 +47,25 @@
 
 | Solver | Status | Key gap |
 |--------|--------|---------|
-| Local Metropolis | **research-grade** | z-score + connectivity validated |
+| Local Metropolis | **research-grade** | z-score + connectivity validated; continuous-spin (XY/Heisenberg) and frustrated-triangle cross-solver validated |
 | Wolff cluster | **research-grade** | z-score validated |
 | Swendsen-Wang | **research-grade** | Direct DB on 2-site Ising; z-score validated |
-| Heat bath (discrete) | **research-grade** | Exact-energy run |
-| Heat bath (continuous O(N)) | **research-grade** | O(3) uniform-on-sphere at infinite T |
+| Heat bath (discrete) | **research-grade** | Exact energies N=4/8 z-scores + direct DB |
+| Heat bath (continuous O(N)) | **research-grade** | Finite-T conditional vs Bessel/Langevin (O(2)+O(3)); infinite-T uniform |
 | Microcanonical over-relaxation | **research-grade** | Energy conservation tested |
 | Hybrid (composed) | **research-grade** | ⟨E⟩ and ⟨m²⟩ vs exact enumeration |
 | MultiSpinIsing (64-replica) | **research-grade** | 8-site exact enumeration cross-check |
-| Wang-Landau DOS | **research-grade** | 2/4-site exact + 4×4 (11s, CI-ready) |
-| Multicanonical / umbrella | **experimental** | Covered by component tests |
+| Wang-Landau DOS | **research-grade** | 2/4-site exact + 4×4 (11s, CI-ready) + BinnedAxis production run |
+| Multicanonical / umbrella | **research-grade** | Full MC-vs-exact distribution (moments + P(E) + flatness) |
 | Worm (Ising HT graph) | **research-grade** | Exact energy + endpoint correlation |
-| Kawasaki dynamics | **research-grade** | M-conservation; no equilibrium check |
-| BKL / n-fold-way | **research-grade** | Exact-trajectory reproducibility |
-| Gillespie | **research-grade** | Verified via BKL test |
-| Event chain (hard sphere) | **experimental** | Covered by dynamics_stage6 tests |
+| Kawasaki dynamics | **research-grade** | Sector-restricted exact equilibrium (BFS-reachable sector); zombie cross-seed test removed |
+| BKL / n-fold-way | **research-grade** | Residence-time-weighted equilibrium vs exact (N=4/8, 3 β) |
+| Gillespie | **research-grade** | 3-state CTMC exact stationary π + Ising equilibrium |
+| Event chain (hard sphere) | **research-grade** | EOS via exact virial B₂/B₃ (contact-value + Richardson); cross-solver vs Metropolis NVT |
 | Particle NVT | **research-grade** | Energy distribution vs quadrature |
 | Particle NPT | **research-grade** | Finite-N ideal gas ⟨V⟩ = (N+1)kT/P exact (long test) + directional response |
 | Particle μVT | **research-grade** | Ideal gas Poisson ⟨N⟩ exact (long test) + directional response |
-| Rigid molecule | **experimental** | Geometry preservation only |
+| Rigid molecule | **research-grade** | Equilibrium vs quadrature references (pair/probe/rotor-locking); no one-body external field API |
 
 ### QMC.rs (4 solvers)
 
@@ -256,6 +256,7 @@ Same as NUTS minus U-turn tests.
 16. Carlo error analysis / merge remains research-grade: no error-bar coverage-calibration test (fraction of independent replicas whose truth falls within 1σ ≈ 68%).
 17. `Measurements::read_checkpoint_hdf5` still contains 4 silent fallbacks (shape→zeros, flag→false, member_names→empty ×2) — potential silent data loss on corrupt files; report-only for now.
 18. MPI failure modes: a rank-local test panic under mpirun deadlocks peers in collectives (finalize semantics); `with_ranks_per_run(k>1)` topology is untestable in-process (single-init exclusivity). The `pt_exchange` end-to-end entry-point test is np 2 only (its entry point owns the MPI init and cannot probe world size).
+19. CMC named gaps closed 2026-08-14 (all 3 experimental solvers → research-grade); residue: Potts q>2 unvalidated (heat bath/SW/Wolff), multi-component worm, molecule API lacks a one-body external-field term (blocks the true Langevin dipole case), Wang-Landau `minimum_visited_fraction` needs hand-tuning to the reachable-bin count (silent non-convergence risk otherwise).
 
 ---
 
@@ -305,6 +306,6 @@ Same as NUTS minus U-turn tests.
 **Repository: research-grade. All four crates' physics validation complete (tracker 22/22).**
 
 - **Carlo.rs**: stable framework core; HDF5 checkpoint, MPI backend, and PT exchange now **production-ready** (analytic exchange-acceptance validation, np 1/2/4 exact fan-out, loud legacy fallback; nightly `carlo-framework` regression job) — 302 suite tests (297 + 5 MPI-ignored); error analysis/merge still research-grade
-- **CMC.rs**: 281 tests (268 + 13 long). Metropolis/Wolff/SW have z-score + connectivity + DB; WL 4×4 CI-ready; NPT/μVT exact finite-N ideal-gas equilibrium (long tests)
+- **CMC.rs**: 245 suite tests (230 + 15 long) + 69 lib. All named validation gaps closed (2026-08-14): the 3 experimental solvers (multicanonical, event chain, rigid molecule) are research-grade; Kawasaki has sector-restricted exact equilibrium; heat baths have exact/Bessel references; BKL/Gillespie have exact stationary distributions; Metropolis-continuous + frustrated validated vs Wolff/quadrature; a physically-wrong Kawasaki zombie test removed. Residue: Potts q>2, multi-component worm, molecule one-body external field API
 - **QMC.rs**: 178 tests (171 + 7 long). All 4 solvers research-grade with ED cross-checks, cross-solver validation, ergodicity, and z-score framework
 - **MCMC.rs**: 72 tests (69 + 3 long). All 6 kernels research-grade: detailed balance (machine-precision + statistical), ESS calibrated on AR(1), 6-solver posterior agreement, non-Gaussian recovery; nightly z-score monitoring covers CMC/QMC at 64 seeds
