@@ -28,8 +28,8 @@ pub use grand::{
 pub use mc::{LennardJonesMuVt, LennardJonesNpt, LennardJonesNvt, ParticleMC};
 pub use mixture::{MoveMixture, WeightedMove};
 pub use molecule::{
-    MolecularMetropolisCore, MolecularMoveKind, MoleculeTopology, RigidMoleculeRotation,
-    RigidMoleculeTranslation, TorsionDefinition, TorsionRotation,
+    DipolarExternalField, MolecularMetropolisCore, MolecularMoveKind, MoleculeTopology,
+    RigidMoleculeRotation, RigidMoleculeTranslation, TorsionDefinition, TorsionRotation,
 };
 pub use movement::{ParticleTranslation, TranslateParticle};
 pub use potential::{CutoffTreatment, LennardJones, LennardJonesSpecies, PairPotential};

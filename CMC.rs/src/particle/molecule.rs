@@ -1,14 +1,21 @@
 //! Rigid-molecule topology, whole-molecule translations and plane rotations.
+//!
+//! An optional one-body [`DipolarExternalField`] couples molecular dipoles to
+//! a uniform external field: the term participates in every trial's
+//! Metropolis-Hastings weight and is available for measurement through
+//! [`MolecularMetropolisCore::external_field_energy`]. `ParticleSystem::energy`
+//! remains the pair energy; the one-body term is tracked by the kernel.
 
 use crate::algorithms::SimulationPhase;
 use crate::audit::{audit_particle_cache, should_audit_cache};
-use crate::core::acceptance::MetropolisHastingsAcceptance;
-use crate::core::trial::{metropolis_hastings_step, ProposedMove};
+use crate::core::acceptance::{AcceptanceRule, MetropolisHastingsAcceptance};
+use crate::core::trial::{metropolis_hastings_step, ProposedMove, TrialEvaluator};
 use crate::core::visit::{SiteOrder, VisitSchedule};
 use crate::particle::{
     CanonicalParticleKernel, MoveMixture, PairPotential, ParticleAlgorithm, ParticleBatchMove,
     ParticleBatchPatch, ParticleConfiguration, ParticleError, ParticleSystem, SimulationCell,
 };
+use carlo_rs::accept_log_probability;
 use rand::{Rng, RngExt};
 
 /// Fixed grouping of atoms into rigid molecules.
@@ -78,6 +85,75 @@ impl MoleculeTopology {
                 self.atom_to_molecule.len()
             )))
         }
+    }
+
+    /// Number of atoms the topology was built for (molecule members and
+    /// free atoms alike).
+    #[inline]
+    pub fn particle_count(&self) -> usize {
+        self.atom_to_molecule.len()
+    }
+}
+
+/// One-body coupling of rigid molecules to a uniform external field.
+///
+/// Every atom carries a point charge `q_a`; the one-body energy of one
+/// molecule is `-E · mu` with the molecular dipole
+/// `mu = Σ_a q_a (r_a - r_anchor)`, where `r_anchor` is the molecule's first
+/// atom and displacements use the periodic minimum image. For a neutral
+/// molecule (`Σ q_a = 0`) this is invariant under wrapping and under the
+/// choice of anchor, so translation and rotation moves see a well-defined
+/// energy difference. The kernel constructor therefore rejects non-neutral
+/// molecules: a net charge would couple to the absolute (wrapped) position
+/// and silently break both periodicity and detailed balance.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DipolarExternalField<const D: usize> {
+    field: [f64; D],
+    charges: Vec<f64>,
+}
+
+impl<const D: usize> DipolarExternalField<D> {
+    /// Define the field vector and the per-atom charge table.
+    ///
+    /// The table must contain one entry per particle of the target system;
+    /// molecule neutrality is validated when the field is attached to a
+    /// [`MolecularMetropolisCore`] (the topology is needed there).
+    pub fn new(field: [f64; D], charges: Vec<f64>) -> Result<Self, ParticleError> {
+        if D == 0 {
+            return Err(ParticleError::ZeroDimension);
+        }
+        if charges.is_empty() {
+            return Err(ParticleError::InvalidPotential(
+                "external-field charge table must not be empty".to_string(),
+            ));
+        }
+        for (axis, &component) in field.iter().enumerate() {
+            if !component.is_finite() {
+                return Err(ParticleError::InvalidPotential(format!(
+                    "external-field component {axis} is non-finite"
+                )));
+            }
+        }
+        for (atom, &charge) in charges.iter().enumerate() {
+            if !charge.is_finite() {
+                return Err(ParticleError::InvalidPotential(format!(
+                    "external-field charge of atom {atom} is non-finite"
+                )));
+            }
+        }
+        Ok(Self { field, charges })
+    }
+
+    /// Uniform field vector `E`.
+    #[inline]
+    pub const fn field(&self) -> &[f64; D] {
+        &self.field
+    }
+
+    /// Per-atom point charges.
+    #[inline]
+    pub fn charges(&self) -> &[f64] {
+        &self.charges
     }
 }
 
@@ -377,6 +453,7 @@ pub struct MolecularMetropolisCore<const D: usize> {
     topology: MoleculeTopology,
     translation: RigidMoleculeTranslation,
     rotation: RigidMoleculeRotation,
+    external_field: Option<DipolarExternalField<D>>,
     mixture: MoveMixture<MolecularMoveKind>,
     order: SiteOrder,
     visit_schedule: VisitSchedule,
@@ -404,6 +481,7 @@ impl<const D: usize> MolecularMetropolisCore<D> {
             topology,
             translation: RigidMoleculeTranslation::new(max_displacement)?,
             rotation: RigidMoleculeRotation::new(max_angle)?,
+            external_field: None,
             mixture,
             order: SiteOrder::new(),
             visit_schedule: VisitSchedule::RandomPermutation,
@@ -438,6 +516,83 @@ impl<const D: usize> MolecularMetropolisCore<D> {
     pub fn with_energy_check_interval(mut self, interval: u64) -> Self {
         self.energy_check_interval = interval;
         self
+    }
+
+    /// Attach a one-body dipolar external field to every trial move.
+    ///
+    /// The charge table must match the topology's particle count and every
+    /// molecule must be neutral (|Σ q| within roundoff); both are rejected
+    /// loudly here rather than producing wrap-dependent energies silently.
+    pub fn with_external_field(
+        mut self,
+        field: DipolarExternalField<D>,
+    ) -> Result<Self, ParticleError> {
+        let particle_count = self.topology.particle_count();
+        if field.charges().len() != particle_count {
+            return Err(ParticleError::InvalidPotential(format!(
+                "external-field charge table covers {} atoms but the topology has {particle_count}",
+                field.charges().len()
+            )));
+        }
+        let charge_scale = field
+            .charges()
+            .iter()
+            .fold(0.0_f64, |scale, &charge| scale.max(charge.abs()));
+        let neutrality_tolerance = 1e-9 * (1.0 + charge_scale);
+        for molecule in 0..self.topology.len() {
+            let total: f64 = self
+                .topology
+                .atoms(molecule)
+                .iter()
+                .map(|&atom| field.charges()[atom])
+                .sum();
+            if total.abs() > neutrality_tolerance {
+                return Err(ParticleError::InvalidPotential(format!(
+                    "molecule {molecule} carries net charge {total}: a dipolar external field \
+                     requires neutral molecules under periodic boundaries"
+                )));
+            }
+        }
+        self.external_field = Some(field);
+        Ok(self)
+    }
+
+    /// The attached one-body external field, if any.
+    #[inline]
+    pub const fn external_field(&self) -> Option<&DipolarExternalField<D>> {
+        self.external_field.as_ref()
+    }
+
+    /// Total one-body field energy `-Σ_m E·mu_m` of a configuration.
+    ///
+    /// `None` when no field is attached. Each molecular dipole is measured
+    /// through minimum-image displacements from the molecule's first atom,
+    /// so the value is wrap-invariant for neutral molecules. Atoms that
+    /// belong to no molecule are never moved by this kernel and are
+    /// deliberately excluded: their charge would only add a constant.
+    pub fn external_field_energy(&self, configuration: &ParticleConfiguration<D>) -> Option<f64> {
+        let field = self.external_field.as_ref()?;
+        let cell = configuration.cell();
+        let mut energy = 0.0;
+        for molecule in 0..self.topology.len() {
+            let atoms = self.topology.atoms(molecule);
+            let anchor = configuration.position(atoms[0]);
+            let mut dipole = [0.0; D];
+            for &atom in atoms {
+                let shift = cell.displacement(anchor, configuration.position(atom));
+                let charge = field.charges()[atom];
+                for axis in 0..D {
+                    dipole[axis] += charge * shift[axis];
+                }
+            }
+            energy -= field
+                .field()
+                .iter()
+                .zip(dipole)
+                .map(|(e, mu)| e * mu)
+                .sum::<f64>();
+        }
+        Some(energy)
     }
 }
 
@@ -478,15 +633,65 @@ impl<const D: usize, P: PairPotential> ParticleAlgorithm<D, P> for MolecularMetr
                         .propose(system.configuration(), &self.topology, molecule, rng)
                 }
             };
-            metropolis_hastings_step(
-                system,
-                potential,
-                &proposal,
-                &ensemble,
-                &acceptance,
-                &mut self.patch,
-                rng,
-            );
+            if let Some(field) = &self.external_field {
+                // Combined pair + one-body transition weight. The pair part
+                // comes from the transactional evaluator; the one-body part is
+                // the field energy change of the moved atoms, computed with
+                // minimum-image displacements so wrapped rotations are exact.
+                let mut delta =
+                    <ParticleSystem<D> as TrialEvaluator<P, ParticleBatchMove<D>>>::evaluate_trial(
+                        system,
+                        potential,
+                        &proposal.movement,
+                        &mut self.patch,
+                    );
+                let atoms = self.topology.atoms(molecule);
+                let cell = system.configuration().cell();
+                let mut dipole_change = [0.0; D];
+                for (slot, &atom) in atoms.iter().enumerate() {
+                    let charge = field.charges()[atom];
+                    if charge == 0.0 {
+                        continue;
+                    }
+                    let shift = cell.displacement(
+                        system.configuration().position(atom),
+                        &proposal.movement.positions()[slot],
+                    );
+                    for axis in 0..D {
+                        dipole_change[axis] += charge * shift[axis];
+                    }
+                }
+                let field_change: f64 = field
+                    .field()
+                    .iter()
+                    .zip(dipole_change)
+                    .map(|(e, mu)| e * mu)
+                    .sum();
+                delta.energy -= field_change;
+                let log_acceptance =
+                    acceptance.log_acceptance(&ensemble, &delta, proposal.log_reverse_over_forward);
+                assert!(
+                    !log_acceptance.is_nan(),
+                    "molecular trial produced NaN log acceptance"
+                );
+                if accept_log_probability(log_acceptance, rng) {
+                    <ParticleSystem<D> as TrialEvaluator<P, ParticleBatchMove<D>>>::commit_trial(
+                        system,
+                        &proposal.movement,
+                        &self.patch,
+                    );
+                }
+            } else {
+                metropolis_hastings_step(
+                    system,
+                    potential,
+                    &proposal,
+                    &ensemble,
+                    &acceptance,
+                    &mut self.patch,
+                    rng,
+                );
+            }
         }
 
         self.sweeps = self.sweeps.wrapping_add(1);

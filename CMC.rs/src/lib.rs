@@ -108,15 +108,16 @@ pub use observables::{
 };
 pub use particle::{
     compute_total_energy as compute_particle_energy, CanonicalParticleKernel, CellList,
-    CutoffTreatment, GrandCanonicalMove, GrandCanonicalPatch, InsertDeleteParticle,
-    IsotropicVolumeChange, LennardJones, LennardJonesMuVt, LennardJonesNpt, LennardJonesNvt,
-    LennardJonesSpecies, LogVolumeScale, MolecularMetropolisCore, MolecularMoveKind,
-    MoleculeTopology, MoveMixture, OrthorhombicCell, PairPotential, ParticleAlgorithm,
-    ParticleBatchMove, ParticleBatchPatch, ParticleConfiguration, ParticleDeletion,
-    ParticleEnergyPatch, ParticleError, ParticleGrandCanonicalCore, ParticleInsertion, ParticleMC,
-    ParticleMetropolisCore, ParticleNptMetropolisCore, ParticleSystem, ParticleTranslation,
-    RigidMoleculeRotation, RigidMoleculeTranslation, SimulationCell, TorsionDefinition,
-    TorsionRotation, TranslateParticle, VolumeChangePatch, WeightedMove,
+    CutoffTreatment, DipolarExternalField, GrandCanonicalMove, GrandCanonicalPatch,
+    InsertDeleteParticle, IsotropicVolumeChange, LennardJones, LennardJonesMuVt, LennardJonesNpt,
+    LennardJonesNvt, LennardJonesSpecies, LogVolumeScale, MolecularMetropolisCore,
+    MolecularMoveKind, MoleculeTopology, MoveMixture, OrthorhombicCell, PairPotential,
+    ParticleAlgorithm, ParticleBatchMove, ParticleBatchPatch, ParticleConfiguration,
+    ParticleDeletion, ParticleEnergyPatch, ParticleError, ParticleGrandCanonicalCore,
+    ParticleInsertion, ParticleMC, ParticleMetropolisCore, ParticleNptMetropolisCore,
+    ParticleSystem, ParticleTranslation, RigidMoleculeRotation, RigidMoleculeTranslation,
+    SimulationCell, TorsionDefinition, TorsionRotation, TranslateParticle, VolumeChangePatch,
+    WeightedMove,
 };
 pub use postprocess::{
     binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,

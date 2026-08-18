@@ -76,6 +76,8 @@ mod lattice_exact;
 mod long_convergence;
 #[path = "physics/molecule_equilibrium.rs"]
 mod molecule_equilibrium;
+#[path = "physics/molecule_external_field.rs"]
+mod molecule_external_field;
 #[path = "physics/multicanonical_exact.rs"]
 mod multicanonical_exact;
 #[path = "physics/observables_exact.rs"]
