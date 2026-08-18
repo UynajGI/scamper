@@ -46,10 +46,14 @@ mod worm_stage5;
 
 // ── Physics — deterministic exact validation (was physics_validation.rs) ─
 
+#[path = "physics/bkl_gillespie_equilibrium.rs"]
+mod bkl_gillespie_equilibrium;
 #[path = "physics/common.rs"]
 mod common;
 #[path = "physics/connectivity.rs"]
 mod connectivity;
+#[path = "physics/continuous_cross_solver.rs"]
+mod continuous_cross_solver;
 #[path = "physics/continuous_spins.rs"]
 mod continuous_spins;
 #[path = "physics/dynamics_exact.rs"]
@@ -58,12 +62,22 @@ mod dynamics_exact;
 mod ergodicity;
 #[path = "physics/ergodicity_extended.rs"]
 mod ergodicity_extended;
+#[path = "physics/event_chain_eos.rs"]
+mod event_chain_eos;
 #[path = "physics/generalized_exact.rs"]
 mod generalized_exact;
+#[path = "physics/heat_bath_exact.rs"]
+mod heat_bath_exact;
+#[path = "physics/kawasaki_exact.rs"]
+mod kawasaki_exact;
 #[path = "physics/lattice_exact.rs"]
 mod lattice_exact;
 #[path = "physics/long_convergence.rs"]
 mod long_convergence;
+#[path = "physics/molecule_equilibrium.rs"]
+mod molecule_equilibrium;
+#[path = "physics/multicanonical_exact.rs"]
+mod multicanonical_exact;
 #[path = "physics/observables_exact.rs"]
 mod observables_exact;
 #[path = "physics/p2_remaining.rs"]
@@ -80,6 +94,8 @@ mod statistical_regression;
 mod transition_balance;
 #[path = "physics/usage_exact.rs"]
 mod usage_exact;
+#[path = "physics/wang_landau_binned.rs"]
+mod wang_landau_binned;
 #[path = "physics/worm_exact.rs"]
 mod worm_exact;
 #[path = "physics/zscore_extended.rs"]
