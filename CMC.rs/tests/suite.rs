@@ -98,6 +98,8 @@ mod transition_balance;
 mod usage_exact;
 #[path = "physics/wang_landau_binned.rs"]
 mod wang_landau_binned;
+#[path = "physics/wang_landau_convergence.rs"]
+mod wang_landau_convergence;
 #[path = "physics/worm_exact.rs"]
 mod worm_exact;
 #[path = "physics/zscore_extended.rs"]

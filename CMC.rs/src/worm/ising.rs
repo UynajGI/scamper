@@ -105,6 +105,7 @@ pub struct IsingGraphWormModel {
 impl IsingGraphWormModel {
     pub fn new(lattice: CsrLattice, beta: f64, coupling: f64) -> Result<Self, WormError> {
         lattice.validate().map_err(WormError::new)?;
+        ensure_single_component(&lattice)?;
         if !beta.is_finite() || beta < 0.0 {
             return Err(WormError::new(
                 "Ising graph beta must be finite and non-negative",
@@ -393,6 +394,40 @@ impl WormModel for IsingGraphWormModel {
     fn endpoint_bin(&self, defect: &Self::Defect) -> Option<usize> {
         (*defect < self.lattice.n_sites).then_some(*defect)
     }
+}
+
+/// Reject multi-component lattices (including isolated sites).
+///
+/// The single defect pair of the worm diffuses within one connected
+/// component of the bond graph. On a disconnected graph the other
+/// components would keep their initial (empty-graph) occupation forever:
+/// the walk would still look healthy while sampling a wrong ensemble — the
+/// silent-garbage failure this check rules out at input time.
+fn ensure_single_component(lattice: &CsrLattice) -> Result<(), WormError> {
+    let mut seen = vec![false; lattice.n_sites];
+    let mut queue = std::collections::VecDeque::new();
+    seen[0] = true;
+    queue.push_back(0usize);
+    let mut reached = 1usize;
+    while let Some(site) = queue.pop_front() {
+        for (neighbor, _) in lattice.incidences(site) {
+            if !seen[neighbor] {
+                seen[neighbor] = true;
+                reached += 1;
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    if reached != lattice.n_sites {
+        return Err(WormError::new(format!(
+            "classical Ising worm requires a connected (single-component) lattice: only {reached} \
+             of {} sites are reachable from site 0, so the worm's defect pair would be confined \
+             to one component and the remaining components would stay frozen at their initial \
+             occupation, silently sampling a wrong ensemble",
+            lattice.n_sites
+        )));
+    }
+    Ok(())
 }
 
 /// Exact physical-sector high-temperature graph enumeration for small systems.

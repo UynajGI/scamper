@@ -95,6 +95,12 @@ pub enum WangLandauTermination {
     Converged,
     MaximumSweeps,
     FrozenByDriver,
+    /// The configured [`WangLandauConfig::minimum_visited_fraction`] demands
+    /// more visited bins than the walk can ever reach: bin discovery has
+    /// plateaued below the required count, so the flatness gate can never
+    /// pass. Terminates loudly instead of running to the sweep guard with a
+    /// silently unconverged density of states.
+    UnreachableBins,
 }
 
 impl WangLandauTermination {
@@ -103,6 +109,7 @@ impl WangLandauTermination {
             Self::Converged => "converged",
             Self::MaximumSweeps => "maximum_sweeps",
             Self::FrozenByDriver => "frozen_by_driver",
+            Self::UnreachableBins => "unreachable_bins",
         }
     }
 
@@ -111,6 +118,7 @@ impl WangLandauTermination {
             "converged" => Ok(Self::Converged),
             "maximum_sweeps" => Ok(Self::MaximumSweeps),
             "frozen_by_driver" => Ok(Self::FrozenByDriver),
+            "unreachable_bins" => Ok(Self::UnreachableBins),
             _ => Err(GeneralizedError::new(format!(
                 "unknown Wang-Landau termination `{value}`"
             ))),
@@ -137,6 +145,20 @@ pub struct WangLandauConfig {
     /// Maximum discovery/adaptation sweeps. Zero disables the guard.
     pub max_adaptation_sweeps: u64,
     /// Required fraction of represented bins with at least one visit.
+    ///
+    /// The flatness gate cannot pass until the walk has discovered at least
+    /// `ceil(fraction · bins)` bins. Bins that are physically unreachable on
+    /// the axis (for example, energy ranges with zero density of states on a
+    /// user-supplied [`BinnedAxis`](crate::BinnedAxis)) are never discovered,
+    /// so a fraction above the reachable fraction makes convergence
+    /// impossible. The estimator auto-derives the reachable set as the
+    /// discovery plateau of the walk: if the required fraction stays
+    /// unattainable over many consecutive flatness checks, the estimate
+    /// terminates loudly with
+    /// [`WangLandauTermination::UnreachableBins`] instead of silently
+    /// running to the maximum-sweep guard with an unconverged density of
+    /// states. Exact-enumeration axes (every bin occupied) keep the strict
+    /// default of `1.0`.
     pub minimum_visited_fraction: f64,
 }
 
@@ -200,6 +222,16 @@ impl WangLandauConfig {
     }
 }
 
+/// Number of consecutive flatness checks without a newly discovered bin that
+/// establishes the discovery plateau. Once the plateau is established below
+/// the required visited fraction, no amount of further sweeping can satisfy
+/// the flatness gate, so the estimate terminates loudly. With the default
+/// check interval of 100 sweeps this waits 50 000 adaptation sweeps before
+/// declaring the fraction unattainable — far beyond the discovery time of
+/// any reachable bin on axes of practical size, while still orders of
+/// magnitude below the default 10-million-sweep guard.
+const DISCOVERY_STALL_CHECK_LIMIT: u32 = 500;
+
 /// Complete adaptive estimator and its production histogram.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WangLandauState {
@@ -216,6 +248,10 @@ pub struct WangLandauState {
     refinement_visits: u64,
     flatness_checks: u64,
     flatness_passes: u64,
+    /// Visited-bin count at the previous flatness check (discovery tracking).
+    last_check_visited_bins: usize,
+    /// Consecutive flatness checks without a newly discovered bin.
+    discovery_stall_checks: u32,
 }
 
 impl WangLandauState {
@@ -238,6 +274,8 @@ impl WangLandauState {
             refinement_visits: 0,
             flatness_checks: 0,
             flatness_passes: 0,
+            last_check_visited_bins: 0,
+            discovery_stall_checks: 0,
             config,
         })
     }
@@ -423,6 +461,8 @@ impl WangLandauState {
             "refinement_visits": self.refinement_visits,
             "flatness_checks": self.flatness_checks,
             "flatness_passes": self.flatness_passes,
+            "last_check_visited_bins": self.last_check_visited_bins,
+            "discovery_stall_checks": self.discovery_stall_checks,
         })
     }
 
@@ -496,6 +536,16 @@ impl WangLandauState {
             refinement_visits: required_u64(snapshot, "refinement_visits")?,
             flatness_checks: required_u64(snapshot, "flatness_checks")?,
             flatness_passes: required_u64(snapshot, "flatness_passes")?,
+            // Version-1 checkpoints predate discovery-stall tracking; absent
+            // fields restart the plateau detection from zero.
+            last_check_visited_bins: snapshot["last_check_visited_bins"]
+                .as_u64()
+                .map(|value| value as usize)
+                .unwrap_or(0),
+            discovery_stall_checks: snapshot["discovery_stall_checks"]
+                .as_u64()
+                .map(|value| value as u32)
+                .unwrap_or(0),
         };
         state.validate_checkpoint_consistency()?;
         Ok(state)
@@ -613,6 +663,32 @@ impl WangLandauState {
                 ));
             }
         }
+        if self.termination == Some(WangLandauTermination::UnreachableBins) {
+            if self.phase != WangLandauPhase::Finished {
+                return Err(GeneralizedError::new(
+                    "unreachable-bins termination requires the finished phase",
+                ));
+            }
+            if self.discovery_stall_checks < DISCOVERY_STALL_CHECK_LIMIT {
+                return Err(GeneralizedError::new(
+                    "unreachable-bins termination lacks the discovery-stall evidence",
+                ));
+            }
+            let required = ((self.config.minimum_visited_fraction
+                * self.adaptation_histogram.bins() as f64)
+                .ceil() as usize)
+                .max(1);
+            if self.last_check_visited_bins >= required {
+                return Err(GeneralizedError::new(
+                    "unreachable-bins termination saw enough visited bins for the gate",
+                ));
+            }
+            if self.production_sweeps > 0 || self.production_histogram.total() > 0 {
+                return Err(GeneralizedError::new(
+                    "unreachable-bins termination cannot contain production progress",
+                ));
+            }
+        }
         if self.is_adaptive()
             && self.config.max_adaptation_sweeps > 0
             && self.adaptation_sweeps >= self.config.max_adaptation_sweeps
@@ -641,6 +717,39 @@ impl WangLandauState {
             return;
         }
         self.flatness_checks = self.flatness_checks.saturating_add(1);
+
+        // Discovery-plateau tracking: once the walk stops finding new bins,
+        // the visited set is the reachable set. If the configured minimum
+        // visited fraction demands more than that, the flatness gate is
+        // unattainable and the estimate would silently burn sweeps until the
+        // maximum-sweep guard — terminate loudly instead.
+        let visited = self.adaptation_histogram.visited_bins();
+        let required = ((self.config.minimum_visited_fraction
+            * self.adaptation_histogram.bins() as f64)
+            .ceil() as usize)
+            .max(1);
+        if visited == self.last_check_visited_bins {
+            self.discovery_stall_checks = self.discovery_stall_checks.saturating_add(1);
+        } else {
+            self.discovery_stall_checks = 0;
+        }
+        self.last_check_visited_bins = visited;
+        if visited < required && self.discovery_stall_checks >= DISCOVERY_STALL_CHECK_LIMIT {
+            eprintln!(
+                "Wang-Landau minimum_visited_fraction {} requires {required} visited bins, but \
+                 bin discovery has plateaued at {visited} of {} bins over {} consecutive \
+                 flatness checks; terminating with UnreachableBins — lower the fraction or \
+                 narrow the macrostate axis to the reachable range",
+                self.config.minimum_visited_fraction,
+                self.adaptation_histogram.bins(),
+                self.discovery_stall_checks
+            );
+            self.log_density.normalize_max_zero();
+            self.phase = WangLandauPhase::Finished;
+            self.termination = Some(WangLandauTermination::UnreachableBins);
+            return;
+        }
+
         if !self
             .adaptation_histogram
             .is_flat(self.config.flatness, self.config.minimum_visited_fraction)
@@ -653,6 +762,10 @@ impl WangLandauState {
         self.log_density.normalize_max_zero();
         self.adaptation_histogram.clear();
         self.refinement_visits = 0;
+        // The cleared histogram restarts discovery; force the next check to
+        // count as progress (usize::MAX is never a valid visited count).
+        self.last_check_visited_bins = usize::MAX;
+        self.discovery_stall_checks = 0;
         if self.log_f <= self.config.final_log_f {
             self.termination = Some(WangLandauTermination::Converged);
             self.freeze_for_production();

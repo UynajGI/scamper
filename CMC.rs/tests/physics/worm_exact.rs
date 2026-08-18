@@ -78,3 +78,100 @@ fn worm_edge_toggle_is_transactional_and_log_weight_reversible() {
     model.validate_state(&state).unwrap();
     assert_eq!(state.configuration(), &before);
 }
+
+#[test]
+fn worm_rejects_multi_component_lattices_loudly() {
+    use cmc_rs::{Bond, BondType, CsrLattice};
+    // Two disjoint bonds: sites {0,1} and {2,3} form separate components.
+    let disconnected = CsrLattice::from_edges(
+        4,
+        vec![
+            Bond::new(0, 1, BondType::Generic, 1.0),
+            Bond::new(2, 3, BondType::Generic, 1.0),
+        ],
+    );
+    let error = IsingGraphWormModel::new(disconnected, 0.4, 1.0)
+        .expect_err("a multi-component lattice must be rejected at input");
+    assert!(
+        error.to_string().contains("connected"),
+        "the rejection must name the connectivity requirement: {error}"
+    );
+
+    // An isolated site is its own component with the same silent-freeze
+    // failure mode (a defect opened there can never step).
+    let isolated = CsrLattice::from_edges(3, vec![Bond::new(0, 1, BondType::Generic, 1.0)]);
+    assert!(IsingGraphWormModel::new(isolated, 0.4, 1.0).is_err());
+
+    // The connected counterpart is accepted.
+    let connected = CsrLattice::from_edges(
+        4,
+        vec![
+            Bond::new(0, 1, BondType::Generic, 1.0),
+            Bond::new(1, 2, BondType::Generic, 1.0),
+            Bond::new(2, 3, BondType::Generic, 1.0),
+        ],
+    );
+    assert!(IsingGraphWormModel::new(connected, 0.4, 1.0).is_ok());
+}
+
+#[test]
+fn worm_energy_agrees_with_spin_metropolis_cross_solver() {
+    // Criterion F for the worm: two independent solvers of the same
+    // canonical ensemble — the high-temperature graph worm and local
+    // Metropolis on spins — must agree on ⟨E⟩ within pooled errors.
+    use super::common::zscore_seed_count;
+    use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
+    use cmc_rs::{ClassicalMC, MetropolisCore};
+
+    let beta = 0.44;
+    let n_seeds = zscore_seed_count(8);
+    let run = |solver: &str, seed: u64| -> f64 {
+        let mut params = Params::new();
+        params.set("lattice_type", "square");
+        params.set("Lx", 4usize);
+        params.set("Ly", 4usize);
+        params.set("beta", beta);
+        params.set("J", 1.0);
+        let config = RunConfig {
+            thermalization_sweeps: 2_000,
+            measurement_sweeps: 20_000,
+            binsize: 500,
+            base_seed: seed,
+            ..Default::default()
+        };
+        let results = match solver {
+            "worm" => Scheduler::new(RayonBackend::new(1), config)
+                .run_one::<cmc_rs::IsingGraphWormMC>(&params),
+            "metropolis" => Scheduler::new(RayonBackend::new(1), config)
+                .run_one::<ClassicalMC<cmc_rs::IsingModel, MetropolisCore>>(&params),
+            other => panic!("unknown solver {other}"),
+        };
+        results.get("Energy").expect("Energy observable").mean
+    };
+    let pool = |solver: &str, base: u64| {
+        let means: Vec<f64> = (0..n_seeds as u64)
+            .map(|seed| run(solver, base + seed))
+            .collect();
+        let count = means.len() as f64;
+        let mean = means.iter().sum::<f64>() / count;
+        // Seed-spread stderr of the pooled mean.
+        let variance = means
+            .iter()
+            .map(|value| (value - mean) * (value - mean))
+            .sum::<f64>()
+            / (count - 1.0);
+        (mean, (variance / count).sqrt())
+    };
+    let (worm_mean, worm_stderr) = pool("worm", 0x0E51);
+    let (metro_mean, metro_stderr) = pool("metropolis", 0x0E52);
+    let z =
+        (worm_mean - metro_mean) / (worm_stderr * worm_stderr + metro_stderr * metro_stderr).sqrt();
+    eprintln!(
+        "[worm-cross] 4x4 beta={beta}: worm ⟨E⟩ = {worm_mean:.4} ± {worm_stderr:.4}, \
+         metropolis ⟨E⟩ = {metro_mean:.4} ± {metro_stderr:.4}, z = {z:+.2}"
+    );
+    assert!(
+        z.abs() < 4.0,
+        "worm vs Metropolis ⟨E⟩ disagree: z = {z:.2} ({worm_mean:.4} vs {metro_mean:.4})"
+    );
+}
