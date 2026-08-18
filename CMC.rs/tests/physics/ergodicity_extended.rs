@@ -6,7 +6,7 @@
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use cmc_rs::{
     ClassicalMC, ContinuousHeatBathCore, HeatBathCore, HeisenbergModel, IsingGraphWormMC,
-    IsingModel, KawasakiCore, KineticIsingBklMC,
+    IsingModel, KineticIsingBklMC,
 };
 
 /// Check that two estimates agree within `n` combined standard errors.
@@ -85,65 +85,15 @@ fn heat_bath_2d_ising_converges_same_regardless_of_seed() {
 // Kawasaki on 2D Ising
 // ═══════════════════════════════════════════════════════════════════════
 
-#[test]
-#[ignore = "Kawasaki conserves magnetization: different seeds start in different \
-magnetization sectors, so neither ⟨E⟩ nor ⟨m²⟩ is expected to agree across \
-seeds. The standard scheduler API (ClassicalMC + from_params) does not expose \
-a zero-magnetization initial state. Re-enable once a balanced initialisation \
-option is available."]
-fn kawasaki_2d_ising_energy_converges_same_regardless_of_seed() {
-    // ClassicalMC<IsingModel, KawasakiCore> on a 4×4 square lattice.
-    //
-    // Kawasaki dynamics swaps neighboring spins instead of flipping them,
-    // conserving total magnetization.  Each trajectory is confined to a
-    // fixed-magnetization sector, so ⟨m²⟩ is seed-dependent and ⟨E⟩
-    // differs across sectors (especially near Tc at β=0.5).  The standard
-    // scheduler only supports "hot" (random) and "cold" (ordered) initial
-    // states — neither guarantees a shared magnetization sector across
-    // seeds.  This test is therefore #[ignore]'d until a balanced
-    // (zero-magnetization) initialisation is available through the API.
-    //
-    // When it can be run, it checks ⟨E⟩ only (⟨m²⟩ is conserved per
-    // trajectory and thus meaningless for multi-seed comparison).
-    fn run(seed: u64) -> (f64, f64) {
-        let mut params = Params::new();
-        params.set("Lx", 4);
-        params.set("Ly", 4);
-        params.set("J", 1.0);
-        params.set("beta", 0.5);
-        let config = RunConfig {
-            thermalization_sweeps: 5000,
-            measurement_sweeps: 20000,
-            binsize: 500,
-            base_seed: seed,
-            ..Default::default()
-        };
-        let scheduler = Scheduler::new(RayonBackend::new(1), config);
-        let results = scheduler.run_one::<ClassicalMC<IsingModel, KawasakiCore>>(&params);
-        let e = results.get("Energy").expect("Energy");
-        (e.mean, e.stderr)
-    }
-
-    let seeds = [42u64, 999, 7, 314];
-    let estimates: Vec<_> = seeds.iter().map(|&s| run(s)).collect();
-
-    for i in 0..estimates.len() {
-        for j in (i + 1)..estimates.len() {
-            let (ei, ei_err) = estimates[i];
-            let (ej, ej_err) = estimates[j];
-            assert!(
-                within_n_sigma(4.0, ei, ei_err, ej, ej_err),
-                "Kawasaki 2D Ising ⟨E⟩ disagree: seeds {} vs {}: {:.4}±{:.4} vs {:.4}±{:.4}",
-                seeds[i],
-                seeds[j],
-                ei,
-                ei_err,
-                ej,
-                ej_err
-            );
-        }
-    }
-}
+// A cross-seed ⟨E⟩ agreement test for Kawasaki was removed here. Kawasaki
+// conserves magnetization, so trajectories from random ("hot") starts land
+// in different fixed-M sectors whose equilibrium ⟨E⟩ genuinely differ —
+// cross-seed agreement is physically wrong as a criterion, and the test
+// failed deterministically whenever `--ignored` runs executed it. The
+// correct sector-restricted equilibrium validation now lives in
+// `kawasaki_exact.rs`: it pins the reachable sector (BFS over the exchange
+// graph from the initial state), enumerates exactly that sector's
+// Boltzmann distribution, and validates ⟨E⟩ against it per sector.
 
 // ═══════════════════════════════════════════════════════════════════════
 // Continuous O(3) Heisenberg heat bath
