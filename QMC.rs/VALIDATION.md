@@ -1,14 +1,14 @@
 # QMC.rs — Physics Validation Task Tracker
 
-> Updated 2026-08-14. Branch: `dev`.
+> Updated 2026-08-19. Branch: `dev`.
 
 ## Test suite summary
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 171 | ~15s |
+| Default (`cargo test`) | 195 | ~15s |
 | Long stochastic (`--ignored`) | 7 | ~2 min |
-| **Total** | **178** | |
+| **Total** | **202** | |
 
 ## Tasks — all completed
 
@@ -34,7 +34,7 @@ Smoke test: both solvers run on longitudinal model, produce finite output. NOT a
 Wormhole: 4-seed convergence + z-score framework. Occupation: 4-seed convergence. Cluster: 4-seed convergence.
 
 ### [x] QMC-P1.5 — Cluster multi-mode ED
-Deferred — single-mode already validated. Multi-mode requires larger ED matrix.
+Done 2026-08-19 (was deferred): retarded kernel equals the mass-weighted single-mode sum (machine-precision identity) and the cluster MC matches a directly diagonalized multi-mode ED on ≥3 observables (`cluster_multimode.rs`).
 
 ### [x] QMC-P2.1 — Binder M⁴ vs ED
 3-site Heisenberg U4 = 1−⟨m⁴⟩/(3⟨m²⟩²) vs ED.
@@ -62,6 +62,21 @@ S=1 Heisenberg open chain produces finite results. Escape hatch removed — test
 | wormhole free_limit tolerance 0.4 (exact=0) | Tightened to 0.15 |
 | 4 smoke tests mislabeled as physics tests | Prefixed with "smoke_" |
 
+## Production hardening (2026-08-19)
+
+All four solvers upgraded to **production-ready** in `MATURITY_ASSESSMENT.md`;
+every PARTIAL/MISSING criterion cell closed with named-test evidence.
+
+| Item | Evidence |
+|------|----------|
+| Lattice criterion A: generic-S scattering identities | `lattice_scattering_generic_s.rs` — row normalization + detailed balance at 1e-12 for S ∈ {1/2, 1, 3/2, 2, 5/2} across the model catalog, both scattering policies; exact integer-2S ladder sum rules |
+| Occupation criterion D: per-update DB | `sweep_kernel_is_exact_heat_bath_on_closed_paths` (lib) — sweep's own bridge recipe reproduces the exact heat-bath path density at machine precision; `occupation_detailed_balance.rs` — empirical flow balance + stationary marginal vs thermal ED |
+| Occupation criterion E: connectivity | `occupation_update_graph_is_strongly_connected` — BFS over the bridge update graph; multi-init convergence vs ED |
+| Cluster criterion E: ergodicity | `cluster_ergodicity_ed.rs` — multi-init convergence to ED; spin and many-kink sector visits |
+| Cluster criterion H: multi-mode baths | `cluster_multimode.rs` — mass-weighted kernel identity + 3-observable MC-vs-ED match on a two-mode bath |
+| Criterion G: input-validation audit (all solvers) | `input_validation.rs` (8 tests): lattice β/model-names/geometry/spin/couplings, wormhole β/model/bath + malformed tabulated baths, occupation, cluster, direct constructors |
+| Silent-failure fix in source | `lattice/mc.rs`: unknown model names were silently compiled as generic XYZ with zero couplings (a free-spin model); now rejected up front. Empty explicit edge lists (coupling-free) also rejected |
+
 ## Completion log
 
 | Date | Task | Result |
@@ -78,3 +93,4 @@ S=1 Heisenberg open chain produces finite results. Escape hatch removed — test
 | 2026-07-23 | P2.4 | ✅ Thread-count independence |
 | 2026-07-23 | P2.5 | ✅ Lattice z-score (4 seeds vs ED) |
 | 2026-07-23 | Audit | ✅ 7 CHEAT + 6 WEAK tests fixed (renamed/tightened/removed) |
+| 2026-08-19 | Production hardening | ✅ All 4 solvers production-ready: generic-S scattering identities, occupation per-update DB + strong connectivity, cluster ergodicity + multi-mode ED, criterion-G audit (8 rejection tests) + silent free-spin fallback fixed in source. 202 tests (195 + 7 long) — see `MATURITY_ASSESSMENT.md` |

@@ -10,7 +10,12 @@
 > rows production-ready** — multi-component worm implemented, over-relaxation
 > validated in composition, every offered hybrid composition validated,
 > MultiSpinIsing cross-solver + multi-seed coverage, SW continuous-spin
-> cluster updates validated (item 20 closed).
+> cluster updates validated (item 20 closed). QMC.rs production hardening
+> complete 2026-08-19: **all 4 solvers production-ready** — generic-S
+> scattering identities, occupation per-update DB + update-graph
+> connectivity, cluster ergodicity and multi-mode baths validated,
+> input-validation audit with a silent free-spin fallback fixed in source
+> (`QMC.rs/tests/input_validation.rs`, `QMC.rs/VALIDATION.md`).
 
 ## Maturity levels
 
@@ -87,12 +92,18 @@ SW continuous-spin cluster updates now validated.
 
 ### QMC.rs (4 solvers)
 
-| Solver | Status | Key gap |
+Production status since 2026-08-19: **all four production-ready**. Every
+PARTIAL/MISSING criterion cell closed with named-test evidence; criterion G
+audited across all four solvers (a silent free-spin fallback on unknown model
+names was fixed in source); the cluster solver's single-mode limitation was
+closed by validating multi-mode baths rather than documenting it.
+
+| Solver | Status | Evidence beyond research-grade |
 |--------|--------|---------|
-| Lattice directed-loop | **research-grade** | E+⟨m²⟩+NN Sz+χ_z+Binder U4 vs ED; analytic limits; ergodicity |
-| Wormhole (spin-boson) | **research-grade** | Interacting MC-vs-ED (3 obs, z-scores < 4); cross-solver ×2; ergodicity |
-| Occupation (cavity-QED) | **research-grade** | ⟨σz⟩,⟨σx⟩,E,⟨n⟩ vs ED (Rabi+JC); cross-solver vs wormhole |
-| Cluster (longitudinal SB) | **research-grade** | ⟨σz⟩,⟨σx⟩,C(τ) vs ED; cross-solver vs wormhole; single-mode only |
+| Lattice directed-loop | **production-ready** | E+⟨m²⟩+NN Sz+χ_z+Binder U4 vs ED; analytic limits; ergodicity; generic-S scattering identities (S ∈ {1/2, 1, 3/2, 2, 5/2}, both policies, 1e-12); unknown model names and empty edge lists rejected loudly |
+| Wormhole (spin-boson) | **production-ready** | Interacting MC-vs-ED (3 obs, z-scores < 4); cross-solver ×2; ergodicity; input validation audited (β/model/bath, malformed tabulated baths) |
+| Occupation (cavity-QED) | **production-ready** | ⟨σz⟩,⟨σx⟩,E,⟨n⟩ vs ED (Rabi+JC); cross-solver vs wormhole; machine-precision heat-bath-kernel DB + empirical flow balance with stationary marginal; update graph strongly connected + multi-init vs ED |
+| Cluster (longitudinal SB) | **production-ready** | ⟨σz⟩,⟨σx⟩,C(τ) vs ED; cross-solver vs wormhole; multi-init convergence to ED + spin/kink sector visits; **multi-mode baths validated** (mass-weighted kernel identity + 3-observable ED match) |
 
 ### MCMC.rs (6 kernels + 3 combinators)
 
@@ -153,13 +164,13 @@ SW continuous-spin cluster updates now validated.
 
 | # | Criterion | Status | Evidence |
 |---|-----------|--------|----------|
-| A | ⚠️ PARTIAL | Scattering table balance (S=1, 1e-12); generic S missing |
+| A | ✅ PASS | Scattering-table row normalization + detailed balance at 1e-12 for S ∈ {1/2, 1, 3/2, 2, 5/2} across the model catalog (Heisenberg/XXZ/XY/XYZ+pair-flip/tfim/single-ion/site-resolved mixed spin, both scattering policies); exact integer-2S ladder sum rules (`lattice_scattering_generic_s.rs`) |
 | B | ✅ PASS | 3-site Heisenberg: E, ⟨Sz_iSz_j⟩, ⟨m²⟩, χ_z, Binder U4 vs ED |
 | C | ✅ PASS | Zero-coupling, high-T, strong-field, Ising dimer, dimer correlation |
 | D | ✅ PASS | Scattering table detailed balance (both policies) |
 | E | ✅ PASS | 4-site Heisenberg from 3 initial states converge |
 | F | N/A | Single lattice solver |
-| G | ✅ PASS | Sign-problem rejection, frustration detection |
+| G | ✅ PASS | Sign-problem rejection, frustration detection; unknown model names rejected up front (a typo can no longer silently build a zero-coupling free-spin model); empty edge lists rejected; invalid β/geometry/spin/coupling data rejected (`input_validation.rs`) |
 | H | ✅ PASS | README documents S>1/2 caveat, validated domain |
 
 ### QMC.rs — Wormhole (spin-boson)
@@ -182,8 +193,8 @@ SW continuous-spin cluster updates now validated.
 | A | ✅ PASS | Transfer matrix eigensystem; sqrt(n) matrix elements |
 | B | ✅ PASS | ⟨σz⟩,⟨σx⟩,E,⟨n⟩ vs ED (Rabi+JC); long crossover #[ignore] |
 | C | ✅ PASS | Free spin tanh, uncoupled Bose distribution, exact Z |
-| D | ⚠️ PARTIAL | Non-stoquastic rejection; no per-update DB (transfer matrix) |
-| E | ⚠️ PARTIAL | `sampler_only_visits_states_within_basis` (bounds, not connectivity) |
+| D | ✅ PASS | Sweep kernel is the exact heat bath on closed paths — path density under the sweep's own bridge recipe verified at machine precision (`sweep_kernel_is_exact_heat_bath_on_closed_paths`, lib test); empirical flow balance + stationary marginal vs thermal ED (`occupation_detailed_balance.rs`) |
+| E | ✅ PASS | Update graph proven strongly connected by BFS over the bridge update graph (`occupation_update_graph_is_strongly_connected`); multi-init convergence vs ED |
 | F | ✅ PASS | Cross-solver vs wormhole (free two-level system) |
 | G | ✅ PASS | Beta/slices/cutoff validation |
 | H | ✅ PASS | README + Rabi QPT tests document domain |
@@ -196,10 +207,10 @@ SW continuous-spin cluster updates now validated.
 | B | ✅ PASS | ⟨σz⟩,⟨σx⟩ (via kinks), C(β/2) vs exact cosh; interacting ED |
 | C | ✅ PASS | Free 2-level: kink count vs exact mean; ⟨σz⟩ vs tanh |
 | D | ✅ PASS | Worldline invariants (even kink); 10k updates validated |
-| E | ❌ MISSING | |
+| E | ✅ PASS | Multi-init convergence to ED from distinct initial worldlines (`cluster_multi_init_converges_to_ed`); chain visits both spin sectors and many-kink sectors (`cluster_chain_visits_both_spin_and_many_kink_sectors`) |
 | F | ✅ PASS | Cross-solver vs wormhole (longitudinal model) |
-| G | ✅ PASS | |
-| H | ⚠️ PARTIAL | Single-mode only; multi-mode interacting untested |
+| G | ✅ PASS | Invalid β/model/bath parameters rejected (`input_validation.rs`) |
+| H | ✅ PASS | Multi-mode baths validated: retarded kernel equals the mass-weighted single-mode sum (`multimode_kernel_equals_mass_weighted_single_mode_sum`); MC vs multi-mode ED on ≥3 observables (`multimode_cluster_matches_ed_three_observables`); README documents the validated domain |
 
 ### MCMC.rs — NUTS
 
@@ -337,9 +348,9 @@ Same as NUTS minus U-turn tests.
 
 ## 5. Status statement
 
-**Repository: research-grade overall (QMC/MCMC physics complete); CMC.rs and the Carlo.rs framework core reached their target maturity on 2026-08-19.**
+**Repository: research-grade overall (MCMC physics complete); CMC.rs, QMC.rs and the Carlo.rs framework core reached their target maturity on 2026-08-19.**
 
 - **Carlo.rs**: stable framework core; HDF5 checkpoint, MPI backend, and PT exchange now **production-ready** (analytic exchange-acceptance validation, np 1/2/4 exact fan-out, loud legacy fallback; nightly `carlo-framework` regression job) — 302 suite tests (297 + 5 MPI-ignored); error analysis/merge still research-grade
 - **CMC.rs**: 292 suite tests (277 + 15 long) + 73 lib. **All 19 solvers production-ready (2026-08-19, after the second hardening pass)**: physics A–F + audited input validation G + documented domains H for every solver. First pass: Potts q=3/4 vs full enumeration, molecule dipolar external field vs Langevin/von Mises, WL `UnreachableBins` loud termination, criterion-G audit (3 panic paths fixed). Second pass (item 20): the multi-component worm is **implemented** (per-component two-defect worms on domain-separated streams, validated vs full enumeration + partition identity + cross-solver on a disconnected geometry, v1/v2 checkpoints); microcanonical over-relaxation is production-validated **in composition** (machine-precision reflection identities + deterministic DB, exact-quadrature equilibrium, Wolff cross-solver, analytic limits); **every offered hybrid composition** is validated (all six Ising pairings vs enumeration, boundary semantics bit-exact, continuous pairings vs Wolff); MultiSpinIsing has cross-solver (vs scalar Metropolis) and multi-seed z coverage; SW continuous-spin cluster updates validated vs quadrature and Wolff
-- **QMC.rs**: 178 tests (171 + 7 long). All 4 solvers research-grade with ED cross-checks, cross-solver validation, ergodicity, and z-score framework
+- **QMC.rs**: 202 tests (195 + 7 long). **Production hardening complete (2026-08-19)**: all 4 solvers **production-ready** — generic-S scattering identities (S ∈ {1/2…5/2}, both policies, 1e-12); occupation machine-precision heat-bath-kernel DB + empirical flow balance + strongly-connected update graph; cluster multi-init/sector ergodicity and **multi-mode baths validated** (kernel identity + 3-obs ED); criterion-G audit with a silent free-spin fallback on unknown model names fixed in source
 - **MCMC.rs**: 72 tests (69 + 3 long). All 6 kernels research-grade: detailed balance (machine-precision + statistical), ESS calibrated on AR(1), 6-solver posterior agreement, non-Gaussian recovery; nightly z-score monitoring covers CMC/QMC at 64 seeds
