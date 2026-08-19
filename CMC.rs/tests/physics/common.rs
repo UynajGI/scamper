@@ -83,3 +83,38 @@ pub fn exact_ising_moments(lattice: &CsrLattice, coupling: f64, beta: f64) -> (f
     }
     (z, e / z, e2 / z, m2 / z)
 }
+
+/// Exact (⟨E⟩, ⟨m²⟩, ⟨cos(θ1−θ3)⟩) of the ferromagnetic XY 4-ring (PBC chain
+/// of 4 sites, J = `coupling`) at inverse temperature `beta`.
+///
+/// The global-rotation zero mode is factored out exactly (θ₄ = 0), leaving a
+/// smooth, strictly periodic 3D integrand; periodic trapezoidal quadrature
+/// converges on it spectrally, so `grid = 96` per dimension is already far
+/// beyond what β ≤ 1.5 features require (verified by grid-doubling in the
+/// callers).
+pub fn exact_xy_ring4_moments(beta: f64, coupling: f64, grid: usize) -> (f64, f64, f64) {
+    let step = std::f64::consts::TAU / grid as f64;
+    let mut z = 0.0;
+    let mut energy_sum = 0.0;
+    let mut m2_sum = 0.0;
+    let mut c13_sum = 0.0;
+    for i in 0..grid {
+        let t1 = i as f64 * step;
+        for j in 0..grid {
+            let t2 = j as f64 * step;
+            for k in 0..grid {
+                let t3 = k as f64 * step;
+                let energy = -coupling * ((t1 - t2).cos() + (t2 - t3).cos() + t3.cos() + t1.cos());
+                let weight = (-beta * energy).exp();
+                let mx = t1.cos() + t2.cos() + t3.cos() + 1.0;
+                let my = t1.sin() + t2.sin() + t3.sin();
+                let m2 = (mx * mx + my * my) / 16.0;
+                z += weight;
+                energy_sum += weight * energy;
+                m2_sum += weight * m2;
+                c13_sum += weight * (t1 - t3).cos();
+            }
+        }
+    }
+    (energy_sum / z, m2_sum / z, c13_sum / z)
+}

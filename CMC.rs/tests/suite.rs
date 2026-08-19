@@ -68,6 +68,8 @@ mod event_chain_eos;
 mod generalized_exact;
 #[path = "physics/heat_bath_exact.rs"]
 mod heat_bath_exact;
+#[path = "physics/hybrid_compositions.rs"]
+mod hybrid_compositions;
 #[path = "physics/input_validation.rs"]
 mod input_validation;
 #[path = "physics/kawasaki_exact.rs"]
@@ -86,6 +88,8 @@ mod multicanonical_exact;
 mod multispin_cross_solver;
 #[path = "physics/observables_exact.rs"]
 mod observables_exact;
+#[path = "physics/over_relaxation.rs"]
+mod over_relaxation;
 #[path = "physics/p2_remaining.rs"]
 mod p2_remaining;
 #[path = "physics/p2_validation.rs"]
@@ -98,6 +102,8 @@ mod particles_exact;
 mod potts_exact;
 #[path = "physics/statistical_regression.rs"]
 mod statistical_regression;
+#[path = "physics/sw_continuous.rs"]
+mod sw_continuous;
 #[path = "physics/transition_balance.rs"]
 mod transition_balance;
 #[path = "physics/usage_exact.rs"]
