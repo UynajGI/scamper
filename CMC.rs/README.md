@@ -274,3 +274,67 @@ the Wang–Landau estimator terminates loudly (`UnreachableBins`) when the
 configured visited fraction exceeds the physically reachable set. Invalid
 input is rejected with errors across all solvers — never silently accepted
 (see the input-validation audit in VALIDATION.md).
+
+## Roadmap — algorithms and models not yet included
+
+Everything below is **not implemented and not validated** today; it is
+recorded here so the validated domain stays unambiguous (see VALIDATION.md
+for what *is* covered). None of these block the production status of the
+existing solvers — they are the next application frontiers.
+
+### Sampling methods (the biggest holes)
+
+- **Gibbs ensemble (Panagiotopoulos)** — two boxes with particle and volume
+  exchange; the standard tool for vapour–liquid phase equilibrium. We have
+  NPT and μVT but not the combination, so phase diagrams require workarounds.
+- **Configurational-bias MC (CBMC) / recoil growth** — the standard route to
+  chain-molecule and polymer insertion; without it long chains are effectively
+  impossible to insert into dense phases.
+- **Nested sampling** — complementary to Wang–Landau/multicanonical; directly
+  compresses phase-space volume, strong for first-order transitions and
+  density of states.
+- **Transition-matrix Monte Carlo (TMMC) / broad histogram** — a more stably
+  converging alternative to Wang–Landau.
+- **Invaded cluster / probability-changing cluster** — automatic
+  critical-point location.
+- **Luijten–Blöte long-range weighted cluster** — without it, long-range
+  models fall back to single-spin flips.
+
+### Dynamics and irreversible methods
+
+- **Momentum HMC / Langevin / Brownian-dynamics integrators** — molecular
+  systems are pure MC moves today; the HMC in MCMC.rs is statistical-posterior
+  HMC, not a physical momentum coupling.
+- **Geometric cluster algorithm (Dress–Krauth)** — global reflection moves
+  for hard disks/polygons; complements event chain, which covers hard
+  spheres only.
+- **Creutz demon / Q2R microcanonical dynamics** — a microcanonical family
+  distinct from the existing over-relaxation.
+
+### Model surface
+
+- **Clock models Z_q (q = 5, 6)** — discrete XY with ESR-type topological
+  transitions; Potts permutation symmetry cannot stand in for cyclic
+  symmetry.
+- **Anisotropic O(N)** — XXZ/easy-axis/easy-plane, single-ion terms,
+  Dzyaloshinskii–Moriya; `ONModel` currently carries an isotropic `j` only.
+- **Long-range interactions** — dipolar, 1/r^σ, Ewald summation. A gap on
+  both sides: no long-range lattice bonds, and the particle potentials are
+  Lennard-Jones (three cutoff treatments) and hard sphere — no Coulomb/Ewald.
+- **Edwards–Anderson spin glass** — ±J/Gaussian random bonds as a first-class
+  citizen with parallel-tempering coupling; the frustrated triangle is
+  validated, random-bond distributions are not.
+- **Vertex/ice models** — 6/8-vertex, F-model, spin ice, with the matching
+  loop/cluster algorithms; the worm currently serves the Ising HT graph only.
+- **Close-packed dimers** — the dimer model and a dimer worm.
+- **Diluted Ising, random-bond Potts** — workhorses for first-order-transition
+  studies.
+- **Anisotropic hard particles** — ellipsoids, Gay–Berne, polygonal disks.
+- **Lattice polymers / bond-fluctuation models** — practical only once CBMC
+  exists.
+
+Suggested priority if expansion continues: Gibbs ensemble → clock +
+anisotropic O(N) → Ewald long-range → CBMC — these map onto the four largest
+application fronts (phase equilibrium, magnetism, charged/dipolar systems,
+polymers) and each reuses the existing solver skeletons and validation
+framework.
