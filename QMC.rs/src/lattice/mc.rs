@@ -144,7 +144,7 @@ impl FromParams for LatticeSpinQmc {
             .get::<String>("model")
             .unwrap_or_else(|| "heisenberg".into())
             .to_ascii_lowercase();
-        let edge = edge_coupling_from_params(params, &model_name);
+        let edge = edge_coupling_from_params(params, &model_name)?;
         let site = SiteCoupling {
             h_x: params.get::<f64>("h_x").unwrap_or(0.0),
             h_z: params.get::<f64>("h_z").unwrap_or(0.0),
@@ -219,6 +219,13 @@ impl FromParams for LatticeSpinQmc {
                 reason: format!("must be finite and positive, got {beta}"),
             });
         }
+        // Reject unknown model names up front so a typo can never silently
+        // build a zero-coupling (free-spin) model.
+        let model_name = params
+            .get::<String>("model")
+            .unwrap_or_else(|| "heisenberg".into())
+            .to_ascii_lowercase();
+        edge_coupling_from_params(params, &model_name)?;
         Ok(())
     }
 }
@@ -253,7 +260,17 @@ fn graph_from_params(params: &Params) -> Result<CsrGraph, LatticeQmcError> {
             let encoded = params
                 .get::<String>("edges")
                 .ok_or_else(|| LatticeQmcError::parameter("edges", "missing edge list"))?;
-            CsrGraph::from_edges(n_sites, parse_edge_list(&encoded)?).map_err(Into::into)
+            let specs = parse_edge_list(&encoded)?;
+            if specs.is_empty() {
+                // An explicitly empty edge list would silently compile a
+                // coupling-free model; require at least one edge here.
+                return Err(LatticeQmcError::parameter(
+                    "edges",
+                    "the edge list is empty; an explicit edge-list topology needs at \
+                     least one edge",
+                ));
+            }
+            CsrGraph::from_edges(n_sites, specs).map_err(Into::into)
         }
         "adjacency" => {
             let encoded = params
@@ -268,7 +285,7 @@ fn graph_from_params(params: &Params) -> Result<CsrGraph, LatticeQmcError> {
     }
 }
 
-fn edge_coupling_from_params(params: &Params, model: &str) -> EdgeCoupling {
+fn edge_coupling_from_params(params: &Params, model: &str) -> Result<EdgeCoupling, CarloError> {
     let mut coupling = match model {
         "heisenberg" => EdgeCoupling::heisenberg(params.get::<f64>("J").unwrap_or(1.0)),
         "xy" => EdgeCoupling::xxz(
@@ -296,14 +313,21 @@ fn edge_coupling_from_params(params: &Params, model: &str) -> EdgeCoupling {
         "tfim" | "transverse_field_ising" | "transverse-field-ising" => {
             EdgeCoupling::xxz(0.0, params.get::<f64>("J_z").unwrap_or(1.0))
         }
-        _ => EdgeCoupling::xyz(
-            params.get::<f64>("J_x").unwrap_or(0.0),
-            params.get::<f64>("J_y").unwrap_or(0.0),
-            params.get::<f64>("J_z").unwrap_or(0.0),
-        ),
+        // An unknown model name must never fall through to zero couplings:
+        // that would silently simulate free spins instead of the requested
+        // physics (input-validation audit, criterion G).
+        other => {
+            return Err(CarloError::InvalidConfig {
+                field: "model".into(),
+                reason: format!(
+                    "unsupported lattice model `{other}` (expected one of \
+                                 heisenberg, xy, xxz, xyz, tfim)"
+                ),
+            })
+        }
     };
     coupling.shift = params.get::<f64>("bond_shift");
-    coupling
+    Ok(coupling)
 }
 
 fn spin_space_from_params(
