@@ -224,3 +224,85 @@ cargo test --workspace --all-features
 cargo run -p qmc-rs --example lattice_continuous
 cargo run -p qmc-rs --example impurity_wormhole
 ```
+
+## Roadmap — algorithm families not yet included
+
+Current coverage is four solver families (lattice directed-loop, impurity
+wormhole, cavity-QED occupation, longitudinal cluster), all living in the
+sign-free positive-weight world of spins and bosonic occupation; fermionic
+statistics are reserved at the `LocalHilbertSpace` boundary and rejected
+loudly. Everything below is **not implemented and not validated**; it is
+recorded so the validated domain stays unambiguous. None of it blocks the
+production status of the existing solvers.
+
+### Determinantal / fermionic family (the largest hole)
+
+- **DQMC** (discrete-time auxiliary field), **CT-INT** (interaction
+  expansion), **CT-AUX** (auxiliary-field continuous time), **CT-HYB**
+  (hybridization expansion — the standard DMFT impurity solver; the existing
+  wormhole handles spin-boson retarded self-interactions, not Anderson
+  impurities), **Hirsch–Fye**. With **average-sign measurement** and
+  parallel tempering in determinant space. This family decides whether
+  correlated-electron physics is reachable at all.
+
+### Bosonic family
+
+- **Lattice bosons** (Bose–Hubbard worldline + worm) — the lattice side has
+  `SpinSpace` only; occupation bases exist only inside the cavity-QED
+  impurity solver.
+- **Continuous-space PIMC** (permutation cycles), **superfluid density /
+  one-body density matrix** worm estimators, **PIGS**.
+
+### Discrete-time SSE and improved estimators
+
+- A **discrete SSE** sibling of the continuous-time directed-loop (reuses
+  the K=C−H operator catalog and scattering tables) carrying **loop
+  improved estimators** (zero-variance χ, C(τ)) and the **dynamic structure
+  factor S(q,ω)** spectral representation. The lattice solver currently
+  measures only nearest-neighbor Sz correlations (the long-standing
+  QMC-P2.2 deferral).
+
+### Variational family (likely a separate VMC.rs crate)
+
+- **VMC** (Jastrow / Slater–Jastrow / backflow / Pfaffian trial states) with
+  the **optimization machinery** — stochastic reconfiguration, natural
+  gradient, linear method — that is half the method; **NQS** (neural quantum
+  states) as modern ansätze; **t-VMC** for real-time dynamics.
+- Architectural note: this family needs wavefunction-gradient evaluation,
+  and DMC-style **branching walker populations** conflict with Carlo.rs's
+  fixed-length-chain `MonteCarlo` trait — a framework-level population model
+  (walker branching, ancestor weights, population-control bias) would be new.
+
+### Configuration-space projection family
+
+- **DMC** (fixed-node), **GFMC**, **reptation QMC**, **AFQMC** (phaseless —
+  straddles auxiliary-field sampling and a variational trial-state
+  constraint). Complementary to the worldline solvers: ground-state focus,
+  continuum and lattice, fermions via fixed-node rather than the sign
+  problem.
+
+### Sign-problem machinery beyond Marshall
+
+- **Majorana-representation QMC**, **fermion-bag**, **PT-symmetric basis
+  optimization** — the means to turn currently-rejected frustrated models
+  into computable ones.
+
+### Diagrammatic family
+
+- **DiagMC** (bold/skeleton expansions), **CDet** (Fermi polaron),
+  electron-phonon **CT-INT**.
+
+### Non-equilibrium and impurity extensions
+
+- **Keldysh real-time QMC**, **multi-impurity retarded interactions**
+  (RKKY), **non-Gaussian/anharmonic baths** — `Bath` today is
+  single-mode/power-law/tabulated, all Gaussian.
+
+### Suggested priority (by reuse)
+
+Discrete SSE + improved estimators → lattice-boson worldline + worm →
+determinantal family (the `ParticleStatistics::Fermion` boundary and its
+rejection logic were designed for exactly this extension) → AFQMC and
+real-time. The variational family is best started as its own crate (VMC.rs,
+matching the CMC/QMC/MCMC naming convention) since its gradient and
+population machinery shares little with the existing trait boundaries.
