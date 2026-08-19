@@ -19,6 +19,8 @@ mod lattice_ed;
 mod lattice_ergodicity;
 #[path = "lattice/lattice_limits.rs"]
 mod lattice_limits;
+#[path = "lattice/lattice_scattering_generic_s.rs"]
+mod lattice_scattering_generic_s;
 #[path = "lattice/lattice_spin1.rs"]
 mod lattice_spin1;
 #[path = "lattice/lattice_zscore.rs"]
@@ -28,6 +30,10 @@ mod lattice_zscore;
 
 #[path = "impurity/cluster_ergodicity.rs"]
 mod cluster_ergodicity;
+#[path = "impurity/cluster_ergodicity_ed.rs"]
+mod cluster_ergodicity_ed;
+#[path = "impurity/cluster_multimode.rs"]
+mod cluster_multimode;
 #[path = "impurity/cross_solver.rs"]
 mod cross_solver;
 #[path = "impurity/cross_solver_cluster.rs"]
@@ -38,6 +44,8 @@ mod cross_solver_numerical;
 mod impurity_ergodicity;
 #[path = "impurity/occupation.rs"]
 mod occupation;
+#[path = "impurity/occupation_detailed_balance.rs"]
+mod occupation_detailed_balance;
 #[path = "impurity/occupation_ergodicity.rs"]
 mod occupation_ergodicity;
 #[path = "impurity/physics.rs"]

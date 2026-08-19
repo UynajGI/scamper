@@ -1,7 +1,7 @@
 {
   "delivery": "continuous-time generic lattice QMC foundation in QMC.rs",
-  "native_rust_toolchain_available": false,
-  "native_cargo_commands_executed": false,
+  "native_rust_toolchain_available": true,
+  "native_cargo_commands_executed": true,
   "unchanged_sibling_crates": {
     "Carlo.rs": true,
     "CMC.rs": true
@@ -12,7 +12,7 @@
     "old_worldline_module": true
   },
   "source_audit": {
-    "rust_files": 27,
+    "rust_files": 40,
     "balanced_delimiters": true,
     "old_module_references_found": false
   },
@@ -74,5 +74,7 @@
     "cargo test --workspace --all-features",
     "cargo run -p qmc-rs --example lattice_continuous",
     "cargo run -p qmc-rs --example impurity_wormhole"
-  ]
+  ],
+  "native_verification_last_run": "2026-08-19 (production hardening pass)",
+  "living_validation_record": "VALIDATION.md (dated changelog) and the cargo test suite"
 }

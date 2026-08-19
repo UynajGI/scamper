@@ -618,6 +618,60 @@ mod tests {
     }
 
     #[test]
+    fn sweep_kernel_is_exact_heat_bath_on_closed_paths() {
+        // Per-update detailed balance (criterion D): one `sweep` must apply
+        // the exact heat-bath kernel over closed worldlines,
+        //   P(x -> x') = w(x') / Z   with   w(x) = prod_links T[s_k][s_{k+1}],
+        // which satisfies w(x) P(x'|x) = w(x') P(x|x') identically. Verify
+        // that the sweep's own bridge recipe (first-slice marginal followed
+        // by exact bridge conditionals, exactly as `sweep` evaluates them)
+        // reproduces that density for the realized path at machine precision.
+        let model = OccupationSpinBosonModel::rabi(0.9, vec![mode(1.15, 0.35, 4)]).expect("model");
+        let beta = 1.7;
+        let slices = 4;
+        let mut sampler = OccupationWorldlineSampler::new(model, beta, slices, 0).expect("sampler");
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xDBA1_2026);
+        for _ in 0..50 {
+            sampler.sweep(&mut rng).expect("sweep");
+        }
+        let dimension = sampler.model.basis().dimension();
+        let states = sampler.states.clone();
+        let first = states[0];
+        let full = &sampler.transfer_powers[slices];
+        let total: f64 = (0..dimension).map(|state| full[state][state]).sum();
+
+        // Log density of the realized path under the sweep's sampling recipe.
+        let mut log_probability = (full[first][first] / total).ln();
+        for index in 1..slices {
+            let previous = states[index - 1];
+            let remaining = slices - index;
+            let mut normalization = 0.0;
+            let mut realized = 0.0;
+            for candidate in 0..dimension {
+                let weight = sampler.transfer[previous][candidate]
+                    * sampler.transfer_powers[remaining][candidate][first];
+                normalization += weight;
+                if candidate == states[index] {
+                    realized = weight;
+                }
+            }
+            log_probability += (realized / normalization).ln();
+        }
+
+        // Exact closed-path weight: product of link propagators over Z.
+        let mut log_weight = 0.0;
+        for index in 0..slices {
+            log_weight += sampler.transfer[states[index]][states[(index + 1) % slices]].ln();
+        }
+        let log_exact = log_weight - total.ln();
+        assert!(
+            (log_probability - log_exact).abs() < 1.0e-12,
+            "bridge recipe log-density {log_probability} differs from the exact \
+             heat-bath density {log_exact}"
+        );
+    }
+
+    #[test]
     fn sampler_only_visits_states_within_basis() {
         let model = OccupationSpinBosonModel::rabi(0.5, vec![mode(1.0, 0.3, 4)]).expect("model");
         let dimension = model.basis().dimension();
