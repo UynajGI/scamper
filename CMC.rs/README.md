@@ -159,12 +159,14 @@ For convergence-driven samplers, Carlo.rs provides `AdaptiveRunControl`, `Schedu
 
 `IsingGraphWormMC` samples the ferromagnetic Ising high-temperature graph representation in explicit physical and two-defect worm sectors. Open, close and local head moves include their complete Hastings factors and are accepted in log space. The chain may remain open across sweep and checkpoint boundaries; optional endpoint-pair samples provide two-point correlation estimators.
 
-The worm's single defect pair diffuses within one connected component of the bond graph, so `IsingGraphWormModel::new` requires a **connected (single-component) lattice**: a disconnected graph (including isolated sites) is rejected loudly instead of silently freezing the unreachable components at their initial occupation. Multi-defect / multi-leg (multi-component) worm algorithms are not implemented.
+**Multi-component lattices are supported.** The high-temperature graph ensemble factorizes over connected components, so `IsingGraphWormMC::from_lattice` (and the `IsingGraphWormEnsemble` it wraps) decomposes any disconnected lattice — isolated sites included — into per-component sub-lattices and runs one independent two-defect worm per component on a domain-separated derived stream (`RngStreamKey`; one salt per component per sweep from the shared context stream, so a checkpointed run replays exactly). Observables combine additively; total energy is measured when every component is physical, which preserves the product ensemble. The raw `IsingGraphWormModel` + `WormKernel` pair remains restricted to connected lattices: its single defect pair would silently freeze the other components, so `IsingGraphWormModel::new` rejects disconnected input loudly for direct users. Multi-defect / multi-leg worm algorithms are not implemented — the two-defect worm per component is the algorithm.
 
 ```rust,ignore
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
-use cmc_rs::IsingGraphWormMC;
+use cmc_rs::{Bond, BondType, CsrLattice, IsingGraphWormEnsemble, WormConfig};
+use carlo_rs::RngStreamKey; // domain-separated per-component streams
 
+// Connected lattice through the parameter/scheduler path:
 let mut params = Params::new();
 params.set("lattice_type", "square");
 params.set("Lx", 16);
@@ -173,7 +175,21 @@ params.set("beta", 0.44);
 params.set("worm_updates_per_sweep", 512);
 
 let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
-    .run_one::<IsingGraphWormMC>(&params);
+    .run_one::<cmc_rs::IsingGraphWormMC>(&params);
+
+// Arbitrary (possibly disconnected) lattice directly:
+let two_rings = CsrLattice::from_edges(8, vec![
+    Bond::new(0, 1, BondType::Generic, 1.0),
+    Bond::new(1, 2, BondType::Generic, 1.0),
+    Bond::new(2, 3, BondType::Generic, 1.0),
+    Bond::new(3, 0, BondType::Generic, 1.0),
+    Bond::new(4, 5, BondType::Generic, 1.0),
+    Bond::new(5, 6, BondType::Generic, 1.0),
+    Bond::new(6, 7, BondType::Generic, 1.0),
+    Bond::new(7, 4, BondType::Generic, 1.0),
+]);
+let ensemble = IsingGraphWormEnsemble::new(two_rings, 0.44, 1.0, WormConfig::default()).unwrap();
+assert_eq!(ensemble.n_components(), 2);
 ```
 
 The reusable `WormModel`/`WormKernel` boundary is intended for future integer-current, dimer and loop-gas representations without pretending that their defect constraints are identical.

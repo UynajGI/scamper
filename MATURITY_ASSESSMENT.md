@@ -6,7 +6,11 @@
 > CMC.rs production hardening complete 2026-08-19: named residues closed,
 > input validation audited for all 19 solvers (criterion G evidence in
 > `CMC.rs/tests/physics/input_validation.rs`, per-solver domains in
-> `CMC.rs/VALIDATION.md`).
+> `CMC.rs/VALIDATION.md`). Second hardening pass (same date): **all 19 solver
+> rows production-ready** — multi-component worm implemented, over-relaxation
+> validated in composition, every offered hybrid composition validated,
+> MultiSpinIsing cross-solver + multi-seed coverage, SW continuous-spin
+> cluster updates validated (item 20 closed).
 
 ## Maturity levels
 
@@ -51,23 +55,27 @@
 
 Production status since 2026-08-19: every solver has criterion-G evidence
 (input-validation audit; three source-side holes found and fixed) and an
-up-to-date validated domain (criterion H, `CMC.rs/VALIDATION.md`). 15 of 19
-are **production-ready**; 4 remain research-grade for physics/evidence
-reasons documented below.
+up-to-date validated domain (criterion H, `CMC.rs/VALIDATION.md`). After the
+second hardening pass (same date) **all 19 are production-ready**: the four
+remaining research-grade rows were closed by implementation + validation —
+multi-component worm (per-component ensemble), microcanonical over-relaxation
+(validated in composition, its operated mode), every offered hybrid
+composition, and MultiSpinIsing (cross-solver + multi-seed z coverage), plus
+SW continuous-spin cluster updates now validated.
 
 | Solver | Status | Key gap / evidence beyond research-grade |
 |--------|--------|---------|
 | Local Metropolis | **production-ready** | z-score + connectivity + direct DB; continuous-spin and frustrated-triangle cross-solver; Potts q=3/4 cross-solver + analytic limits; input validation audited |
 | Wolff cluster | **production-ready** | z-score; direct DB N=3; Potts q=3/4 exact enumeration (E, m², C) |
-| Swendsen-Wang | **production-ready** | Direct DB on 2-site Ising; Potts q=3/4 exact enumeration (E, m², C); β=0 uniform limit; 4-solver cross-solver at q=3 βc |
+| Swendsen-Wang | **production-ready** | Direct DB on 2-site Ising; Potts q=3/4 exact enumeration (E, m², C); β=0 uniform limit; 4-solver cross-solver at q=3 βc; continuous O(2)/O(3) cluster updates validated vs exact quadrature + Wolff 8×8 (2026-08-19) |
 | Heat bath (discrete) | **production-ready** | Exact energies N=4/8 z-scores + direct DB; Potts q=3/4 exact enumeration |
 | Heat bath (continuous O(N)) | **production-ready** | Finite-T conditional vs Bessel/Langevin (O(2)+O(3)); infinite-T uniform; DB by construction (exact conditional sampling) |
-| Microcanonical over-relaxation | **research-grade** | Energy conservation tested; not ergodic alone (physical, documented) — use composed with ergodic kernels |
-| Hybrid (composed) | **research-grade** | Hybrid(Metropolis, Wolff) ⟨E⟩/⟨m²⟩ vs exact enumeration; other compositions and hybrid-specific ergodicity/cross-solver evidence untested (documented) |
-| MultiSpinIsing (64-replica) | **research-grade** | 8-site exact enumeration cross-check; no cross-solver vs scalar Metropolis, no multi-seed z coverage (documented) |
+| Microcanonical over-relaxation | **production-ready** | Reflection map machine-precision identities (involution/norm/projection/isometry; deterministic DB); kernel ≡ reflection map bit-exact with per-update \|ΔE\| < 1e-12; Hybrid(Metropolis, Microcanonical) vs exact XY-ring quadrature (E, m², C(τ)) from 2 inits, multi-seed; cross-solver vs Wolff 8×8 O(2)/O(3); analytic limits (β→0 exact, β=8 spin-wave); documented: not ergodic alone — production mode is composition (2026-08-19) |
+| Hybrid (composed) | **production-ready** | All six Ising pairwise compositions (Metropolis/Wolff/SW/heat bath) vs exact enumeration (E, m², C; multi-seed + pooled Σz); composition-boundary determinism (≡ manual sequencing bit-exact, repetitions, nesting); continuous O(2) compositions (Wolff+SW, Metropolis+Wolff, Metropolis+ContinuousHeatBath) vs Wolff 8×8; Metropolis+Microcanonical in the over-relaxation row (2026-08-19) |
+| MultiSpinIsing (64-replica) | **production-ready** | 8-site exact enumeration cross-check; multi-seed z vs exact (E, m², C at β=0.4/0.8, \|z\|<4); all-64-replica array observable matches exact; cross-solver vs scalar per-site Metropolis on identical physics (E, m², \|m\| pooled z) (2026-08-19) |
 | Wang-Landau DOS | **production-ready** | 2/4-site exact + 4×4 (11s, CI-ready) + BinnedAxis production run; unattainable `minimum_visited_fraction` now terminates loudly (`UnreachableBins`) instead of silently non-converging |
 | Multicanonical / umbrella | **production-ready** | Full MC-vs-exact distribution (moments + P(E) + flatness); transactional bias algebra |
-| Worm (Ising HT graph) | **production-ready** | Exact energy + endpoint correlation; cross-solver vs spin Metropolis; multi-component lattices rejected loudly (silent-freeze failure mode closed); multi-defect worms documented as not implemented |
+| Worm (Ising HT graph) | **production-ready** | Exact energy + endpoint correlation; cross-solver vs spin Metropolis; multi-component lattices **supported** (per-component two-defect worms, domain-separated RNG streams, additive observables) validated vs full exact enumeration (E, per-component E, correlations, worm-reconstructed m², partition identity) and vs spin Metropolis on a disconnected geometry; v1/v2 checkpoint round-trips; multi-defect/multi-leg worms documented as not implemented |
 | Kawasaki dynamics | **production-ready** | Sector-restricted exact equilibrium (BFS-reachable sector); β/J input validation fixed (was a panic path) |
 | BKL / n-fold-way | **production-ready** | Residence-time-weighted equilibrium vs exact (N=4/8, 3 β); input validation fixed (β/J/event window) |
 | Gillespie | **production-ready** | 3-state CTMC exact stationary π + Ising equilibrium |
@@ -275,7 +283,14 @@ Same as NUTS minus U-turn tests.
 
 ### Still open (2026-08-19, CMC production residue)
 
-20. CMC solvers remaining research-grade and why: **microcanonical over-relaxation** (not ergodic alone — physical; use in composition), **hybrid compositions** (only Metropolis+Wolff validated), **MultiSpinIsing** (no cross-solver vs scalar Metropolis, no multi-seed z coverage). Their criterion-G input validation and criterion-H domains are covered.
+20. ~~CMC solvers remaining research-grade and why: **microcanonical over-relaxation** (not ergodic alone — physical; use in composition), **hybrid compositions** (only Metropolis+Wolff validated), **MultiSpinIsing** (no cross-solver vs scalar Metropolis, no multi-seed z coverage).~~ → Closed 2026-08-19 (second hardening pass, all via implementation + validation, not documentation):
+    - **Multi-component worm implemented** (`src/worm/ensemble.rs`): the HT-graph ensemble factorizes over connected components, so `IsingGraphWormMC::from_lattice` / `IsingGraphWormEnsemble` decompose any (disconnected, isolated-site-including) lattice into per-component sub-lattices, each carrying an independent two-defect worm on a domain-separated derived stream (`RngStreamKey`, component index in the replica field; no RNG state hidden from checkpoints). Observables combine additively; energy measured under the all-physical conditioning (product ensemble preserved); endpoint correlations per component; v2 multi-component snapshots + v1 back-compat. Validated vs full 2^8 spin enumeration (total and per-component ⟨E⟩, two-point correlations, worm-reconstructed ⟨m²⟩) with the partition identity Z_spin = 2^N Πcosh(βJ) Π_c Z_graph,c at 1e-10, and cross-solver vs spin Metropolis on two disjoint 4×4 squares (pooled \|z\| < 4). Genuinely invalid input (empty lattice, β<0, non-finite J, J·weight<0, self-loops) still rejected loudly; the raw `IsingGraphWormModel`+`WormKernel` pair remains connected-only by contract (`worm_multi_component.rs`, 4 tests + 3 lib tests).
+    - **Microcanonical over-relaxation → production-ready**: not ergodic alone is physics; production evidence earned in its operated mode (composition). A/D: reflection map is an exact involution (1e-15), norm- and field-projection-preserving, and an isometry (O(2): θ' = 2φ−θ, \|J\|=1; O(3): H = 2ħħᵀ−I orthogonal, det +1 — π rotation about the field) ⇒ deterministic DB T(s↔s') = 1; the kernel is bit-identical to the manual sequential reflection with per-update \|ΔE\| < 1e-12. B/E: Hybrid(Metropolis, Microcanonical) vs exact XY-ring spectral quadrature (⟨E⟩, ⟨m²⟩, ⟨cos Δθ⟩) from hot and cold inits, 8 seeds. F: vs Wolff on 8×8 O(2)/O(3). C: β→0 exact limits and β=8 spin-wave harmonic result (`over_relaxation.rs`, 6 tests).
+    - **Hybrid compositions → production-ready**: every pairwise Ising composition (Metropolis/Wolff/SW/heat bath, all six) vs exact enumeration on ⟨E⟩, ⟨m²⟩, C (8 seeds each, pooled Σz gate); composition-boundary semantics proven bit-exact (Hybrid(A,B) ≡ A;B, repetitions(k,j) honored, nested combinator closure, same-seed determinism); continuous O(2) compositions (Wolff+SW, Metropolis+Wolff, Metropolis+ContinuousHeatBath) vs a pure-Wolff reference on 8×8 (`hybrid_compositions.rs`, 3 tests).
+    - **MultiSpinIsing → production-ready**: multi-seed z vs exact enumeration (⟨E⟩, ⟨m²⟩, C; β=0.4/0.8; 8 seeds; \|z\|<4, \|z̄\|<2, pooled Σz), the all-64-replica array observable verified against the same exact ⟨E⟩ (replicas are exchangeable valid chains), and cross-solver vs scalar per-site Metropolis on identical physics (⟨E⟩, ⟨m²⟩, ⟨\|m\|⟩ pooled z at both temperatures) (`multispin_cross_solver.rs`, 2 tests).
+    - **SW continuous-spin cluster updates validated**: the `SWCore`+`ONModel<D>` path (reflection auxiliary, embedded-Ising activation) matches the exact XY-ring quadrature (⟨E⟩, ⟨m²⟩, ⟨cos Δθ⟩; 8 seeds), O(3) analytic limits (β→0 exact, β=8 spin-wave), and Wolff on 8×8 O(2)/O(3) (`sw_continuous.rs`, 4 tests). The former "continuous-spin cluster updates remain unvalidated" residue is closed by evidence, not rewording.
+
+    CMC.rs suite after this pass: 277 default + 15 long + 73 lib.
 
 ---
 
@@ -325,6 +340,6 @@ Same as NUTS minus U-turn tests.
 **Repository: research-grade overall (QMC/MCMC physics complete); CMC.rs and the Carlo.rs framework core reached their target maturity on 2026-08-19.**
 
 - **Carlo.rs**: stable framework core; HDF5 checkpoint, MPI backend, and PT exchange now **production-ready** (analytic exchange-acceptance validation, np 1/2/4 exact fan-out, loud legacy fallback; nightly `carlo-framework` regression job) — 302 suite tests (297 + 5 MPI-ignored); error analysis/merge still research-grade
-- **CMC.rs**: 273 suite tests (258 + 15 long) + 69 lib. **Production hardening complete (2026-08-19)**: 15 of 19 solvers **production-ready** (physics A–F + audited input validation G + documented domains H); Potts q=3/4 validated against full enumeration for heat bath/SW/Wolff with cross-solver and analytic limits; molecule one-body dipolar external field validated against the Langevin/von Mises free-rotor answers; Wang-Landau unattainable-visited-fraction runs fail loudly (`UnreachableBins`); the worm rejects multi-component lattices loudly and carries a cross-solver check. Remaining research-grade with documented reasons: microcanonical over-relaxation (not ergodic alone), hybrid compositions (one combination validated), MultiSpinIsing (no cross-solver/multi-seed coverage)
+- **CMC.rs**: 292 suite tests (277 + 15 long) + 73 lib. **All 19 solvers production-ready (2026-08-19, after the second hardening pass)**: physics A–F + audited input validation G + documented domains H for every solver. First pass: Potts q=3/4 vs full enumeration, molecule dipolar external field vs Langevin/von Mises, WL `UnreachableBins` loud termination, criterion-G audit (3 panic paths fixed). Second pass (item 20): the multi-component worm is **implemented** (per-component two-defect worms on domain-separated streams, validated vs full enumeration + partition identity + cross-solver on a disconnected geometry, v1/v2 checkpoints); microcanonical over-relaxation is production-validated **in composition** (machine-precision reflection identities + deterministic DB, exact-quadrature equilibrium, Wolff cross-solver, analytic limits); **every offered hybrid composition** is validated (all six Ising pairings vs enumeration, boundary semantics bit-exact, continuous pairings vs Wolff); MultiSpinIsing has cross-solver (vs scalar Metropolis) and multi-seed z coverage; SW continuous-spin cluster updates validated vs quadrature and Wolff
 - **QMC.rs**: 178 tests (171 + 7 long). All 4 solvers research-grade with ED cross-checks, cross-solver validation, ergodicity, and z-score framework
 - **MCMC.rs**: 72 tests (69 + 3 long). All 6 kernels research-grade: detailed balance (machine-precision + statistical), ESS calibrated on AR(1), 6-solver posterior agreement, non-Gaussian recovery; nightly z-score monitoring covers CMC/QMC at 64 seeds

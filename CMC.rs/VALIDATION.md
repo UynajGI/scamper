@@ -6,9 +6,9 @@
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 258 | ~50s |
+| Default (`cargo test`) | 277 | ~60s |
 | Long stochastic (`--ignored`) | 15 | ~20s |
-| **Suite total** | **273** | (+69 lib unit tests) |
+| **Suite total** | **292** | (+73 lib unit tests) |
 
 ## Per-solver validated domain
 
@@ -30,12 +30,13 @@
 - **NOT validated:** —
 
 ### Swendsen-Wang (`SWCore`)
-- **Validated:** Ising S=1/2 on chain/square; q-state Potts q=3,4 (2026-08-19)
+- **Validated:** Ising S=1/2 on chain/square; q-state Potts q=3,4 (2026-08-19); continuous O(2)/O(3) cluster updates (2026-08-19, see below)
 - **Detailed balance:** Direct DB verified on N=2 (50k samples/state)
 - **Exact equilibrium:** Potts ⟨E⟩, ⟨m²⟩, C vs full q^N enumeration on N=4/N=8 at β=0.3/0.8 (16-seed z-scores); β=0 exactly-uniform state distribution (⟨E⟩ = −JΣw/q closed form)
+- **Continuous spins (2026-08-19):** XY 4-ring vs exact spectral quadrature — ⟨E⟩, ⟨m²⟩, ⟨cos Δθ⟩ at β ∈ {0.6, 1.2}, 8 seeds, |z| < 4 per seed, |z̄| < 2; O(3) 4-ring analytic limits (β→0: ⟨E⟩ = 0 and ⟨m²⟩ = 1/N exactly; β=8 spin-wave ⟨E⟩ = −J·N + (N−1)/β); cross-solver vs Wolff on 8×8 O(2)/O(3) at β=0.9 (pooled |z| < 4 on ⟨E⟩ and ⟨m²⟩) — `sw_continuous.rs`
 - **Ergodicity:** Strongly connected on N=2
 - **Cross-solver:** Agrees with Metropolis within 3σ on 8×8; 8×8 q=3 near βc = ln(1+√3) 4-solver agreement
-- **NOT validated:** continuous-spin cluster updates
+- **NOT validated:** —
 
 ### Heat bath — discrete (`HeatBathCore`)
 - **Validated:** Ising S=1/2; q-state Potts q=3,4 (2026-08-19)
@@ -49,12 +50,28 @@
 - **NOT validated:** — (finite-T distribution and XY validated 2026-08-14; lattice-scale O(N) cross-solver via Metropolis-vs-Wolff above)
 
 ### Microcanonical over-relaxation (`MicrocanonicalCore`)
-- **Validated:** Energy conservation to 2e-10, unit norm preservation to 3e-12
-- **NOT validated:** Ergodicity (over-relaxation alone is not ergodic)
+- **Validated:** Energy conservation to 2e-10, unit norm preservation to 3e-12 (long sweeps)
+- **Reflection-map identities (2026-08-19, machine precision):** R(s) = 2(s·ĥ)ĥ − s is an exact involution (R∘R = id, 1e-15), norm-preserving (1e-15), preserves the local-field projection (bond energies unchanged, 1e-15), and is an isometry with |Jacobian| = 1 — O(2): θ' = 2φ − θ exactly (residual < 1e-14); O(3): the map matrix 2ħħᵀ − I is orthogonal with det = +1 (π rotation about the field axis; the field direction is fixed, the orthogonal plane reversed). A deterministic involutive isometry satisfies detailed balance against any rotation-invariant measure: T(s→s') = T(s'→s) = 1
+- **Kernel ≡ the reflection map (2026-08-19):** with the sequential visit schedule the kernel sweep is bit-identical to the manual per-site reflection, and every transactional update reports |ΔE| < 1e-12 (per-update machine-precision conservation; `energy_error` after full sweeps ≤ 1e-12)
+- **Composition equilibrium (2026-08-19):** Hybrid(Metropolis, Microcanonical) on the XY 4-ring vs exact spectral quadrature (zero mode factored, grid-doubling anchored) — ⟨E⟩, ⟨m²⟩, ⟨cos(θ1−θ3)⟩ at β ∈ {0.6, 1.2}, from hot and cold initializations, 8 seeds, |z| < 4 per seed, |z̄| < 2 per observable
+- **Cross-solver (2026-08-19):** the composition vs Wolff on 8×8 O(2) and O(3) at β=0.9 (pooled |z| < 4 on ⟨E⟩ and ⟨m²⟩)
+- **Analytic limits in composition (2026-08-19):** β→0 gives exactly ⟨E⟩ = 0 and ⟨m²⟩ = 1/N; β=8 approaches the spin-wave result ⟨E⟩ = −J·N + (N−1)/(2β) (tolerance 0.05; anharmonic remainder O(β⁻²)) with ⟨m²⟩ → 1
+- **Physics note:** over-relaxation alone is deterministic and energy-conserving, hence **not ergodic** — this is physics, not a defect; the validated production mode is composition with an ergodic kernel (`over_relaxation.rs`)
+- **NOT validated:** —
 
 ### Hybrid (`HybridCore<A, B>`)
-- **Validated:** Hybrid(Metropolis, Wolff) ⟨E⟩ and ⟨m²⟩ vs exact enumeration on 4-site Ising
-- **NOT validated:** Other combinations, continuous spins
+- **Validated:** Hybrid(Metropolis, Wolff) ⟨E⟩ and ⟨m²⟩ vs exact enumeration on 4-site Ising (p2_remaining)
+- **All Ising pairwise compositions (2026-08-19):** every pairing of the four Ising-capable kernels — Metropolis+Wolff, Metropolis+SW, Metropolis+HeatBath, Wolff+SW, Wolff+HeatBath, SW+HeatBath — vs full 2^4 enumeration on the 4-site ring at β=0.5: ⟨E⟩, ⟨m²⟩ and C = β²(⟨E²⟩−⟨E⟩²), 8 seeds each, |z| < 4 per seed, |z̄| < 2 per combo, pooled one-sided Σz gate across the matrix
+- **Composition boundary semantics (2026-08-19):** same-seed determinism; Hybrid(A, B) ≡ manual `A; B` sequencing bit-for-bit; `repetitions(2, 3)` ≡ `A; A; B; B; B`; the nested combinator closure Hybrid(A, Hybrid(B, C)) ≡ `A; B; C`
+- **Continuous compositions (2026-08-19):** O(2) Wolff+SW, Metropolis+Wolff and Metropolis+ContinuousHeatBath vs a pure-Wolff reference on 8×8 at β=0.9 (pooled |z| < 4 on ⟨E⟩ and ⟨m²⟩); Metropolis+Microcanonical validated in the microcanonical section (quadrature, limits, Wolff cross-solver)
+- **NOT validated:** —
+
+### MultiSpinIsing (64-replica bit-parallel, `MultiSpinIsing`)
+- **Validated:** 8-site exact enumeration cross-check (`p2_validation.rs`); acceptance LUT anchors, PT weight ratio, per-replica array observables (lib tests)
+- **Multi-seed z coverage (2026-08-19):** 8-site PBC chain, β ∈ {0.4, 0.8}, 8 seeds — ⟨E⟩, ⟨m²⟩ and C = β²(⟨E²⟩−⟨E⟩²) vs full 2^8 enumeration, |z| < 4 per seed, |z̄| < 2 per (β, observable), pooled one-sided Σz gate
+- **All 64 replicas ensemble-consistent (2026-08-19):** the `Energy_replica` array observable (averaged over replicas and time) matches the same exact ⟨E⟩ (|z̄| < 1) — replica 0 is not special; the replicas are exchangeable valid Metropolis chains
+- **Cross-solver (2026-08-19):** vs scalar per-site `MetropolisCore` on identical physics (same lattice, β, J) at both temperatures — pooled cross-solver z on ⟨E⟩, ⟨m²⟩ and ⟨|m|⟩, all |z| < 4 (`multispin_cross_solver.rs`)
+- **NOT validated:** —
 
 ### Wang-Landau (`WangLandauCore`)
 - **Validated:** DOS matches exact 4×4 Ising enumeration (un-ignored, ~11s)
@@ -75,7 +92,8 @@
 - **Validated:** Graph energy estimator matches exact spin energy
 - **Validated:** Hastings reciprocity, endpoint correlation
 - **Cross-solver (2026-08-19):** 4×4 square ⟨E⟩ at β=0.44 agrees with spin Metropolis within pooled 4σ
-- **Input rejection (2026-08-19):** multi-component (disconnected or isolated-site) lattices are rejected loudly at construction — the defect pair is confined to one component and the remaining components would stay frozen at their initial occupation, silently sampling a wrong ensemble
+- **Multi-component lattices supported (2026-08-19, second pass):** the HT-graph ensemble factorizes over connected components, so `IsingGraphWormMC::from_lattice` / `IsingGraphWormEnsemble` (`src/worm/ensemble.rs`) run one independent two-defect worm per component on domain-separated derived streams (`carlo_rs::RngStreamKey`, component index in the replica field; one salt per component per sweep from the shared context stream, so no RNG state is hidden from a checkpoint). Observables combine additively; total energy is measured under the all-physical conditioning (the product ensemble is preserved); endpoint correlations are per component (cross-component pairs have no worm estimator — they factorize to zero); isolated sites form trivial components sampled exactly by the empty graph. Validated vs full 2^8 spin enumeration on a 4-ring + 3-chain + isolated-site lattice (total and per-component ⟨E⟩, two-point correlations, and ⟨m²⟩ reconstructed from the worm pair correlations); partition identity Z_spin = 2^N Π cosh(βJ_e) Π_c Z_graph,c at 1e-10; cross-solver vs spin Metropolis on two disjoint 4×4 squares (pooled |z| < 4); v2 multi-component snapshots round-trip bit-exact trajectories, v1 single-component snapshots still load (and are rejected loudly for multi-component ensembles)
+- **Input rejection:** genuinely invalid input is still rejected loudly at construction — empty lattice, non-finite/negative β, non-finite coupling, `J · weight < 0` on any edge, self-loops. The raw `IsingGraphWormModel` + `WormKernel` pair additionally requires a **connected** lattice: its single defect pair would silently freeze the other components, so `IsingGraphWormModel::new` rejects disconnected input for direct users while the ensemble adapter handles it by decomposition
 - **NOT validated:** multi-defect / multi-leg (multi-component) worm algorithms — not implemented; the kernel is a two-defect kernel by design (documented in `worm` module docs)
 
 ### Kawasaki dynamics (`KawasakiCore`)
@@ -150,7 +168,7 @@ never an unintended panic:
 ## Statistical validation framework
 
 - **z-score tests:** 16 independent seeds per solver (8 where chains are more expensive), |z|<4 per seed, |z̄|<2 mean, no one-sided bias. Seed counts scale via `SCUTTLE_ZSCORE_SEEDS` (unset → default unchanged; nightly `zscore-monitor` uses 64; `just nightly-zscore` reproduces locally). Σz thresholds are scale-invariant (−2√n); in test files with many configuration cells (Potts, external field) the Σz gate is pooled over all scores of one solver/test to control the multiple-comparisons false-alarm rate.
-- **Cross-solver:** Metropolis vs Wolff pooled z-scores agree (|Δz̄|<2); Potts 4-solver pairwise |z|<4 at βc; worm vs Metropolis pooled |z|<4
+- **Cross-solver:** Metropolis vs Wolff pooled z-scores agree (|Δz̄|<2); Potts 4-solver pairwise |z|<4 at βc; worm vs Metropolis pooled |z|<4; MultiSpinIsing vs scalar Metropolis pooled |z|<4; SW-continuous and over-relaxation-composition vs Wolff pooled |z|<4
 - **Connectivity:** Explicit Markov chain enumeration on N=2 Ising (4 states), BFS strong connectivity + aperiodicity check
 
 ## Known issues
@@ -175,3 +193,8 @@ never an unintended panic:
 | 2026-08-19 | Production: WL convergence robustness | ✅ 4 tests (`wang_landau_convergence.rs`): unattainable `minimum_visited_fraction` → loud `UnreachableBins` termination (not Converged/MaximumSweeps), auto-derived reachable set matches enumeration, checkpoint evidence guards, version-1 back-compat |
 | 2026-08-19 | Production: multi-component worm | ✅ Honest limitation route: multi-component (disconnected/isolated-site) lattices now rejected loudly at `IsingGraphWormModel::new` (defect pair confined to one component would silently freeze the rest); multi-defect/multi-leg worms documented as not implemented; + worm-vs-Metropolis cross-solver test |
 | 2026-08-19 | Production: input-validation audit | ✅ 10 tests (`input_validation.rs`) across all 19 solvers; fixed three source holes (Kawasaki/BKL β+J panic path, MultiSpinIsing lattice validation, BKL event-window validation) |
+| 2026-08-19 | Production: multi-component worm implemented | ✅ `src/worm/ensemble.rs` + `IsingGraphWormMC::from_lattice` (per-component two-defect worms, `RngStreamKey` domain-separated streams, additive observables, v1/v2 checkpoints) + `CsrLattice::connected_components`; 4 suite tests (`worm_multi_component.rs`: exact 2^8 enumeration incl. per-component energies/correlations/worm-reconstructed m², partition identity at 1e-10, snapshot round-trip + loud rejections, cross-solver vs spin Metropolis on two disjoint 4×4 squares) + 3 lib tests; multi-component input no longer rejected at the scheduler surface — genuinely invalid input still is |
+| 2026-08-19 | Production: over-relaxation in composition | ✅ 6 tests (`over_relaxation.rs`): reflection-map machine-precision identities + deterministic DB (involution/isometry, O(2) angle form, O(3) orthogonal π-rotation); kernel ≡ manual reflection bit-exact with per-update \|ΔE\|<1e-12; Hybrid(Metropolis, Microcanonical) vs exact XY-ring quadrature from 2 inits; analytic limits (β→0 exact, β=8 spin-wave); cross-solver vs Wolff 8×8 O(2)/O(3) |
+| 2026-08-19 | Production: all hybrid compositions | ✅ 3 tests (`hybrid_compositions.rs`): all six Ising pairwise combos vs exact enumeration (E, m², C; multi-seed + pooled Σz); boundary semantics bit-exact (sequencing/repetitions/nesting/determinism); continuous O(2) combos vs Wolff 8×8 |
+| 2026-08-19 | Production: MultiSpinIsing | ✅ 2 tests (`multispin_cross_solver.rs`): multi-seed z vs exact enumeration (E, m², C at β=0.4/0.8) + all-64-replica array-observable consistency; cross-solver vs scalar Metropolis (E, m², \|m\| pooled z) |
+| 2026-08-19 | Production: SW continuous spins | ✅ 4 tests (`sw_continuous.rs`): XY-ring exact quadrature (E, m², cos Δθ), O(3) analytic limits (β→0, β=8 spin-wave with the zero-mode-counted formula), cross-solver vs Wolff 8×8 O(2)/O(3) |
