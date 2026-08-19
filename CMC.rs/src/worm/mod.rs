@@ -5,17 +5,21 @@
 //! head moves. The first model is the ferromagnetic Ising high-temperature
 //! graph representation on an arbitrary loop-free [`crate::CsrLattice`].
 //!
-//! # Limitations
+//! # Multi-component lattices
 //!
 //! The kernel is a **two-defect (single-worm) kernel**: exactly one head and
-//! one tail. Multi-component worms — several simultaneous defect pairs or
-//! multi-leg worms, as needed for multi-component field representations —
-//! are not implemented and not validated. Because the defect pair diffuses
-//! within one connected component, [`IsingGraphWormModel::new`] rejects
-//! multi-component (disconnected or isolated-site) lattices loudly instead
-//! of silently freezing the unreachable components at their initial
-//! occupation.
+//! one tail. Multi-defect/multi-leg worms are not implemented. Because the
+//! Ising high-temperature graph ensemble factorizes over connected components,
+//! multi-component lattices are still sampled exactly by
+//! [`IsingGraphWormEnsemble`] (and the scheduler-ready
+//! [`IsingGraphWormMC::from_lattice`]): one independent two-defect worm per
+//! component, domain-separated RNG streams, observables combined additively.
+//! A raw [`IsingGraphWormModel`] + [`WormKernel`] pair remains restricted to
+//! connected lattices — its single defect pair would otherwise silently freeze
+//! the other components — so [`IsingGraphWormModel::new`] rejects disconnected
+//! input loudly for direct users.
 
+mod ensemble;
 mod error;
 mod ising;
 mod kernel;
@@ -23,6 +27,7 @@ mod mc;
 mod model;
 mod state;
 
+pub use ensemble::{IsingComponentWorm, IsingGraphWormEnsemble};
 pub use error::WormError;
 pub use ising::{
     enumerate_ising_graph_expansion, ExactIsingGraphExpansion, IsingGraphConfiguration,

@@ -396,13 +396,15 @@ impl WormModel for IsingGraphWormModel {
     }
 }
 
-/// Reject multi-component lattices (including isolated sites).
+/// Reject multi-component lattices for the raw single-worm model/kernel pair.
 ///
-/// The single defect pair of the worm diffuses within one connected
-/// component of the bond graph. On a disconnected graph the other
-/// components would keep their initial (empty-graph) occupation forever:
-/// the walk would still look healthy while sampling a wrong ensemble — the
-/// silent-garbage failure this check rules out at input time.
+/// The single defect pair of [`super::WormKernel`] diffuses within one
+/// connected component of the bond graph; on a disconnected graph the other
+/// components would keep their initial (empty-graph) occupation forever —
+/// the silent-garbage failure this check rules out at input time.
+/// Multi-component lattices are supported instead by decomposing into
+/// connected components and running one worm per component
+/// ([`super::IsingGraphWormEnsemble`], [`super::IsingGraphWormMC::from_lattice`]).
 fn ensure_single_component(lattice: &CsrLattice) -> Result<(), WormError> {
     let mut seen = vec![false; lattice.n_sites];
     let mut queue = std::collections::VecDeque::new();

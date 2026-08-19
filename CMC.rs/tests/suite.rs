@@ -82,6 +82,8 @@ mod molecule_equilibrium;
 mod molecule_external_field;
 #[path = "physics/multicanonical_exact.rs"]
 mod multicanonical_exact;
+#[path = "physics/multispin_cross_solver.rs"]
+mod multispin_cross_solver;
 #[path = "physics/observables_exact.rs"]
 mod observables_exact;
 #[path = "physics/p2_remaining.rs"]
@@ -106,6 +108,8 @@ mod wang_landau_binned;
 mod wang_landau_convergence;
 #[path = "physics/worm_exact.rs"]
 mod worm_exact;
+#[path = "physics/worm_multi_component.rs"]
+mod worm_multi_component;
 #[path = "physics/zscore_extended.rs"]
 mod zscore_extended;
 #[path = "physics/zscore_validation.rs"]

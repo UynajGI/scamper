@@ -126,7 +126,8 @@ pub use postprocess::{
 pub use statistics::{statistical_efficiency, StatisticalEfficiency};
 pub use worm::{
     enumerate_ising_graph_expansion, EndpointPairHistogram, ExactIsingGraphExpansion,
-    IsingGraphConfiguration, IsingGraphPatch, IsingGraphWormMC, IsingGraphWormModel, IsingWormStep,
-    WormConfig, WormError, WormKernel, WormModel, WormSector, WormState, WormStepDelta,
-    WormStepProposal, WormTransition, WormTransitionStatistics,
+    IsingComponentWorm, IsingGraphConfiguration, IsingGraphPatch, IsingGraphWormEnsemble,
+    IsingGraphWormMC, IsingGraphWormModel, IsingWormStep, WormConfig, WormError, WormKernel,
+    WormModel, WormSector, WormState, WormStepDelta, WormStepProposal, WormTransition,
+    WormTransitionStatistics,
 };

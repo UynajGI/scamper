@@ -353,6 +353,37 @@ impl CsrLattice {
     pub fn n_edges(&self) -> usize {
         self.edges.len()
     }
+
+    /// Connected components of the bond graph, each as an ascending site list.
+    ///
+    /// Components are ordered by their smallest site; isolated sites form
+    /// their own single-site component. Every physical edge lies fully inside
+    /// exactly one component, so ensembles that factorize over components can
+    /// be sampled by decomposing along this partition.
+    pub fn connected_components(&self) -> Vec<Vec<usize>> {
+        let mut components = Vec::new();
+        let mut seen = vec![false; self.n_sites];
+        for seed in 0..self.n_sites {
+            if seen[seed] {
+                continue;
+            }
+            seen[seed] = true;
+            let mut stack = vec![seed];
+            let mut members = Vec::new();
+            while let Some(site) = stack.pop() {
+                members.push(site);
+                for &neighbor in self.neighbors(site) {
+                    if !seen[neighbor] {
+                        seen[neighbor] = true;
+                        stack.push(neighbor);
+                    }
+                }
+            }
+            members.sort_unstable();
+            components.push(members);
+        }
+        components
+    }
 }
 
 fn validate_dims(dims: &[usize], bond_types: &[BondType]) {
@@ -555,5 +586,42 @@ mod tests {
         assert_eq!(graph.n_edges(), 2);
         assert_eq!(graph.degree(0), 2);
         assert_eq!(graph.degree(1), 2);
+    }
+
+    #[test]
+    fn connected_components_partition_disconnected_graphs() {
+        // Two disjoint bonds plus an isolated site.
+        let graph = CsrLattice::from_edges(
+            5,
+            vec![
+                Bond::new(3, 4, BondType::Generic, 1.0),
+                Bond::new(0, 1, BondType::Generic, 1.0),
+            ],
+        );
+        let components = graph.connected_components();
+        assert_eq!(
+            components,
+            vec![vec![0, 1], vec![2], vec![3, 4]],
+            "components must be ordered by smallest site, ascending within"
+        );
+        // Every edge lies fully inside exactly one component.
+        let covered: usize = components
+            .iter()
+            .map(|sites| {
+                graph
+                    .edges
+                    .iter()
+                    .filter(|edge| sites.contains(&edge.source))
+                    .count()
+            })
+            .sum();
+        assert_eq!(covered, graph.n_edges());
+
+        // Connected graphs decompose into a single component.
+        assert_eq!(build_chain(6, true).connected_components().len(), 1);
+        assert_eq!(
+            build_square(3, 3, true).connected_components(),
+            vec![(0..9).collect::<Vec<_>>()]
+        );
     }
 }
