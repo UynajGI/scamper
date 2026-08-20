@@ -268,10 +268,15 @@ production status of the existing solvers.
   the **optimization machinery** — stochastic reconfiguration, natural
   gradient, linear method — that is half the method; **NQS** (neural quantum
   states) as modern ansätze; **t-VMC** for real-time dynamics.
-- Architectural note: this family needs wavefunction-gradient evaluation,
-  and DMC-style **branching walker populations** conflict with Carlo.rs's
-  fixed-length-chain `MonteCarlo` trait — a framework-level population model
-  (walker branching, ancestor weights, population-control bias) would be new.
+- Architectural note: the family fits the existing `sweep`/`measure`
+  contract — the walker population lives as solver-internal state (one
+  sweep = one imaginary-time step over all walkers; per-walker RNG streams
+  derive from the existing `RngStreamKey` domain separation). What is
+  missing is conveniences, not permission: weighted-observable conventions,
+  descendant-tracking measurement windows for pure estimators, and
+  intra-population parallel dispatch that composes with chain-level
+  backends. The genuinely new machinery is wavefunction-gradient
+  evaluation and the optimizer outer loop.
 
 ### Configuration-space projection family
 
@@ -304,5 +309,7 @@ Discrete SSE + improved estimators → lattice-boson worldline + worm →
 determinantal family (the `ParticleStatistics::Fermion` boundary and its
 rejection logic were designed for exactly this extension) → AFQMC and
 real-time. The variational family is best started as its own crate (VMC.rs,
-matching the CMC/QMC/MCMC naming convention) since its gradient and
-population machinery shares little with the existing trait boundaries.
+matching the CMC/QMC/MCMC naming convention) — not because the trait
+forbids it, but because wavefunction-gradient machinery and ansatz
+dependencies (autodiff, neural networks) share little with the existing
+worldline infrastructure.
