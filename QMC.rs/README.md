@@ -158,6 +158,47 @@ let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
 A complete runnable example is in
 [`examples/impurity_wormhole.rs`](examples/impurity_wormhole.rs).
 
+## Variational family (L0)
+
+Continuum variational QMC lives in the `variational/` module family
+(`qmc_rs::variational`, flat re-exports at the crate root), hosted by the
+same Carlo.rs `sweep`/`measure` contract as the lattice solvers: the walker
+population is solver-internal state and one sweep is one epoch of
+single-particle Metropolis over all walkers, on per-walker RNG streams
+derived through `RngStreamKey` (walker index in the replica field).
+
+What exists (layer L0):
+
+- `WaveFunction` trait with hand-derived analytic `∇ ln|ψ|`, `∇² ln|ψ|`
+  and parameter gradients, plus allocation-free incremental
+  `delta_log`/`commit_move` single-particle updates (flat particle-
+  interleaved 3-D configurations, open box — no PBC/minimum image yet).
+- Three ansätze: `GaussianTrap` (one-body harmonic-trap Gaussian),
+  `McMillanJastrow` (`Π exp(−½(b/r)⁵)`) and `HarmonicJastrow`
+  (`Π exp(−a r_ij²)`), combinable via the log-additive `Product`
+  combinator (the L1 Slater–Jastrow seam).
+- `ContinuumHamiltonian` (harmonic trap + Lennard-Jones or harmonic pair
+  terms), the `local_energy` estimator, and `VmcKernel<W>` — a
+  Metropolis-in-`|ψ_T|²` population kernel implementing `MonteCarlo`
+  (drive it with `Run::from_parts`; `FromParams` is deliberately not
+  implemented for the generic ansatz type). Versioned JSON checkpoints
+  (`qmc-rs-vmc-v1`) cover walkers + parameters and reject unknown or
+  corrupted snapshots loudly.
+
+Validated domain (exact statements, see `tests/variational/`):
+`GaussianTrap` at `α = ω/2` gives `E_L ≡ 3Nω/2` to machine precision (zero
+variance) through the full Metropolis pipeline; `HarmonicJastrow` is the
+exact ground state (`E₀ = 3aN(N−1)`) of the pair-harmonic trap
+`k = 4a²N`; `delta_log` matches full recomputes to `1e-14`; all gradients
+agree with central finite differences; same-seed runs are bit-identical;
+the He-4-like confined McMillan droplet respects the rigorous bound
+`E ≥ −ε·N(N−1)/2` with multi-seed z-score consistency.
+
+Not there yet: parameter optimizers (L2 — will adopt `nalgebra`/`argmin`
+rather than hand-rolling), Slater determinants and backflow (L1), DMC
+(L3), reptation (L4), NQS/t-VMC (L5, mature-crate autodiff decision).
+Architecture and layer plan: [`research/vmc/DESIGN.md`](../research/vmc/DESIGN.md).
+
 ## Coupling conventions
 
 An explicit `lambda`, `lambda_xy`, `lambda_x`, `lambda_y`, or `lambda_z`
@@ -262,12 +303,14 @@ production status of the existing solvers.
   measures only nearest-neighbor Sz correlations (the long-standing
   QMC-P2.2 deferral).
 
-### Variational family (likely a separate VMC.rs crate)
+### Variational family (inside QMC.rs, `variational/` module family) (L0 implemented 2026-08-19)
 
 - **VMC** (Jastrow / Slater–Jastrow / backflow / Pfaffian trial states) with
   the **optimization machinery** — stochastic reconfiguration, natural
   gradient, linear method — that is half the method; **NQS** (neural quantum
-  states) as modern ansätze; **t-VMC** for real-time dynamics.
+  states) as modern ansätze; **t-VMC** for real-time dynamics. Optimizer and
+  autodiff machinery adopted from mature crates (`nalgebra`, `argmin`,
+  candle-class AD at the NQS layer); custom code restricted to physics.
 - Architectural note: the family fits the existing `sweep`/`measure`
   contract — the walker population lives as solver-internal state (one
   sweep = one imaginary-time step over all walkers; per-walker RNG streams
@@ -308,8 +351,7 @@ production status of the existing solvers.
 Discrete SSE + improved estimators → lattice-boson worldline + worm →
 determinantal family (the `ParticleStatistics::Fermion` boundary and its
 rejection logic were designed for exactly this extension) → AFQMC and
-real-time. The variational family is best started as its own crate (VMC.rs,
-matching the CMC/QMC/MCMC naming convention) — not because the trait
-forbids it, but because wavefunction-gradient machinery and ansatz
-dependencies (autodiff, neural networks) share little with the existing
-worldline infrastructure.
+real-time. The variational family lives inside QMC.rs as the
+`variational/` module family (see `research/vmc/DESIGN.md`); its
+wavefunction-gradient machinery is new ground but shares the Carlo.rs
+hosting and RNG-stream conventions.

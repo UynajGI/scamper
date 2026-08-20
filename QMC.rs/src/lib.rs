@@ -12,6 +12,10 @@
 //! - [`impurity`] — retarded-interaction wormhole QMC and a continuous-time
 //!   cluster solver for longitudinal spin-boson impurities.
 //!
+//! The [`variational`] family (continuum VMC, layer L0) shares the Carlo.rs
+//! hosting conventions and grows toward optimizers, DMC and NQS behind the
+//! `WaveFunction` trait.
+//!
 //! Discrete-time prototypes and the old chain-specific Heisenberg adapter have
 //! been removed. Lattice geometry is now data, not an algorithm type.
 
@@ -20,6 +24,7 @@ pub mod graph;
 pub mod impurity;
 pub mod lattice;
 pub mod local_space;
+pub mod variational;
 
 pub use algorithm::{QmcKernel, UpdateSchedule};
 pub use graph::{CsrGraph, Edge, EdgeSpec, GraphError, Neighbor};
@@ -90,4 +95,10 @@ pub use lattice::{
 };
 pub use local_space::{
     BasisState, LocalHilbertSpace, LocalSpaceError, ParticleStatistics, SpinSpace,
+};
+pub use variational::{
+    local_energy, ContinuumHamiltonian, DeltaLog, GaussianTrap, GradBuffer, HarmonicJastrow,
+    HarmonicTrap, LocalEnergy, McMillanJastrow, PairPotential, ParamGradBuffer, Point, Positions,
+    Product, VariationalError, VmcKernel, VmcStats, Walker, WaveFunction, WaveFunctionParams, DIM,
+    VMC_CHECKPOINT_FORMAT,
 };

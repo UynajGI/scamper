@@ -1183,6 +1183,7 @@ dependencies = [
  "carlo-rs",
  "rand",
  "rand_xoshiro",
+ "serde_json",
  "thiserror",
 ]
 

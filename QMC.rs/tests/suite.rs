@@ -60,3 +60,12 @@ mod thread_count;
 mod wormhole;
 #[path = "impurity/wormhole_interacting_ed.rs"]
 mod wormhole_interacting_ed;
+
+// ── Variational — continuum VMC (L0) ─────────────────────────────────────
+
+#[path = "variational/machine_precision.rs"]
+mod variational_machine_precision;
+#[path = "variational/software.rs"]
+mod variational_software;
+#[path = "variational/statistical.rs"]
+mod variational_statistical;
