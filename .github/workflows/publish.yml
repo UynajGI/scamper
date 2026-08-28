@@ -58,6 +58,14 @@ jobs:
                 echo "$name already on crates.io — treating as success"
                 return 0
               fi
+              if echo "$out" | grep -q "429 Too Many Requests"; then
+                # crates.io throttles how many new crates an account may
+                # create in a short window (minutes, not seconds) — the
+                # plain 20s retry cannot ride that out.
+                echo "$name rate-limited on new-crate creation; backing off 2 min (attempt $i)"
+                sleep 120
+                continue
+              fi
               echo "::group::attempt $i for $name failed"
               echo "$out" | tail -10
               echo "::endgroup::"
