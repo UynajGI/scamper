@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["Carlo.rs", "QMC.rs", "CMC.rs", "MCMC.rs"]
+members = ["Carlo.rs", "QMC.rs", "CMC.rs", "MCMC.rs", "scamper"]
 
 [workspace.dependencies]
 rand = "0.10"

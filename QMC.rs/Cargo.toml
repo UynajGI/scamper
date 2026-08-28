@@ -2,9 +2,13 @@
 name = "qmc-rs"
 version = "0.1.0-dev1"
 edition = "2021"
-authors = ["Scuttle Team"]
+authors = ["Scamper Team"]
 license = "Apache-2.0"
 description = "Quantum Monte Carlo algorithm toolbox"
+repository = "https://github.com/UynajGI/scamper"
+readme = "README.md"
+keywords = ["quantum", "monte-carlo", "physics", "simulation", "vmc"]
+categories = ["science", "simulation"]
 
 [dependencies]
 argmin = { version = "0.11", default-features = false }
@@ -12,7 +16,7 @@ argmin-math = { version = "0.5", default-features = false, features = [
     "primitives",
     "vec",
 ] }
-carlo-rs = { path = "../Carlo.rs" }
+carlo-rs = { path = "../Carlo.rs", version = "0.1.0-dev1" }
 nalgebra = { workspace = true }
 rand = "0.10.0"
 rand_xoshiro = "0.8"

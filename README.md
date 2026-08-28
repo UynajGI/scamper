@@ -1,4 +1,4 @@
-# Scuttle
+# Scamper
 
 Monte Carlo simulation framework in Rust, ported from [Carlo.jl](https://github.com/lukas-weber/Carlo.jl).
 

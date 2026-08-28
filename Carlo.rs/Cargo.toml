@@ -2,8 +2,13 @@
 name = "carlo-rs"
 version = "0.1.0-dev1"
 edition = "2021"
+authors = ["Scamper Team"]
 license = "Apache-2.0"
-description = "Core Monte Carlo framework for Scuttle"
+description = "Core Monte Carlo framework: scheduling, measurements, MPI, checkpointing"
+repository = "https://github.com/UynajGI/scamper"
+readme = "README.md"
+keywords = ["monte-carlo", "simulation", "physics", "mpi", "rng"]
+categories = ["science", "simulation"]
 
 [dependencies]
 rand = { workspace = true }
