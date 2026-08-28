@@ -22,9 +22,14 @@
 //!
 //! # Hot-path budget
 //!
-//! Zero heap allocation per single-particle move: proposals and deltas live
-//! on the stack, and the only owned scratch ([`GradBuffer`]) is allocated
-//! once at construction and reused by every measurement.
+//! The **proposal** path is allocation-free: proposals and deltas live on
+//! the stack, and the only owned kernel scratch ([`GradBuffer`]) is
+//! allocated once at construction and reused by every measurement. The L1
+//! determinant ansatz additionally allocates on **accepts** (its O(N²)
+//! Sherman–Morrison inverse update) and once per walker per sweep (the
+//! K-rebuild `rebuild` LU — see the K-rebuild policy on
+//! [`VmcKernel::sweep_with_phase`] and the allocation contract in
+//! `wavefunction/determinant.rs`); both are off the proposal path.
 
 use rand::{Rng, RngExt};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -147,10 +152,16 @@ impl<W: WaveFunctionParams<Config = Positions>> VmcKernel<W> {
                 .map(|_| rng.random_range(-initial_spread..initial_spread))
                 .collect();
             let cfg = Positions::from_flat(coords)?;
-            walkers.push(Walker {
-                log_psi: wave_function.log_psi(&cfg),
-                cfg,
-            });
+            let log_psi = wave_function.log_psi(&cfg);
+            if !log_psi.is_finite() {
+                return Err(VariationalError::invalid(
+                    "walkers",
+                    "initial configuration has non-finite ln|psi| (singular determinant \
+                     or ansatz/particle-count mismatch); increase initial_spread or check \
+                     the ansatz",
+                ));
+            }
+            walkers.push(Walker { log_psi, cfg });
         }
         Ok(Self {
             wave_function,
@@ -229,6 +240,18 @@ impl<W: WaveFunctionParams<Config = Positions>> VmcKernel<W> {
 
     /// One sweep: one epoch of single-particle Metropolis per walker, on
     /// per-walker streams derived from `rng` (see the module docs).
+    ///
+    /// K-rebuild policy (the `rebuild` trait hook): at each walker's sweep
+    /// entry the kernel refreshes the ansatz caches for that walker's
+    /// configuration and re-anchors its cached `ln|ψ_T|` from the fresh
+    /// recompute — K = one walker pass (≤ `n_particles` accepted moves).
+    /// This is the natural cadence because the shared-ansatz cache is
+    /// walker-keyed anyway: the next walker's first evaluation would force
+    /// an O(N³) rebuild regardless, so the policy adds no asymptotic cost
+    /// while bounding Sherman–Morrison drift of the incrementally updated
+    /// determinant inverse (and of the accumulated walker `ln|ψ_T|`) to a
+    /// single sweep. Stateless L0 ansätze make `rebuild` a no-op and
+    /// re-anchor to an exact recompute.
     pub fn sweep_with_phase(&mut self, rng: &mut impl Rng, phase: carlo_rs::RngPhase) {
         let n_particles = self.n_particles();
         let width = self.proposal_width;
@@ -244,6 +267,10 @@ impl<W: WaveFunctionParams<Config = Positions>> VmcKernel<W> {
                 .with_replica(index as u64)
                 .with_phase(phase)
                 .seeded();
+            // Re-anchor this walker against a fresh full evaluation before
+            // the particle loop (see the K-rebuild policy in the docs).
+            wave_function.rebuild(&walker.cfg);
+            walker.log_psi = wave_function.log_psi(&walker.cfg);
             for particle in 0..n_particles {
                 let old = walker.cfg.particle(particle);
                 let mut new_pos = old;

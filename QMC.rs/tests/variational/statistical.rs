@@ -25,7 +25,7 @@
 
 use qmc_rs::{
     ContinuumHamiltonian, GaussianTrap, HarmonicTrap, McMillanJastrow, PairPotential, Positions,
-    Product, VmcKernel, WaveFunctionParams, DIM,
+    Product, SlaterDeterminant, VmcKernel, WaveFunctionParams, DIM,
 };
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -282,4 +282,79 @@ fn gaussian_trial_state_samples_its_exact_closed_form_energy() {
         mean - e0 >= -5.0 * stderr,
         "E_VMC = {mean} below E_0 = {e0} (variational violation)"
     );
+}
+
+/// L1: Slater-Jastrow fermions under a rigorous operator lower bound.
+///
+/// Eight spin-1/2 fermions (closed HO shell) in an isotropic trap plus a
+/// repulsive harmonic pair `V_pair = 1/2 k r^2 >= 0` pointwise. Since
+/// `H = H_0 + V_pair` with `V_pair >= 0`, ANY normalized trial state obeys
+/// `E = <H_0> + <V_pair> >= E_0(H_0) = 18 omega` (the closed-shell energy
+/// derived in machine_precision.rs). The trial state is the genuine
+/// Slater-Jastrow product `det(up) det(down) x McMillanJastrow(b)`, so the
+/// run exercises the determinant fast path and the Product composition
+/// under sampling, not just the estimator.
+#[test]
+fn slater_jastrow_respects_fermionic_bound_and_mixes() {
+    let omega = 1.2;
+    let spring = 0.8;
+    let n_electrons = 8;
+    let exact_noninteracting = 18.0 * omega;
+
+    let build = || {
+        Product::new(
+            SlaterDeterminant::harmonic_trap(omega, 2).unwrap(),
+            McMillanJastrow::new(1.0).unwrap(),
+        )
+    };
+    let hamiltonian = ContinuumHamiltonian::new(
+        Some(HarmonicTrap::new(omega, [0.0; DIM]).unwrap()),
+        Some(PairPotential::Harmonic {
+            spring_constant: spring,
+        }),
+    )
+    .unwrap();
+
+    let seeds = [0x1111_u64, 0x2222, 0x3333, 0x4444];
+    let mut means = Vec::with_capacity(seeds.len());
+    let mut stderrs = Vec::with_capacity(seeds.len());
+    let mut worst_acceptance_sane = true;
+    for &seed in &seeds {
+        let (samples, acceptance) = run_vmc_samples(
+            seed,
+            build(),
+            hamiltonian,
+            6,
+            n_electrons,
+            1.5,
+            0.6,
+            200,
+            800,
+        );
+        if !(0.15..0.95).contains(&acceptance) {
+            worst_acceptance_sane = false;
+        }
+        means.push(mean_of(&samples));
+        stderrs.push(batch_means_stderr(&samples, 50));
+    }
+    assert!(worst_acceptance_sane, "acceptance ratio left (0.15, 0.95)");
+
+    // Rigorous bound at 4 sigma: the sampled mean cannot sit below the
+    // non-interacting closed-shell energy.
+    for (mean, stderr) in means.iter().zip(&stderrs) {
+        let z = (exact_noninteracting - mean) / stderr;
+        assert!(
+            z < 4.0,
+            "E_VMC = {mean} +/- {stderr} violates E >= {exact_noninteracting} (z = {z})"
+        );
+    }
+
+    // Multi-seed self-consistency: every pair agrees within 4 sigma.
+    for i in 0..seeds.len() {
+        for j in (i + 1)..seeds.len() {
+            let combined = (stderrs[i].powi(2) + stderrs[j].powi(2)).sqrt();
+            let z = (means[i] - means[j]).abs() / combined;
+            assert!(z < 4.0, "seeds {i}/{j} disagree: z = {z}");
+        }
+    }
 }

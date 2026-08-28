@@ -8,6 +8,7 @@ description = "Quantum Monte Carlo algorithm toolbox"
 
 [dependencies]
 carlo-rs = { path = "../Carlo.rs" }
+nalgebra = { workspace = true }
 rand = "0.10.0"
 rand_xoshiro = "0.8"
 serde_json = { workspace = true }

@@ -97,8 +97,9 @@ pub use local_space::{
     BasisState, LocalHilbertSpace, LocalSpaceError, ParticleStatistics, SpinSpace,
 };
 pub use variational::{
-    local_energy, ContinuumHamiltonian, DeltaLog, GaussianTrap, GradBuffer, HarmonicJastrow,
-    HarmonicTrap, LocalEnergy, McMillanJastrow, PairPotential, ParamGradBuffer, Point, Positions,
-    Product, VariationalError, VmcKernel, VmcStats, Walker, WaveFunction, WaveFunctionParams, DIM,
-    VMC_CHECKPOINT_FORMAT,
+    harmonic_closed_shell_electrons, harmonic_closed_shell_energy, harmonic_trap_orbitals,
+    local_energy, Backflow, ContinuumHamiltonian, DeltaLog, GaussianTrap, GradBuffer, GtoOrbital,
+    HarmonicJastrow, HarmonicTrap, LocalEnergy, McMillanJastrow, PairPotential, ParamGradBuffer,
+    Point, Positions, Product, SlaterDeterminant, VariationalError, VmcKernel, VmcStats, Walker,
+    WaveFunction, WaveFunctionParams, DIM, VMC_CHECKPOINT_FORMAT,
 };

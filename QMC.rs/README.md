@@ -158,7 +158,7 @@ let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
 A complete runnable example is in
 [`examples/impurity_wormhole.rs`](examples/impurity_wormhole.rs).
 
-## Variational family (L0)
+## Variational family (L0 + L1)
 
 Continuum variational QMC lives in the `variational/` module family
 (`qmc_rs::variational`, flat re-exports at the crate root), hosted by the
@@ -185,18 +185,42 @@ What exists (layer L0):
   (`qmc-rs-vmc-v1`) cover walkers + parameters and reject unknown or
   corrupted snapshots loudly.
 
+What exists (layer L1, fermionic family behind the same trait):
+
+- `SlaterDeterminant`: two spin blocks of contracted cartesian Gaussians
+  (exact HO shells 0..=2 via `harmonic_trap(ω, n_shells)` — 2/8/20
+  electrons), dense LU via `nalgebra` (mature-crate policy), hand-derived
+  `Tr(D⁻¹∇D)` gradient rows and Hessian-chain Laplacians.
+- Single-particle fast path: the Sherman–Morrison column identity gives
+  the Metropolis ratio as one O(N) dot product against the cached inverse,
+  with an O(N²) rank-1 inverse update on accept and per-sweep `rebuild`
+  re-anchoring (the K-rebuild policy).
+- `Backflow` (Kwon–Ceperley–Martin quasiparticle displacement,
+  electron-gas shape preset): full Jacobian/Laplacian chains; `λ = 0`
+  reproduces the plain determinant bit-exactly. With backflow active
+  `delta_log` is a full recompute, as the literature prescribes.
+- Slater–Jastrow composes through the unmodified `Product` combinator.
+
 Validated domain (exact statements, see `tests/variational/`):
 `GaussianTrap` at `α = ω/2` gives `E_L ≡ 3Nω/2` to machine precision (zero
 variance) through the full Metropolis pipeline; `HarmonicJastrow` is the
 exact ground state (`E₀ = 3aN(N−1)`) of the pair-harmonic trap
-`k = 4a²N`; `delta_log` matches full recomputes to `1e-14`; all gradients
-agree with central finite differences; same-seed runs are bit-identical;
-the He-4-like confined McMillan droplet respects the rigorous bound
-`E ≥ −ε·N(N−1)/2` with multi-seed z-score consistency.
+`k = 4a²N`; the exact-HO-shell `SlaterDeterminant` is zero-variance at
+every closed shell (E₀ = 3ω/18ω/60ω for 2/8/20 electrons) through the LU
+path and through the kernel; Sherman–Morrison updates match fresh LU
+(ratios and log-dets ≤ 1e-12, entrywise inverse at the conditioning
+floor); `delta_log` matches full recomputes at the scale-aware machine
+floor `16ε(1+|ln|ψ||)`; every gradient (incl. GTO exponents/coefficients
+and the backflow scale) agrees with central finite differences; `λ = 0`
+backflow is bit-exact; same-seed runs are bit-identical; the He-4-like
+confined McMillan droplet respects the rigorous bound
+`E ≥ −ε·N(N−1)/2` and the Slater–Jastrow fermion droplet respects
+`E ≥ E₀(H₀)` under a repulsive pair, both with multi-seed z-score
+consistency.
 
 Not there yet: parameter optimizers (L2 — will adopt `nalgebra`/`argmin`
-rather than hand-rolling), Slater determinants and backflow (L1), DMC
-(L3), reptation (L4), NQS/t-VMC (L5, mature-crate autodiff decision).
+rather than hand-rolling), DMC (L3), reptation (L4), NQS/t-VMC (L5,
+mature-crate autodiff decision).
 Architecture and layer plan: [`research/vmc/DESIGN.md`](../research/vmc/DESIGN.md).
 
 ## Coupling conventions

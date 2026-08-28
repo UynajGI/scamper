@@ -1181,6 +1181,7 @@ version = "0.1.0-dev1"
 dependencies = [
  "approx",
  "carlo-rs",
+ "nalgebra",
  "rand",
  "rand_xoshiro",
  "serde_json",

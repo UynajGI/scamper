@@ -68,6 +68,16 @@ pub enum PairPotential {
         /// Spring constant `k` (finite, > 0).
         spring_constant: f64,
     },
+    /// Soft repulsive Gaussian `A e^{−r²/(2σ²)}` — strictly non-negative
+    /// (`v(r) ≥ 0` everywhere), which makes the L1 Slater–Jastrow
+    /// variational bound `E = ⟨T + V_trap⟩ + ⟨V_pair⟩ ≥ E₀(non-interacting)`
+    /// a theorem for any trial state.
+    Gaussian {
+        /// Repulsion strength `A` (finite, > 0).
+        strength: f64,
+        /// Range `σ` (finite, > 0).
+        width: f64,
+    },
 }
 
 impl PairPotential {
@@ -80,6 +90,10 @@ impl PairPotential {
             }
             Self::Harmonic { spring_constant } => {
                 VariationalError::require_positive("spring_constant", spring_constant)?;
+            }
+            Self::Gaussian { strength, width } => {
+                VariationalError::require_positive("strength", strength)?;
+                VariationalError::require_positive("width", width)?;
             }
         }
         Ok(())
@@ -94,6 +108,7 @@ impl PairPotential {
                 4.0 * epsilon * (x * x - x)
             }
             Self::Harmonic { spring_constant } => 0.5 * spring_constant * r * r,
+            Self::Gaussian { strength, width } => strength * (-r * r / (2.0 * width * width)).exp(),
         }
     }
 
@@ -103,6 +118,7 @@ impl PairPotential {
         match self {
             Self::LennardJones { .. } => "lennard_jones",
             Self::Harmonic { .. } => "harmonic",
+            Self::Gaussian { .. } => "gaussian",
         }
     }
 
@@ -112,6 +128,7 @@ impl PairPotential {
         match *self {
             Self::LennardJones { epsilon, sigma } => vec![epsilon, sigma],
             Self::Harmonic { spring_constant } => vec![spring_constant],
+            Self::Gaussian { strength, width } => vec![strength, width],
         }
     }
 }

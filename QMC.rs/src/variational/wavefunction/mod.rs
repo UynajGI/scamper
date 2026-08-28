@@ -4,8 +4,10 @@
 //! all sampling statistics live in the kernels; all parameter adaptation
 //! lives in the (L2) optimizers. No layer reaches across. L0 ships
 //! translation-invariant pair Jastrow ansätze and the one-body Gaussian
-//! ([`GaussianTrap`] and [`McMillanJastrow`]/[`HarmonicJastrow`]); L1 will
-//! add determinants and backflow behind the same trait.
+//! ([`GaussianTrap`] and [`McMillanJastrow`]/[`HarmonicJastrow`]); L1 adds
+//! two-spin-block [`SlaterDeterminant`]s of contracted cartesian GTOs with
+//! the Kwon–Ceperley–Martin [`Backflow`] transformation, all behind the
+//! same trait.
 //!
 //! # Configuration layout
 //!
@@ -25,14 +27,27 @@
 //! # Hot-path contract
 //!
 //! `delta_log`, `commit_move`, `log_grad` and `log_laplacian` must not
-//! allocate: kernels hand them reused [`GradBuffer`]s and stack [`Point`]s,
-//! and every L0 implementation is a pure function of its arguments plus
-//! owned parameters.
+//! allocate on the **proposal** path: kernels hand them reused
+//! [`GradBuffer`]s and stack [`Point`]s, and every L0 implementation is a
+//! pure function of its arguments plus owned parameters. The L1
+//! [`SlaterDeterminant`](determinant::SlaterDeterminant) keeps its
+//! plain-Slater `delta_log` allocation-free (cached inverse + reused
+//! column buffer); its full determinant evaluations (rebuilds, backflow
+//! moves, measurements) allocate a bounded number of N×N matrices per
+//! call — amortized over O(N³) work and off the proposal path (documented
+//! deviation in `determinant.rs`).
 
+pub mod backflow;
+pub mod determinant;
 pub mod gaussian;
 pub mod jastrow;
 
 use super::error::VariationalError;
+pub use backflow::Backflow;
+pub use determinant::{
+    harmonic_closed_shell_electrons, harmonic_closed_shell_energy, harmonic_trap_orbitals,
+    GtoOrbital, SlaterDeterminant,
+};
 pub use gaussian::GaussianTrap;
 pub use jastrow::{HarmonicJastrow, McMillanJastrow};
 
@@ -122,7 +137,7 @@ impl AsMut<[f64]> for Positions {
 
 /// Read particle `index` from any flat particle-interleaved configuration.
 #[inline]
-pub(crate) fn read_particle(cfg: &impl AsRef<[f64]>, index: usize) -> Point {
+pub(crate) fn read_particle<C: AsRef<[f64]> + ?Sized>(cfg: &C, index: usize) -> Point {
     let base = DIM * index;
     let coords = cfg.as_ref();
     [coords[base], coords[base + 1], coords[base + 2]]
@@ -130,7 +145,7 @@ pub(crate) fn read_particle(cfg: &impl AsRef<[f64]>, index: usize) -> Point {
 
 /// Write particle `index` into any flat particle-interleaved configuration.
 #[inline]
-pub(crate) fn write_particle(cfg: &mut impl AsMut<[f64]>, index: usize, position: Point) {
+pub(crate) fn write_particle<C: AsMut<[f64]> + ?Sized>(cfg: &mut C, index: usize, position: Point) {
     let base = DIM * index;
     cfg.as_mut()[base..base + DIM].copy_from_slice(&position);
 }

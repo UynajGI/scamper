@@ -9,9 +9,9 @@
 //! the whole pipeline (ansatz derivatives, estimator, kernel).
 
 use qmc_rs::{
-    local_energy, ContinuumHamiltonian, GaussianTrap, GradBuffer, HarmonicJastrow, HarmonicTrap,
-    McMillanJastrow, PairPotential, ParamGradBuffer, Positions, Product, WaveFunction,
-    WaveFunctionParams, DIM,
+    local_energy, Backflow, ContinuumHamiltonian, GaussianTrap, GradBuffer, HarmonicJastrow,
+    HarmonicTrap, McMillanJastrow, PairPotential, ParamGradBuffer, Positions, Product,
+    SlaterDeterminant, WaveFunction, WaveFunctionParams, DIM,
 };
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -127,6 +127,116 @@ fn zero_variance_survives_the_metropolis_pipeline() {
     assert!(worst <= 1e-12, "worst sweep deviation {worst}");
 }
 
+#[test]
+fn slater_zero_variance_at_closed_shells() {
+    // 3D isotropic HO shells 0..=k, doubly occupied: shell k carries
+    // (k+1)(k+2) spatial orbitals of single-particle energy (2k+3/2)omega,
+    // so the closed-shell totals are
+    //   shells=1: N=2,  E0 = 2 (3/2) w            = 3 w
+    //   shells=2: N=8,  E0 = 3w + 6 (5/2) w       = 18 w
+    //   shells=3: N=20, E0 = 18w + 12 (7/2) w     = 60 w
+    // `harmonic_trap` builds exactly those HO orbitals (Hermite-contracted
+    // Gaussians), so the two-spin-block determinant is the exact ground
+    // state: E_L is configuration-independent through the full LU inverse
+    // and hand-derived gradient/Laplacian chains.
+    let omega = 1.15;
+    for (n_shells, n_electrons, prefactor) in
+        [(1usize, 2usize, 3.0_f64), (2, 8, 18.0), (3, 20, 60.0)]
+    {
+        let wave_function = SlaterDeterminant::harmonic_trap(omega, n_shells).unwrap();
+        assert_eq!(wave_function.expected_particles(), n_electrons);
+        let hamiltonian =
+            ContinuumHamiltonian::trap_only(HarmonicTrap::new(omega, [0.0; DIM]).unwrap()).unwrap();
+        let exact = prefactor * omega;
+
+        let mut rng = Rng::seed_from_u64(0x51AB);
+        let mut grad = GradBuffer::new(n_electrons);
+        let mut worst = 0.0_f64;
+        for _ in 0..25 {
+            let cfg = random_positions(&mut rng, n_electrons, 1.4);
+            let sample = local_energy(&wave_function, &hamiltonian, &cfg, &mut grad);
+            worst = worst.max((sample.value - exact).abs());
+        }
+        assert!(
+            worst <= 1e-10,
+            "shells={n_shells}: worst |E_L - E0| = {worst}"
+        );
+    }
+}
+
+#[test]
+fn slater_zero_variance_survives_the_metropolis_pipeline() {
+    // The fermionic exactness sampled through the full kernel: the
+    // population-mean local energy after every sweep equals the closed
+    // shell energy to machine precision — exercising the Sherman-Morrison
+    // proposal path, the per-pass rebuild re-anchoring, and the fresh-LU
+    // measurement path together.
+    use qmc_rs::VmcKernel;
+
+    let omega = 1.2;
+    let n_electrons = 8;
+    let wave_function = SlaterDeterminant::harmonic_trap(omega, 2).unwrap();
+    let hamiltonian =
+        ContinuumHamiltonian::trap_only(HarmonicTrap::new(omega, [0.0; DIM]).unwrap()).unwrap();
+    let mut rng = Rng::seed_from_u64(0xAB57);
+    let mut kernel = VmcKernel::new(
+        wave_function,
+        hamiltonian,
+        6,
+        n_electrons,
+        1.5,
+        0.6,
+        &mut rng,
+    )
+    .unwrap();
+
+    let exact = 18.0 * omega;
+    let mut worst = 0.0_f64;
+    for _ in 0..300 {
+        kernel.sweep_with_phase(&mut rng, carlo_rs::RngPhase::Measurement);
+        worst = worst.max((kernel.population_mean_local_energy().value - exact).abs());
+    }
+    assert!(worst <= 1e-10, "worst sweep deviation {worst}");
+}
+
+#[test]
+fn backflow_zero_lambda_matches_plain_slater_bit_exactly() {
+    // lambda = 0 annihilates the quasiparticle displacement exactly, so
+    // the backflow determinant must reproduce the plain determinant
+    // bit-for-bit (not merely within tolerance): the displacement code
+    // path multiplies by lambda, it does not branch around it.
+    let omega = 1.05;
+    let plain = SlaterDeterminant::harmonic_trap(omega, 2).unwrap();
+    let quasiparticle = SlaterDeterminant::harmonic_trap_with_backflow(
+        omega,
+        2,
+        Backflow::new_electron_gas_shape(0.0).unwrap(),
+    )
+    .unwrap();
+    let mut rng = Rng::seed_from_u64(0x0BF0);
+    for _ in 0..50 {
+        let cfg = random_positions(&mut rng, 8, 1.2);
+        assert_eq!(
+            plain.log_psi(&cfg).to_bits(),
+            quasiparticle.log_psi(&cfg).to_bits(),
+            "lambda=0 must be the identity on log|psi|"
+        );
+    }
+    // A non-zero lambda genuinely changes the state (guards the trivial
+    // "backflow ignored entirely" failure mode).
+    let shifted = SlaterDeterminant::harmonic_trap_with_backflow(
+        omega,
+        2,
+        Backflow::new_electron_gas_shape(0.4).unwrap(),
+    )
+    .unwrap();
+    let cfg = random_positions(&mut rng, 8, 1.2);
+    assert_ne!(
+        plain.log_psi(&cfg).to_bits(),
+        shifted.log_psi(&cfg).to_bits()
+    );
+}
+
 /// Smallest pairwise distance in a configuration.
 fn min_pair_distance(cfg: &Positions) -> f64 {
     let n = cfg.n_particles();
@@ -141,19 +251,23 @@ fn min_pair_distance(cfg: &Positions) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
-/// Fast-path honesty invariant for one ansatz: the incremental O(N)
-/// single-particle log-ratio must equal the difference of full O(N^2)
-/// recomputes. Configurations and trial positions are resampled to keep
-/// every pair distance >= 0.8 so that |ln|psi|| = O(10) and the <= 1e-14
-/// assertion is exactly the eps * |ln|psi|| machine-precision floor of the
-/// two summation orders (the identity itself is exact in exact arithmetic).
+/// Fast-path honesty invariant for one ansatz: the incremental single-
+/// particle log-ratio must equal the difference of full recomputes.
+/// Configurations and trial positions are resampled to keep every pair
+/// distance >= 0.8. The assertion is the scale-aware machine-precision
+/// floor `16 eps (1 + |ln|psi||)`: the identity is exact in exact
+/// arithmetic, and the two evaluation orders (incremental chain vs fresh
+/// recompute) each carry O(eps |ln|psi||) rounding — with |ln|psi|| up to
+/// O(30) for 8x8 determinant blocks, the floor is ~1e-13, while any real
+/// fast-path bug misses it by orders of magnitude.
 fn check_delta_log<W: WaveFunction<Config = Positions>>(
     label: &str,
     wave_function: &W,
+    n_particles: usize,
     rng: &mut Rng,
 ) {
-    let n_particles = 4;
     let mut worst = 0.0_f64;
+    let mut scale = 1.0_f64;
     for _ in 0..40 {
         let mut cfg;
         loop {
@@ -178,14 +292,16 @@ fn check_delta_log<W: WaveFunction<Config = Positions>>(
                 }
             }
             let incremental = wave_function.delta_log(&cfg, particle, &new_pos).log_ratio;
-            let full = wave_function.log_psi(&moved(&cfg, particle, new_pos))
-                - wave_function.log_psi(&cfg);
-            worst = worst.max((incremental - full).abs());
+            let log_old = wave_function.log_psi(&cfg);
+            let log_new = wave_function.log_psi(&moved(&cfg, particle, new_pos));
+            scale = scale.max(log_old.abs()).max(log_new.abs());
+            worst = worst.max((incremental - (log_new - log_old)).abs());
         }
     }
+    let floor = 16.0 * f64::EPSILON * (1.0 + scale);
     assert!(
-        worst <= 1e-14,
-        "{label}: delta_log vs full recompute worst error {worst}"
+        worst <= floor,
+        "{label}: delta_log vs full recompute worst error {worst} exceeds floor {floor}"
     );
 }
 
@@ -195,16 +311,19 @@ fn delta_log_matches_full_recompute_for_all_ansatze() {
     check_delta_log(
         "GaussianTrap",
         &GaussianTrap::new(0.6, [0.1, -0.1, 0.2]).unwrap(),
+        4,
         &mut rng,
     );
     check_delta_log(
         "McMillanJastrow",
         &McMillanJastrow::new(1.0).unwrap(),
+        4,
         &mut rng,
     );
     check_delta_log(
         "HarmonicJastrow",
         &HarmonicJastrow::new(0.4).unwrap(),
+        4,
         &mut rng,
     );
     check_delta_log(
@@ -213,6 +332,26 @@ fn delta_log_matches_full_recompute_for_all_ansatze() {
             GaussianTrap::new(0.5, [0.1, -0.1, 0.2]).unwrap(),
             McMillanJastrow::new(1.0).unwrap(),
         ),
+        4,
+        &mut rng,
+    );
+    // L1: the plain-Slater fast path (Sherman-Morrison column identity
+    // against the cached inverse) and the backflow full-recompute path.
+    check_delta_log(
+        "SlaterDeterminant",
+        &SlaterDeterminant::harmonic_trap(1.1, 2).unwrap(),
+        8,
+        &mut rng,
+    );
+    check_delta_log(
+        "SlaterDeterminant+backflow",
+        &SlaterDeterminant::harmonic_trap_with_backflow(
+            1.1,
+            2,
+            Backflow::new_electron_gas_shape(0.3).unwrap(),
+        )
+        .unwrap(),
+        8,
         &mut rng,
     );
 }
@@ -297,6 +436,23 @@ fn log_grad_and_laplacian_vs_central_finite_differences() {
         ),
         &random_positions(&mut rng, 5, 1.1),
     );
+    // L1: the determinant Tr(D^-1 grad phi) rows and the backflow
+    // Jacobian chains (the heaviest hand-derived adjoints in the crate).
+    check_derivatives(
+        "SlaterDeterminant",
+        &SlaterDeterminant::harmonic_trap(1.1, 2).unwrap(),
+        &random_positions(&mut rng, 8, 1.1),
+    );
+    check_derivatives(
+        "SlaterDeterminant+backflow",
+        &SlaterDeterminant::harmonic_trap_with_backflow(
+            1.1,
+            2,
+            Backflow::new_electron_gas_shape(0.3).unwrap(),
+        )
+        .unwrap(),
+        &random_positions(&mut rng, 8, 1.1),
+    );
 }
 
 /// Parameter gradient against central parameter differences for one ansatz.
@@ -347,5 +503,22 @@ fn log_grad_params_vs_finite_differences() {
         "Product",
         &Product::new(gaussian, McMillanJastrow::new(1.0).unwrap()),
         &random_positions(&mut rng, 5, 1.2),
+    );
+    // L1: every GTO exponent/coefficient in both spin blocks, plus the
+    // backflow scale lambda, against central parameter differences.
+    check_param_gradient(
+        "SlaterDeterminant",
+        &SlaterDeterminant::harmonic_trap(1.1, 2).unwrap(),
+        &random_positions(&mut rng, 8, 1.2),
+    );
+    check_param_gradient(
+        "SlaterDeterminant+backflow",
+        &SlaterDeterminant::harmonic_trap_with_backflow(
+            1.1,
+            2,
+            Backflow::new_electron_gas_shape(0.3).unwrap(),
+        )
+        .unwrap(),
+        &random_positions(&mut rng, 8, 1.2),
     );
 }

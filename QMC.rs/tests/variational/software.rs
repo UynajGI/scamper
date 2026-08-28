@@ -5,8 +5,8 @@
 use carlo_rs::{Context, MonteCarlo, Run, RunConfig, RunId, TaskId};
 use qmc_rs::{
     ContinuumHamiltonian, GaussianTrap, HarmonicJastrow, HarmonicTrap, McMillanJastrow,
-    PairPotential, Positions, VariationalError, VmcKernel, WaveFunction, WaveFunctionParams, DIM,
-    VMC_CHECKPOINT_FORMAT,
+    PairPotential, Positions, SlaterDeterminant, VariationalError, VmcKernel, WaveFunction,
+    WaveFunctionParams, DIM, VMC_CHECKPOINT_FORMAT,
 };
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -256,4 +256,66 @@ fn checkpoint_round_trip_replay_and_corruption_rejection() {
     bad = snapshot.clone();
     bad["sweeps"] = json!("many");
     reject("non-u64 counter", bad);
+}
+
+/// L1: checkpoint round-trip with a `SlaterDeterminant` kernel — the ansatz
+/// state is fully described by its variational parameters, so a restored
+/// kernel must replay bit-identically — plus the particle-count gate
+/// (criterion G): a Slater ansatz fixes `n_particles = n_up + n_down`, and
+/// the kernel constructor must reject any other count loudly (its
+/// non-finite initial `log|psi|` check) instead of sampling a determinant
+/// of the wrong shape.
+#[test]
+fn slater_kernel_checkpoint_round_trip_and_mismatch_rejection() {
+    let omega = 1.3;
+    let hamiltonian =
+        ContinuumHamiltonian::trap_only(HarmonicTrap::new(omega, [0.0; DIM]).unwrap()).unwrap();
+    let build_kernel = |n_particles: usize, seed: u64| {
+        let mut rng = Rng::seed_from_u64(seed);
+        VmcKernel::new(
+            SlaterDeterminant::harmonic_trap(omega, 2).unwrap(),
+            hamiltonian,
+            4,
+            n_particles,
+            1.5,
+            0.6,
+            &mut rng,
+        )
+    };
+
+    let mut kernel = build_kernel(8, 0x57A7).unwrap();
+    let mut rng = Rng::seed_from_u64(0x57A7);
+    for _ in 0..50 {
+        kernel.sweep_with_phase(&mut rng, carlo_rs::RngPhase::Measurement);
+    }
+    let snapshot = kernel.save_snapshot();
+    assert_eq!(snapshot["format"], VMC_CHECKPOINT_FORMAT);
+
+    let mut restored = build_kernel(8, 0x9999).unwrap();
+    restored.load_snapshot(&snapshot).unwrap();
+    let mut left = Rng::seed_from_u64(0x0DD);
+    let mut right = Rng::seed_from_u64(0x0DD);
+    for _ in 0..50 {
+        kernel.sweep_with_phase(&mut left, carlo_rs::RngPhase::Measurement);
+        restored.sweep_with_phase(&mut right, carlo_rs::RngPhase::Measurement);
+    }
+    for (a, b) in restored.walkers().iter().zip(kernel.walkers()) {
+        assert_eq!(a.configuration().as_slice(), b.configuration().as_slice());
+        assert_eq!(a.log_psi().to_bits(), b.log_psi().to_bits());
+    }
+    assert_eq!(restored.stats(), kernel.stats());
+
+    // Wrong particle count: loud rejection, never a wrong-shape walk.
+    assert!(
+        build_kernel(7, 1).is_err(),
+        "particle-count mismatch must be rejected at construction"
+    );
+    // Corrupted snapshot on the Slater kernel too (same loud path).
+    let mut bad = snapshot.clone();
+    bad["format"] = json!("qmc-rs-vmc-v0");
+    let mut target = build_kernel(8, 0x1234).unwrap();
+    assert!(matches!(
+        target.load_snapshot(&bad),
+        Err(VariationalError::CheckpointCorrupted { .. })
+    ));
 }
