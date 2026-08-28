@@ -504,7 +504,7 @@ impl<const D: usize> Measurable for ONModel<D> {
             return 0.0;
         }
         let mut sum = vec![0.0; D];
-        for spin in spins.chunks_exact(D) {
+        for spin in spins.as_chunks::<D>().0 {
             for (component, value) in sum.iter_mut().zip(spin) {
                 *component += *value;
             }
