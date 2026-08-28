@@ -33,14 +33,18 @@
 //!
 //! L2 entry points: [`StochasticReconfiguration`] (natural gradient with a
 //! trust-region shift), [`LinearMethod`] (Umrigar–Nightingale generalized
-//! eigenproblem on the linearized basis). Correlated-sampling variance
-//! minimization on `argmin` scaffolding is the remaining entry point.
+//! eigenproblem on the linearized basis), and [`VarianceMinimization`]
+//! (correlated-sampling variance minimization on `argmin`'s Nelder–Mead).
 
 pub mod linear_method;
 pub mod sr;
+pub mod variance;
 
 pub use linear_method::LinearMethod;
 pub use sr::StochasticReconfiguration;
+pub use variance::{
+    ReferenceSample, VarianceMinimization, VarianceMinimizationResult, VarianceObjective,
+};
 
 use nalgebra::{DMatrix, DVector};
 

@@ -7,6 +7,11 @@ license = "Apache-2.0"
 description = "Quantum Monte Carlo algorithm toolbox"
 
 [dependencies]
+argmin = { version = "0.11", default-features = false }
+argmin-math = { version = "0.5", default-features = false, features = [
+    "primitives",
+    "vec",
+] }
 carlo-rs = { path = "../Carlo.rs" }
 nalgebra = { workspace = true }
 rand = "0.10.0"

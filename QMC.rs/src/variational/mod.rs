@@ -31,7 +31,10 @@ pub use error::VariationalError;
 pub use estimators::{local_energy, LocalEnergy};
 pub use hamiltonian::{ContinuumHamiltonian, HarmonicTrap, PairPotential};
 pub use kernel::{VmcKernel, VmcStats, Walker, VMC_CHECKPOINT_FORMAT};
-pub use optimizer::{BlockStats, LinearMethod, Optimizer, StochasticReconfiguration};
+pub use optimizer::{
+    BlockStats, LinearMethod, Optimizer, ReferenceSample, StochasticReconfiguration,
+    VarianceMinimization, VarianceMinimizationResult, VarianceObjective,
+};
 pub use wavefunction::{
     harmonic_closed_shell_electrons, harmonic_closed_shell_energy, harmonic_trap_orbitals,
     Backflow, DeltaLog, GaussianTrap, GradBuffer, GtoOrbital, HarmonicJastrow, McMillanJastrow,

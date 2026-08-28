@@ -243,10 +243,23 @@ What exists (layer L2, parameter optimizers as an outer loop):
   and input rejection; SR improves the two-parameter
   Gaussian×McMillan LJ droplet beyond noise with physical parameters
   throughout.
+- `VarianceMinimization` (third L2 entry point): Umrigar-style
+  correlated-sampling variance minimization. Reference configurations
+  carry their sampling-measure density (`ReferenceSample`), the
+  reweighted two-pass local-energy variance is the objective, and the
+  search is `argmin`'s Nelder–Mead simplex (mature-crate policy; the
+  objective's parameter gradient would need third-order chains the
+  `WaveFunction` trait deliberately does not carry, hence derivative-free).
+  Out-of-domain candidates cost a finite penalty the simplex walks
+  around. Validated: the objective reproduces the closed form
+  `Var(α) = c(α)²·3/(8α²)` on uniform-grid samples (the importance base
+  weight makes the reweighting exact quadrature at any candidate) and
+  vanishes at the exact state; Nelder–Mead converges to `α* = ω/2`
+  deterministically and, on kernel-sampled configurations from a poor
+  start, reduces the variance by more than an order of magnitude.
 
-Not there yet: correlated-sampling variance minimization on `argmin`
-(the third L2 entry point), DMC (L3), reptation (L4), NQS/t-VMC (L5,
-mature-crate autodiff decision).
+Not there yet: DMC (L3), reptation (L4), NQS/t-VMC (L5, mature-crate
+autodiff decision).
 Architecture and layer plan: [`research/vmc/DESIGN.md`](../research/vmc/DESIGN.md).
 
 ## Coupling conventions

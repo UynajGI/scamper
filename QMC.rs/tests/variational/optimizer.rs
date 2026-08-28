@@ -25,8 +25,8 @@
 
 use qmc_rs::{
     BlockStats, ContinuumHamiltonian, GaussianTrap, HarmonicTrap, LinearMethod, McMillanJastrow,
-    Optimizer, PairPotential, Product, StochasticReconfiguration, VmcKernel, WaveFunctionParams,
-    DIM,
+    Optimizer, PairPotential, Positions, Product, StochasticReconfiguration, VmcKernel,
+    WaveFunctionParams, DIM,
 };
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -392,5 +392,161 @@ fn sr_improves_the_two_parameter_droplet() {
     assert!(
         params.iter().all(|p| p.is_finite()),
         "parameters left the physical domain: {params:?}"
+    );
+}
+
+// ---- L2-b: correlated-sampling variance minimization (argmin) ---------
+
+use qmc_rs::{ReferenceSample, VarianceMinimization, VarianceObjective};
+
+/// Uniform-grid reference samples for the one-particle Gaussian toy at
+/// reference parameter `alpha0`: with the correlated reweighting
+/// `w = exp(2(ln psi_alpha - ln psi_alpha0))` the uniform measure times
+/// the weight is exactly `exp(-2 alpha r^2)` at any candidate alpha, so
+/// the objective is deterministic quadrature of the variance.
+fn grid_samples(alpha0: f64, points: usize, half: f64) -> Vec<ReferenceSample> {
+    let reference = GaussianTrap::new(alpha0, [0.0; DIM]).unwrap();
+    let step = 2.0 * half / points as f64;
+    let mut samples = Vec::with_capacity(points * points * points);
+    for ix in 0..points {
+        let x = -half + (ix as f64 + 0.5) * step;
+        for iy in 0..points {
+            let y = -half + (iy as f64 + 0.5) * step;
+            for iz in 0..points {
+                let z = -half + (iz as f64 + 0.5) * step;
+                let cfg = Positions::from_flat(vec![x, y, z]).unwrap();
+                samples.push(ReferenceSample::new(&reference, cfg));
+            }
+        }
+    }
+    samples
+}
+
+#[test]
+fn variance_objective_matches_closed_form_and_vanishes_at_exact_state() {
+    // Var(alpha) = c(alpha)^2 Var_{psi_alpha}(r^2)
+    //            = c(alpha)^2 * 3/(8 alpha^2),  c = omega^2/2 - 2 alpha^2,
+    // which is zero exactly at alpha* = omega/2 (zero variance).
+    let omega = 1.3;
+    let alpha0 = 0.35;
+    let objective = VarianceObjective::new(
+        GaussianTrap::new(alpha0, [0.0; DIM]).unwrap(),
+        ContinuumHamiltonian::trap_only(HarmonicTrap::new(omega, [0.0; DIM]).unwrap()).unwrap(),
+        grid_samples(alpha0, 40, 5.5),
+    )
+    .unwrap();
+    for alpha in [0.35_f64, 0.5, 0.8] {
+        let curvature = 0.5 * omega * omega - 2.0 * alpha * alpha;
+        let expected = curvature * curvature * 3.0 / (8.0 * alpha * alpha);
+        let sampled = objective.variance_at(&[alpha]);
+        assert!(
+            (sampled - expected).abs() <= 1e-3 * expected.max(1e-12),
+            "Var({alpha}) = {sampled} vs closed form {expected}"
+        );
+    }
+    // Two-pass estimator: the exact-state variance sits at the clean
+    // quadrature floor, not at a cancellation floor.
+    let exact = objective.variance_at(&[omega / 2.0]);
+    assert!(exact <= 1e-9, "exact-state variance {exact}");
+}
+
+#[test]
+fn variance_minimization_converges_deterministically() {
+    let omega = 1.3;
+    let alpha0 = 0.35;
+    let minimizer = VarianceMinimization::new(200, 1e-10, 0.3).unwrap();
+    let result = minimizer
+        .minimize(
+            GaussianTrap::new(alpha0, [0.0; DIM]).unwrap(),
+            ContinuumHamiltonian::trap_only(HarmonicTrap::new(omega, [0.0; DIM]).unwrap()).unwrap(),
+            grid_samples(alpha0, 40, 5.5),
+        )
+        .unwrap();
+    assert!(
+        (result.params[0] - omega / 2.0).abs() <= 1e-3,
+        "alpha = {} vs omega/2 = {}",
+        result.params[0],
+        omega / 2.0
+    );
+    assert!(result.variance <= 1e-8, "variance {}", result.variance);
+    assert!(result.iterations < 200);
+}
+
+#[test]
+fn out_of_domain_parameters_cost_a_penalty_not_a_panic() {
+    // A negative Gaussian width leaves the ansatz's domain; the objective
+    // must return the finite penalty so the simplex can walk around the
+    // infeasible vertex (criterion G spirit on the optimizer surface).
+    let omega = 1.3;
+    let objective = VarianceObjective::new(
+        GaussianTrap::new(0.35, [0.0; DIM]).unwrap(),
+        ContinuumHamiltonian::trap_only(HarmonicTrap::new(omega, [0.0; DIM]).unwrap()).unwrap(),
+        grid_samples(0.35, 8, 2.0),
+    )
+    .unwrap();
+    assert_eq!(objective.variance_at(&[-0.5]), 1e6);
+    assert!(objective.variance_at(&[f64::NAN]).is_finite());
+}
+
+#[test]
+fn variance_minimization_on_kernel_sampled_configurations() {
+    // Stochastic end-to-end: configurations sampled by the Metropolis
+    // kernel at a deliberately poor alpha0; the correlated-sampling
+    // reweighting drives the variance down by more than an order of
+    // magnitude and lands alpha near the exact omega/2.
+    let omega = 1.1;
+    let alpha0 = 0.3 * (omega / 2.0);
+    let mut rng = Rng::seed_from_u64(0x7A17);
+    let mut kernel = VmcKernel::new(
+        GaussianTrap::new(alpha0, [0.0; DIM]).unwrap(),
+        ContinuumHamiltonian::trap_only(HarmonicTrap::new(omega, [0.0; DIM]).unwrap()).unwrap(),
+        8,
+        5,
+        1.5,
+        0.8,
+        &mut rng,
+    )
+    .unwrap();
+    for _ in 0..80 {
+        kernel.sweep_with_phase(&mut rng, carlo_rs::RngPhase::Thermalization);
+    }
+    let reference = GaussianTrap::new(alpha0, [0.0; DIM]).unwrap();
+    let mut samples = Vec::new();
+    for _ in 0..150 {
+        kernel.sweep_with_phase(&mut rng, carlo_rs::RngPhase::Measurement);
+        for walker in kernel.walkers() {
+            samples.push(ReferenceSample::new(
+                &reference,
+                walker.configuration().clone(),
+            ));
+        }
+    }
+
+    let objective = VarianceObjective::new(
+        reference,
+        ContinuumHamiltonian::trap_only(HarmonicTrap::new(omega, [0.0; DIM]).unwrap()).unwrap(),
+        samples.clone(),
+    )
+    .unwrap();
+    let variance_before = objective.variance_at(&[alpha0]);
+
+    let minimizer = VarianceMinimization::new(150, 1e-8, 0.3).unwrap();
+    let result = minimizer
+        .minimize(
+            GaussianTrap::new(alpha0, [0.0; DIM]).unwrap(),
+            ContinuumHamiltonian::trap_only(HarmonicTrap::new(omega, [0.0; DIM]).unwrap()).unwrap(),
+            samples,
+        )
+        .unwrap();
+    assert!(
+        variance_before / result.variance.max(1e-12) >= 10.0,
+        "variance before {variance_before}, after {}",
+        result.variance
+    );
+    assert!(
+        (result.params[0] - omega / 2.0).abs() <= 0.1 * (omega / 2.0),
+        "alpha = {} vs omega/2 = {}",
+        result.params[0],
+        omega / 2.0
     );
 }
