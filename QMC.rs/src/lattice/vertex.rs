@@ -32,7 +32,11 @@ impl VertexKind {
                 "vertex weight must be finite and positive, got {weight}"
             )));
         }
-        let diagonal = legs.chunks_exact(2).all(|pair| pair[0] == pair[1]);
+        let diagonal = legs
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .all(|pair| pair[0] == pair[1]);
         Ok(Self {
             name: name.into(),
             legs: legs.into_boxed_slice(),
