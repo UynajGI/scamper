@@ -7,7 +7,7 @@ license = "Apache-2.0"
 description = "Monte Carlo simulation stack: scheduling framework plus classical, quantum and statistical kernels"
 repository = "https://github.com/UynajGI/scamper"
 readme = "../README.md"
-keywords = ["monte-carlo", "simulation", "physics", "quantum", "statistical-mechanics"]
+keywords = ["monte-carlo", "simulation", "physics", "quantum", "sampling"]
 categories = ["science", "simulation"]
 
 [dependencies]
