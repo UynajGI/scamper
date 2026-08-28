@@ -63,6 +63,8 @@ mod wormhole_interacting_ed;
 
 // ── Variational — continuum VMC (L0) ─────────────────────────────────────
 
+#[path = "variational/dmc.rs"]
+mod variational_dmc;
 #[path = "variational/machine_precision.rs"]
 mod variational_machine_precision;
 #[path = "variational/optimizer.rs"]

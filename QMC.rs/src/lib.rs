@@ -98,10 +98,10 @@ pub use local_space::{
 };
 pub use variational::{
     harmonic_closed_shell_electrons, harmonic_closed_shell_energy, harmonic_trap_orbitals,
-    local_energy, Backflow, BlockStats, ContinuumHamiltonian, DeltaLog, GaussianTrap, GradBuffer,
-    GtoOrbital, HarmonicJastrow, HarmonicTrap, LinearMethod, LocalEnergy, McMillanJastrow,
-    Optimizer, PairPotential, ParamGradBuffer, Point, Positions, Product, ReferenceSample,
-    SlaterDeterminant, StochasticReconfiguration, VarianceMinimization, VarianceMinimizationResult,
-    VarianceObjective, VariationalError, VmcKernel, VmcStats, Walker, WaveFunction,
-    WaveFunctionParams, DIM, VMC_CHECKPOINT_FORMAT,
+    local_energy, Backflow, BlockStats, ContinuumHamiltonian, DeltaLog, DmcKernel, DmcStats,
+    GaussianTrap, GradBuffer, GtoOrbital, HarmonicJastrow, HarmonicTrap, LinearMethod, LocalEnergy,
+    McMillanJastrow, Optimizer, PairPotential, ParamGradBuffer, Point, Positions, Product,
+    ReferenceSample, SlaterDeterminant, StochasticReconfiguration, VarianceMinimization,
+    VarianceMinimizationResult, VarianceObjective, VariationalError, VmcKernel, VmcStats, Walker,
+    WaveFunction, WaveFunctionParams, DIM, DMC_CHECKPOINT_FORMAT, VMC_CHECKPOINT_FORMAT,
 };

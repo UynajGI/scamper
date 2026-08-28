@@ -158,7 +158,7 @@ let results = Scheduler::new(RayonBackend::new(1), RunConfig::default())
 A complete runnable example is in
 [`examples/impurity_wormhole.rs`](examples/impurity_wormhole.rs).
 
-## Variational family (L0 + L1)
+## Variational family (L0–L3)
 
 Continuum variational QMC lives in the `variational/` module family
 (`qmc_rs::variational`, flat re-exports at the crate root), hosted by the
@@ -258,8 +258,37 @@ What exists (layer L2, parameter optimizers as an outer loop):
   deterministically and, on kernel-sampled configurations from a poor
   start, reduces the variance by more than an order of magnitude.
 
-Not there yet: DMC (L3), reptation (L4), NQS/t-VMC (L5, mature-crate
-autodiff decision).
+What exists (layer L3, diffusion Monte Carlo):
+
+- `DmcKernel`: the walker population as solver-internal state (one
+  `step()` = one imaginary-time step over the whole population).
+  Drift-diffusion moves `R' = R + τb + √τ·χ` with drift `b = ∇ln|ψ_T|`,
+  Metropolis-accepted against the exact Green-function ratio
+  `ln A = 2Δln|ψ| + (|D_fwd|² − |D_bwd|²)/2τ` (backward displacement
+  `R−R'−τb(R')` — sign load-bearing, see VALIDATION.md); branching
+  `⌊g+u⌋` with `g = exp(−τ(E_L−E_T))` and a population-safety cap;
+  classic `E_T = E_ref − ln(N/N_target)/τ` feedback on an EMA reference
+  energy; forward-walking pure estimators through per-walker lineage
+  rings and a pending-measurement ring (a measurement is credited once
+  per surviving descendant line — descendant weighting by construction).
+  Versioned checkpoints (`qmc-rs-dmc-v1`) serialize the full state
+  including lineage for bit-identical replay.
+- Validated: DMC converges to the **derived** exact ground state
+  `E₀ = (3/2)(ω + √(ω²+2k))` of the two-particle trap-plus-repulsive-pair
+  system from a deliberately approximate nodeless trial state (CM/relative
+  separation, fully derived in the test), strictly closer than VMC at the
+  same ψ_T; for the exact ψ_T the entire machinery reduces to an identity
+  (mixed = pure = E₀ at 1e-10); the population-control bias shrinks from
+  N_w = 8 to 64 at equal walker-step budgets; same-seed bit-identical
+  runs, checkpoint round-trip/replay, and loud rejection of corrupt or
+  mismatched snapshots and invalid constructor inputs.
+- Validated domain: **nodeless (bosonic) trial states**. The
+  fixed-node constraint for fermionic determinants — sign tracking plus
+  node-crossing rejection, which needs a signed-amplitude extension of
+  the `WaveFunction` trait — is the named follow-up.
+
+Not there yet: fixed-node enforcement, reptation (L4), NQS/t-VMC (L5,
+mature-crate autodiff decision).
 Architecture and layer plan: [`research/vmc/DESIGN.md`](../research/vmc/DESIGN.md).
 
 ## Coupling conventions

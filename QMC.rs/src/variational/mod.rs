@@ -30,7 +30,9 @@ pub mod wavefunction;
 pub use error::VariationalError;
 pub use estimators::{local_energy, LocalEnergy};
 pub use hamiltonian::{ContinuumHamiltonian, HarmonicTrap, PairPotential};
-pub use kernel::{VmcKernel, VmcStats, Walker, VMC_CHECKPOINT_FORMAT};
+pub use kernel::{
+    DmcKernel, DmcStats, VmcKernel, VmcStats, Walker, DMC_CHECKPOINT_FORMAT, VMC_CHECKPOINT_FORMAT,
+};
 pub use optimizer::{
     BlockStats, LinearMethod, Optimizer, ReferenceSample, StochasticReconfiguration,
     VarianceMinimization, VarianceMinimizationResult, VarianceObjective,
