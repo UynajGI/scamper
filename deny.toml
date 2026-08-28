@@ -18,7 +18,15 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 
 # Per-advisory ignore list. Add a RUSTSEC id here ONLY with a comment
 # explaining why, and a reminder date to re-evaluate.
-ignore = []
+ignore = [
+    # Unmaintained transitive dependencies with no safe upgrade path and no
+    # security impact ("unmaintained" is informational). Re-evaluate when the
+    # parents that pull them in (argmin -> instant/paste, mpi -> custom_derive)
+    # publish updates that drop them.
+    "RUSTSEC-2025-0058", # custom_derive unmaintained
+    "RUSTSEC-2024-0384", # instant unmaintained
+    "RUSTSEC-2024-0436", # paste unmaintained
+]
 
 # ──────────────────────────────────────────────────────────────────────────
 # licenses — keep the workspace Apache-2.0 compatible
