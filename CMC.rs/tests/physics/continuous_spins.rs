@@ -29,7 +29,7 @@ fn over_relaxation_preserves_energy_and_unit_norm_to_roundoff() {
     let lattice = build_chain(9, true);
     let model = ONModel::<3>::new(0.91);
     let mut system = System::new(lattice, 3, 0.0, 0.7);
-    for (site, spin) in system.spins.chunks_exact_mut(3).enumerate() {
+    for (site, spin) in system.spins.as_chunks_mut::<3>().0.iter_mut().enumerate() {
         let theta = 0.37 * site as f64;
         let z = 0.2 * ((site * 3 + 1) as f64).sin();
         let radial = (1.0 - z * z).sqrt();
@@ -44,7 +44,7 @@ fn over_relaxation_preserves_energy_and_unit_norm_to_roundoff() {
     }
     assert_close(system.energy, energy, 2e-10);
     assert_close(system.energy_error(&model), 0.0, 2e-10);
-    for spin in system.spins.chunks_exact(3) {
+    for spin in system.spins.as_chunks::<3>().0 {
         assert_close(spin.iter().map(|x| x * x).sum(), 1.0, 3e-12);
     }
 }
@@ -77,7 +77,7 @@ fn continuous_heat_bath_infinite_t_is_uniform_on_sphere() {
 
     for _ in 0..n_samples {
         kernel.sweep_with_phase(&mut system, &model, &mut rng, SimulationPhase::Measurement);
-        for spin in system.spins.chunks_exact(3) {
+        for spin in system.spins.as_chunks::<3>().0 {
             sx_sum += spin[0];
             sy_sum += spin[1];
             sz_sum += spin[2];

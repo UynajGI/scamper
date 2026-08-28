@@ -36,7 +36,7 @@ mod tests {
     fn wolff_batch_cache_matches_exact_energy() {
         let model = XYModel::new(1.0);
         let mut system = System::new(build_chain(8, true), 2, 0.0, 1.0);
-        for spin in system.spins.chunks_exact_mut(2) {
+        for spin in system.spins.as_chunks_mut::<2>().0 {
             spin[0] = 1.0;
         }
         system.recompute_energy(&model);

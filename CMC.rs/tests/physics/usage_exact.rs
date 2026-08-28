@@ -192,7 +192,7 @@ fn xy_over_relaxation_preserves_energy_exactly() {
     assert_close(system.energy_error(&model), 0.0, 1e-10);
 
     // All spins must remain unit vectors
-    for spin in system.spins.chunks_exact(2) {
+    for spin in system.spins.as_chunks::<2>().0 {
         let norm: f64 = spin.iter().map(|x| x * x).sum::<f64>().sqrt();
         assert_close(norm, 1.0, 1e-10);
     }
@@ -250,7 +250,7 @@ fn continuous_heat_bath_heisenberg_energy_is_physical() {
     assert_close(system.energy_error(&model), 0.0, 1e-10);
 
     // All spins must be unit vectors
-    for spin in system.spins.chunks_exact(3) {
+    for spin in system.spins.as_chunks::<3>().0 {
         let norm: f64 = spin.iter().map(|x| x * x).sum::<f64>().sqrt();
         assert_close(norm, 1.0, 1e-10);
     }
