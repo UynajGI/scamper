@@ -65,6 +65,8 @@ mod wormhole_interacting_ed;
 
 #[path = "variational/machine_precision.rs"]
 mod variational_machine_precision;
+#[path = "variational/optimizer.rs"]
+mod variational_optimizer;
 #[path = "variational/software.rs"]
 mod variational_software;
 #[path = "variational/statistical.rs"]

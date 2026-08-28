@@ -38,7 +38,8 @@ use serde_json::{json, Value as Json};
 use super::super::error::VariationalError;
 use super::super::estimators::{local_energy, LocalEnergy};
 use super::super::hamiltonian::ContinuumHamiltonian;
-use super::super::wavefunction::{GradBuffer, Positions, WaveFunctionParams, DIM};
+use super::super::optimizer::BlockStats;
+use super::super::wavefunction::{GradBuffer, ParamGradBuffer, Positions, WaveFunctionParams, DIM};
 
 /// Checkpoint format tag for VMC population snapshots.
 ///
@@ -103,6 +104,7 @@ pub struct VmcKernel<W: WaveFunctionParams<Config = Positions>> {
     walkers: Vec<Walker>,
     proposal_width: f64,
     grad_scratch: GradBuffer,
+    param_scratch: ParamGradBuffer,
     stats: VmcStats,
     reported_attempts: u64,
     reported_accepts: u64,
@@ -164,6 +166,7 @@ impl<W: WaveFunctionParams<Config = Positions>> VmcKernel<W> {
             walkers.push(Walker { log_psi, cfg });
         }
         Ok(Self {
+            param_scratch: ParamGradBuffer::new(wave_function.n_params()),
             wave_function,
             hamiltonian,
             walkers,
@@ -312,6 +315,71 @@ impl<W: WaveFunctionParams<Config = Positions>> VmcKernel<W> {
                 grad_scratch,
             ));
         }
+    }
+
+    /// Fold the current walker population's `(E_L, O)` pairs into a block
+    /// statistics accumulator for the L2 outer optimization loop (one call
+    /// per measurement sweep; the driver calls `propose` between blocks).
+    /// Reuses the internal scratch buffers; allocates nothing.
+    pub fn collect_block_stats(&mut self, stats: &mut BlockStats) {
+        let Self {
+            wave_function,
+            hamiltonian,
+            walkers,
+            grad_scratch,
+            param_scratch,
+            ..
+        } = self;
+        for walker in walkers.iter() {
+            let e = local_energy(wave_function, hamiltonian, &walker.cfg, grad_scratch).value;
+            wave_function.log_grad_params(&walker.cfg, param_scratch);
+            stats.push(e, param_scratch.as_slice());
+        }
+    }
+
+    /// Apply a parameter update to the trial wave function and re-anchor
+    /// every walker's cached amplitude against a fresh evaluation — the
+    /// L2 driver's apply step. The walker configurations are kept (common
+    /// random numbers across proposal comparisons). On any failure
+    /// (parameter-count mismatch, ansatz rejection, or a walker whose
+    /// re-anchored amplitude is non-finite) the previous parameters are
+    /// restored before returning the error — never a half-updated state.
+    pub fn update_wave_function_params(&mut self, delta: &[f64]) -> Result<(), VariationalError> {
+        if delta.len() != self.wave_function.n_params() {
+            return Err(VariationalError::invalid(
+                "delta",
+                format!(
+                    "expected {} parameter updates, got {}",
+                    self.wave_function.n_params(),
+                    delta.len()
+                ),
+            ));
+        }
+        let snapshot = self.wave_function.param_values();
+        self.wave_function.update_params(delta);
+        for walker in &mut self.walkers {
+            self.wave_function.rebuild(&walker.cfg);
+            let log_psi = self.wave_function.log_psi(&walker.cfg);
+            if !log_psi.is_finite() {
+                let restore: Vec<f64> = snapshot
+                    .iter()
+                    .zip(delta)
+                    .map(|(&old, &d)| old - d)
+                    .collect();
+                self.wave_function.update_params(&restore);
+                for walker in &mut self.walkers {
+                    self.wave_function.rebuild(&walker.cfg);
+                    walker.log_psi = self.wave_function.log_psi(&walker.cfg);
+                }
+                return Err(VariationalError::invalid(
+                    "delta",
+                    "update left a walker with non-finite ln|psi| (ansatz left its \
+                     physical domain); parameters restored",
+                ));
+            }
+            walker.log_psi = log_psi;
+        }
+        Ok(())
     }
 
     /// Population-mean local energy (and drift norm squared) of the current

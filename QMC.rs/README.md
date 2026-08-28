@@ -218,8 +218,34 @@ confined McMillan droplet respects the rigorous bound
 `E ≥ E₀(H₀)` under a repulsive pair, both with multi-seed z-score
 consistency.
 
-Not there yet: parameter optimizers (L2 — will adopt `nalgebra`/`argmin`
-rather than hand-rolling), DMC (L3), reptation (L4), NQS/t-VMC (L5,
+What exists (layer L2, parameter optimizers as an outer loop):
+
+- `BlockStats`: block-moment accumulator (energy, variance, centered
+  force `S_k = ⟨Ȯ_k E_L⟩`, SR metric `G_kl = ⟨Ȯ_k Ȯ_l⟩`, three-point
+  moment `T_kl` for the linear method), fed per sweep by
+  `VmcKernel::collect_block_stats`; importance-weighted pushes make
+  deterministic quadrature statistics possible for theorem-level tests.
+- `StochasticReconfiguration` (Sorella natural gradient,
+  `(G + λ·diag G) Δp = −ε S` on `nalgebra` Cholesky) and `LinearMethod`
+  (Umrigar–Nightingale generalized eigenproblem on the linearized
+  displacement basis, symmetric reduction via Cholesky +
+  `SymmetricEigen`), both with a diagonal trust-region shift
+  (escalate-and-retry on rejected steps) and patience-based convergence
+  on the natural force norm; `VmcKernel::update_wave_function_params`
+  applies/reverts parameter updates with walker re-anchoring and
+  rollback on out-of-domain steps.
+- Validated: SR and LM converge to the closed-form optimum
+  `α* = ω/2` of the one-particle Gaussian trap against quadrature-exact
+  statistics; the LM predicted energy never exceeds the current block
+  energy (subspace convexity); the force vanishes for an exact state
+  (zero-variance principle on the statistics layer), deterministically
+  and through the Metropolis kernel; trust-region escalation/relaxation
+  and input rejection; SR improves the two-parameter
+  Gaussian×McMillan LJ droplet beyond noise with physical parameters
+  throughout.
+
+Not there yet: correlated-sampling variance minimization on `argmin`
+(the third L2 entry point), DMC (L3), reptation (L4), NQS/t-VMC (L5,
 mature-crate autodiff decision).
 Architecture and layer plan: [`research/vmc/DESIGN.md`](../research/vmc/DESIGN.md).
 
