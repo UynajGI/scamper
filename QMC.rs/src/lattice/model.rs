@@ -215,7 +215,13 @@ impl OperatorTerm {
                 )));
             }
             if kind.is_diagonal() {
-                let states: Vec<_> = kind.legs().chunks_exact(2).map(|pair| pair[0]).collect();
+                let states: Vec<_> = kind
+                    .legs()
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| pair[0])
+                    .collect();
                 diagonal_lookup.insert(states, kind_id);
                 proposal_weight = proposal_weight.max(kind.weight());
             }
