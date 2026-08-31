@@ -1,7 +1,7 @@
 # cargo-deny configuration for Scamper.
 # Docs: https://embarkstudios.github.io/cargo-deny/
 #
-# Run locally:   cargo deny check advisories licenses
+# Run locally:   cargo deny --all-features check advisories licenses
 # Run in CI:     .github/workflows/ci.yml (cargo-deny-action)
 # Run in hook:   .lefthook/deny-check.sh  (pre-push, if cargo-deny is installed)
 #
@@ -18,6 +18,12 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # Per-advisory ignore list. Add a RUSTSEC id here ONLY with a comment
 # explaining why, and a reminder date to re-evaluate.
 ignore = [
+    # Optional MPI support reaches these transitive crates through
+    # mpi -> conv -> custom_derive. No safe upgrade path is available.
+    "RUSTSEC-2025-0058", # custom_derive unmaintained
+    # Optional HDF5 support reaches this crate through hdf5 -> parking_lot.
+    # No safe upgrade path is available.
+    "RUSTSEC-2024-0384", # instant unmaintained
     # Transitive dependency without a safe upgrade path. Re-evaluate when the
     # parents that pull it in (argmin and simba) publish replacements.
     "RUSTSEC-2024-0436", # paste unmaintained
@@ -39,6 +45,8 @@ allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
     "MPL-2.0",
     "Zlib",
     "Unicode-3.0",

@@ -110,7 +110,7 @@ clean:
 #   cargo install cargo-deny
 # CI runs the same via cargo-deny-action.
 deny:
-    cargo deny check advisories licenses
+    cargo deny --all-features check advisories licenses
 
 # Spelling check (config: .typos.toml). Requires typos:
 #   cargo install typos-cli
