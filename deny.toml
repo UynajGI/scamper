@@ -1,14 +1,13 @@
-# cargo-deny configuration for Scuttle.
+# cargo-deny configuration for Scamper.
 # Docs: https://embarkstudios.github.io/cargo-deny/
 #
 # Run locally:   cargo deny check advisories licenses
 # Run in CI:     .github/workflows/ci.yml (cargo-deny-action)
 # Run in hook:   .lefthook/deny-check.sh  (pre-push, if cargo-deny is installed)
 #
-# Note: cargo-deny 0.19 removed the per-category lint levels
-# (`vulnerability`/`unmaintained`/`yanked`/`notice`) from [advisories]. The
-# behavior is now fixed: vulnerabilities & yanked crates deny, unmaintained
-# crates warn. We rely on those defaults and only tune `ignore` + licenses.
+# cargo-deny reports advisory classes according to the version bundled by CI.
+# Keep this list limited to transitive dependencies without a safe upgrade path;
+# real vulnerability, yanked, and unsound advisories remain release blockers.
 
 # ──────────────────────────────────────────────────────────────────────────
 # advisories — RUSTSEC vulnerability / yank database
@@ -19,12 +18,8 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # Per-advisory ignore list. Add a RUSTSEC id here ONLY with a comment
 # explaining why, and a reminder date to re-evaluate.
 ignore = [
-    # Unmaintained transitive dependencies with no safe upgrade path and no
-    # security impact ("unmaintained" is informational). Re-evaluate when the
-    # parents that pull them in (argmin -> instant/paste, mpi -> custom_derive)
-    # publish updates that drop them.
-    "RUSTSEC-2025-0058", # custom_derive unmaintained
-    "RUSTSEC-2024-0384", # instant unmaintained
+    # Transitive dependency without a safe upgrade path. Re-evaluate when the
+    # parents that pull it in (argmin and simba) publish replacements.
     "RUSTSEC-2024-0436", # paste unmaintained
 ]
 
@@ -44,12 +39,8 @@ allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
     "MPL-2.0",
     "Zlib",
-    "CC0-1.0",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
 ]
 confidence-threshold = 0.8

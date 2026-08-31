@@ -1,6 +1,6 @@
 # QMC.rs
 
-QMC.rs is the physics layer of the Scuttle Monte Carlo workspace. Carlo.rs
+QMC.rs is the physics layer of the Scamper Monte Carlo workspace. Carlo.rs
 provides scheduling, deterministic RNG setup, thermalization/measurement
 phases, accumulation, parallel backends, and result analysis. QMC.rs provides
 representations, model catalogs, update kernels, invariants, and estimators.

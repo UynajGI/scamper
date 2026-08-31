@@ -1,11 +1,11 @@
 [package]
 name = "carlo-rs"
-version = "0.1.0-dev1"
-edition = "2021"
-authors = ["Scamper Team"]
-license = "Apache-2.0"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "Core Monte Carlo framework: scheduling, measurements, MPI, checkpointing"
-repository = "https://github.com/UynajGI/scamper"
+repository.workspace = true
 readme = "README.md"
 keywords = ["monte-carlo", "simulation", "physics", "mpi", "rng"]
 categories = ["science", "simulation"]

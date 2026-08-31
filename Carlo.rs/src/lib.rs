@@ -128,7 +128,7 @@
 //! | Feature | Effect |
 //! |---------|--------|
 //! | `hdf5` | HDF5 checkpoint + measurement files |
-//! | `mpi` | MPI distributed backend (`mpirun -np N ./carlo run`) |
+//! | `mpi` | MPI distributed backend (`mpirun -np N ./carlo-rs run`) |
 //!
 //! ## Module map
 //!
@@ -148,7 +148,7 @@
 //! | [`output`] | JSON/HDF5 save/load, `dataframe()` |
 //! | [`parallel_tempering`] | PT MC with chain scheduling |
 //! | [`job`] | `JobInfo`, `TaskInfo`, `TaskMaker` — multi-run job management |
-//! | [`cli`] | `carlo run/status/merge/delete` CLI |
+//! | [`cli`] | `carlo-rs run/status/merge/delete` CLI |
 //! | [`progress`] | Progress bars and status tables |
 
 mod acceptance;

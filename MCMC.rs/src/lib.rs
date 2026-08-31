@@ -1,4 +1,4 @@
-//! Statistical Markov-chain Monte Carlo kernels for Scuttle.
+//! Statistical Markov-chain Monte Carlo kernels for Scamper.
 //!
 //! `mcmc-rs` owns target-density evaluation, transition kernels, warmup
 //! adaptation, constrained-parameter transforms, posterior traces, replica

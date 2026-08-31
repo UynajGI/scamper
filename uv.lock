@@ -1250,7 +1250,7 @@ wheels = [
 ]
 
 [[package]]
-name = "scuttle"
+name = "scamper"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

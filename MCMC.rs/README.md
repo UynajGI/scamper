@@ -1,6 +1,6 @@
 # MCMC.rs v0.5
 
-`mcmc-rs` is Scuttle's statistical-inference MCMC layer. Carlo.rs owns the
+`mcmc-rs` is Scamper's statistical-inference MCMC layer. Carlo.rs owns the
 generic run lifecycle; MCMC.rs owns target densities, kernels, warmup,
 transforms, traces, replica exchange and convergence diagnostics.
 

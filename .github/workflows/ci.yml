@@ -84,15 +84,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Preinstall stable toolchain (musl container)
-        # The action container resolves rust-toolchain.toml against a rustup
-        # that has no musl-host toolchain installed yet.
-        run: rustup toolchain install stable --profile minimal
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          # v2 splits the invocation: `command` takes the subcommand and its
-          # positional args, `arguments` the flags. Passing `check ...` through
-          # arguments fed it to `cargo deny [WHICH]` and failed.
+          # The action runs in its own container, so select its Rust toolchain
+          # through the action input instead of installing on the host runner.
+          rust-version: stable
           command: check advisories licenses
           arguments: --all-features
 

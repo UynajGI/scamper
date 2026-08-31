@@ -1,4 +1,4 @@
-# rustfmt config for Scuttle.
+# rustfmt config for Scamper.
 #
 # Only pins values that diverge from stable defaults or that we want to lock
 # against future rustfmt drift. Everything else inherits the default styling,

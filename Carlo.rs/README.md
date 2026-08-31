@@ -20,7 +20,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-carlo-rs = { path = "Carlo.rs" }
+carlo-rs = "0.1.0-dev2"
 rand_xoshiro = "0.8"
 ```
 
@@ -107,7 +107,6 @@ For convergence-driven warmup, `Scheduler::run_controlled` accepts an `AdaptiveR
 |---------|-------------|--------------|
 | `hdf5` | HDF5 checkpoint and measurement files | `libhdf5-dev` |
 | `mpi` | MPI distributed backend | `libopenmpi-dev` |
-| `strict-repro` | Strict reproducibility mode | None |
 
 Random streams are derived from logical task/run/chain/replica/phase identities through `RngStreamKey`.
 
@@ -138,17 +137,18 @@ cargo build --release --features "hdf5 mpi"
 ## CLI Usage
 
 ```bash
-# Start simulation
-carlo run --job-dir my_job/
+# `run` creates job infrastructure; application code owns the model and its
+# simulation loop.
+carlo-rs run --job-dir my_job/
 
 # Check progress (with sweep rate and elapsed time)
-carlo status --job-dir my_job/
+carlo-rs status --job-dir my_job/
 
 # Merge results
-carlo merge --job-dir my_job/
+carlo-rs merge --job-dir my_job/
 
 # Clean data
-carlo delete --job-dir my_job/
+carlo-rs delete --job-dir my_job/
 ```
 
 ## Development
@@ -161,7 +161,7 @@ just check
 just test
 
 # Run MPI tests
-just test-mpi
+just mpi-test
 
 # Generate docs
 just doc

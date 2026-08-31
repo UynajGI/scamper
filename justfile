@@ -117,9 +117,14 @@ deny:
 typos:
     typos
 
-# Publish dry-run
+# Validate the archive that each publishable package would upload. This mirrors
+# the publish closure without requiring unpublished next-version dependencies to
+# already exist in the registry.
 publish-dry:
-    cd Carlo.rs && cargo publish --dry-run
+    cargo package -p carlo-rs --no-verify
+    cargo package -p cmc-rs --no-verify
+    cargo package -p qmc-rs --no-verify
+    cargo package -p scamper --no-verify
 
 # Run benchmarks
 bench:

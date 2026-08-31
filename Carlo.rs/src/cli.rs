@@ -4,25 +4,25 @@
 //!
 //! # Commands
 //!
-//! - `carlo run`: Start a simulation
-//! - `carlo status`: Check simulation progress
-//! - `carlo merge`: Combine results from completed runs
-//! - `carlo delete`: Remove simulation data
+//! - `carlo-rs run`: Create job infrastructure for an application-owned simulation
+//! - `carlo-rs status`: Check simulation progress
+//! - `carlo-rs merge`: Combine results from completed runs
+//! - `carlo-rs delete`: Remove simulation data
 //!
 //! # Usage
 //!
 //! ```bash
-//! # Start simulation
-//! carlo run --job-dir my_job/
+//! # Create job infrastructure for an application-owned simulation
+//! carlo-rs run --job-dir my_job/
 //!
 //! # Check progress
-//! carlo status --job-dir my_job/
+//! carlo-rs status --job-dir my_job/
 //!
 //! # Merge results (requires hdf5 feature)
-//! carlo merge --job-dir my_job/
+//! carlo-rs merge --job-dir my_job/
 //!
 //! # Clean up
-//! carlo delete --job-dir my_job/
+//! carlo-rs delete --job-dir my_job/
 //! ```
 //!
 //! # Options
@@ -52,7 +52,7 @@ use std::path::PathBuf;
 use crate::merge::{merge_results, MergeOptions};
 
 #[derive(Parser)]
-#[command(name = "carlo")]
+#[command(name = "carlo-rs")]
 #[command(about = "Monte Carlo simulation framework", version)]
 struct Cli {
     /// Job directory (contains .data folder)
@@ -65,7 +65,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start a simulation
+    /// Create job infrastructure for an application-owned simulation
     Run {
         /// Run in single-threaded mode
         #[arg(short, long)]

@@ -44,7 +44,7 @@
 //! cargo build --features mpi
 //!
 //! # Run with mpirun
-//! mpirun -np 16 ./carlo run
+//! mpirun -np 16 ./carlo-rs run
 //! ```
 
 use rand_core::Rng;

@@ -3,10 +3,11 @@ name = "mcmc-rs"
 version = "0.5.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "Statistical MCMC kernels, traces, and multi-chain diagnostics for Scuttle"
+publish = false
+description = "Statistical MCMC kernels, traces, and multi-chain diagnostics for Scamper"
 
 [dependencies]
-carlo-rs = { path = "../Carlo.rs" }
+carlo-rs = { workspace = true }
 rand = { workspace = true }
 rand_core = { workspace = true }
 rand_xoshiro = { workspace = true }

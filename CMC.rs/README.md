@@ -1,6 +1,6 @@
 # CMC.rs
 
-CMC.rs is Scuttle's classical Monte Carlo sampling layer. It is intentionally built **on Carlo.rs** rather than duplicating execution infrastructure:
+CMC.rs is Scamper's classical Monte Carlo sampling layer. It is intentionally built **on Carlo.rs** rather than duplicating execution infrastructure:
 
 - **Carlo.rs** owns RNG contexts, explicit run phases, scheduling, backends, accumulation/results, checkpoint orchestration and parallel tempering.
 - **CMC.rs** owns classical configurations, physical energy models, transactional trial moves, target ensembles, update kernels and observables.

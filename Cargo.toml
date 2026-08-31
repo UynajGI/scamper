@@ -2,7 +2,17 @@
 resolver = "2"
 members = ["Carlo.rs", "QMC.rs", "CMC.rs", "MCMC.rs", "scamper"]
 
+[workspace.package]
+version = "0.1.0-dev2"
+edition = "2021"
+authors = ["Scamper Team"]
+license = "Apache-2.0"
+repository = "https://github.com/UynajGI/scamper"
+
 [workspace.dependencies]
+carlo-rs = { path = "Carlo.rs", version = "0.1.0-dev2" }
+cmc-rs = { path = "CMC.rs", version = "0.1.0-dev2" }
+qmc-rs = { path = "QMC.rs", version = "0.1.0-dev2" }
 rand = "0.10"
 rand_core = "0.10"
 rand_xoshiro = { version = "0.8", features = ["serde"] }

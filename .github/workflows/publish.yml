@@ -1,19 +1,14 @@
-# Publish — tag-driven crates.io release for the scuttle workspace.
+# Publish — tag-driven crates.io release for the Scamper workspace.
 #
-# A `v*` tag publishes every publishable member of the workspace to crates.io
-# and opens a GitHub prerelease. Current members:
+# A `v*` tag releases one synchronized prerelease line:
 #
 #   carlo-rs  — dependency root, must land first
 #   cmc-rs    — depends on carlo-rs
 #   qmc-rs    — depends on carlo-rs
 #   scamper   — umbrella crate (carlo + cmc + qmc), must land last
-#   mcmc-rs   — NOT published: the `mcmc-rs` crate name is already taken on
-#               crates.io by an unrelated crate. It stays path-dependent
-#               inside the workspace until it is renamed.
 #
-# All crates share one version and are cut together, so one tag publishes the
-# whole set — adequate for 0.1.0-dev* prereleases; split per-crate tags when
-# the versions start to diverge.
+# `mcmc-rs` is deliberately excluded. Its crates.io name is occupied by an
+# unrelated package and its manifest has `publish = false` until it is renamed.
 
 name: Publish
 
@@ -21,17 +16,87 @@ on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write # required to create the GitHub release
-
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 jobs:
+  validate:
+    name: validate (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install system dependencies (hdf5, mpi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-validation
+
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_TAG" in
+            v?*) RELEASE_VERSION="${RELEASE_TAG#v}" ;;
+            *) echo "expected a vX.Y.Z tag, got $RELEASE_TAG" >&2; exit 1 ;;
+          esac
+
+          for package in carlo-rs cmc-rs qmc-rs scamper; do
+            package_version="$(
+              cargo metadata --no-deps --format-version 1 |
+                jq -er --arg package "$package" \
+                  '.packages[] | select(.name == $package) | .version'
+            )"
+            if [ "$package_version" != "$RELEASE_VERSION" ]; then
+              echo "$package is $package_version, but tag is $RELEASE_TAG" >&2
+              exit 1
+            fi
+          done
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features --workspace
+
+      - name: Test
+        run: cargo test --all-features --workspace
+
+      - name: Package publishable crates
+        # Building was already covered by the all-feature check above. Avoid
+        # package verification here: a next-version dependent crate cannot
+        # resolve its sibling from crates.io until the publish job lands it.
+        run: |
+          cargo package -p carlo-rs --no-verify
+          cargo package -p cmc-rs --no-verify
+          cargo package -p qmc-rs --no-verify
+          cargo package -p scamper --no-verify
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          rust-version: stable
+          command: check advisories licenses
+          arguments: --all-features
+
   publish:
     name: publish (${{ github.ref_name }})
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -60,8 +125,7 @@ jobs:
               fi
               if echo "$out" | grep -q "429 Too Many Requests"; then
                 # crates.io throttles how many new crates an account may
-                # create in a short window (minutes, not seconds) — the
-                # plain 20s retry cannot ride that out.
+                # create in a short window (minutes, not seconds).
                 echo "$name rate-limited on new-crate creation; backing off 2 min (attempt $i)"
                 sleep 120
                 continue
@@ -85,21 +149,31 @@ jobs:
           sleep 15
           publish scamper
 
-      - name: Create GitHub release
+      - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
-            --prerelease \
-            --generate-notes \
-            --notes "$(cat <<'EOF'
-          Published **carlo-rs**, **cmc-rs**, **qmc-rs** and the **scamper** umbrella crate (0.1.0-dev1) to crates.io.
+          RELEASE_VERSION="${RELEASE_TAG#v}"
+          NOTES="$(cat <<EOF
+          Published **carlo-rs**, **cmc-rs**, **qmc-rs** and the **scamper** umbrella crate (${RELEASE_VERSION}) to crates.io.
 
           Prerelease quality — no API stability guarantees.
 
-          Not on crates.io: mcmc-rs (crate name taken by an unrelated package; tracked in-repo via a path dependency).
+          Not on crates.io: mcmc-rs (crate name taken by an unrelated package; workspace-only by design).
           EOF
           )"
 
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "$RELEASE_TAG" \
+              --prerelease \
+              --notes "$NOTES"
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "$RELEASE_TAG" \
+              --prerelease \
+              --generate-notes \
+              --notes "$NOTES"
+          fi

@@ -1,11 +1,11 @@
 [package]
 name = "qmc-rs"
-version = "0.1.0-dev1"
-edition = "2021"
-authors = ["Scamper Team"]
-license = "Apache-2.0"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "Quantum Monte Carlo algorithm toolbox"
-repository = "https://github.com/UynajGI/scamper"
+repository.workspace = true
 readme = "README.md"
 keywords = ["quantum", "monte-carlo", "physics", "simulation", "vmc"]
 categories = ["science", "simulation"]
@@ -16,7 +16,7 @@ argmin-math = { version = "0.5", default-features = false, features = [
     "primitives",
     "vec",
 ] }
-carlo-rs = { path = "../Carlo.rs", version = "0.1.0-dev1" }
+carlo-rs = { workspace = true }
 nalgebra = { workspace = true }
 rand = "0.10.0"
 rand_xoshiro = "0.8"

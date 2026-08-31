@@ -1,17 +1,17 @@
 [package]
 name = "cmc-rs"
-version = "0.1.0-dev1"
-edition = "2021"
-authors = ["Scamper Team"]
-license = "Apache-2.0"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "Reusable classical Monte Carlo kernels for lattice, particle, generalized and worm ensembles"
-repository = "https://github.com/UynajGI/scamper"
+repository.workspace = true
 readme = "README.md"
 keywords = ["monte-carlo", "classical", "lattice", "simulation", "physics"]
 categories = ["science", "simulation"]
 
 [dependencies]
-carlo-rs = { path = "../Carlo.rs", version = "0.1.0-dev1" }
+carlo-rs = { workspace = true }
 rand = "0.10.0"
 rand_xoshiro = "0.8"
 serde_json = { workspace = true }

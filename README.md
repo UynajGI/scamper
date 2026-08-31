@@ -2,20 +2,24 @@
 
 Monte Carlo simulation framework in Rust, ported from [Carlo.jl](https://github.com/lukas-weber/Carlo.jl).
 
+The published entry point is [`scamper`](https://crates.io/crates/scamper), a
+facade crate that re-exports the classical, quantum, and framework layers.
+Current releases are prereleases and make no API or behavioral stability
+guarantees.
+
 ## Crates
 
 | Crate | Purpose |
 |-------|---------|
-| [Carlo.rs](Carlo.rs/README.md) | Core framework — scheduler, measurements, MPI backend, checkpointing |
-| QMC.rs | Quantum Monte Carlo — general continuous-time lattice QMC (arbitrary graph/spin) + quantum impurity (retarded-interaction) wormhole QMC |
-| CMC.rs | Classical Monte Carlo — lattice (CSR graph, Ising/Potts/O(N), Metropolis/Wolff/SW/Heat-bath/Microcanonical, multi-spin coding, JSON snapshot v2) + particle (periodic cells, Lennard-Jones NVT/NPT/μVT, rigid molecules with dipolar external fields, cell lists, Metropolis-Hastings) + generalized ensembles (Wang-Landau, multicanonical, umbrella sampling) + classical worm (Ising HT graph, persistent physical/worm sectors, multi-component lattices) + classical dynamics (Kawasaki, Gillespie/BKL, hard-sphere event-chain, explicit event time) |
-| [MCMC.rs](MCMC.rs/README.md) | Statistical MCMC — RW/slice/Gibbs/composed kernels, static HMC, NUTS, adaptive unit/diagonal/dense metrics, differentiable constrained transforms, replica exchange, traces and multi-chain diagnostics (E-BFMI) |
+| [`carlo-rs`](https://crates.io/crates/carlo-rs) | Core framework — scheduler, measurements, MPI backend, checkpointing |
+| [`qmc-rs`](https://crates.io/crates/qmc-rs) | Quantum Monte Carlo — general continuous-time lattice QMC (arbitrary graph/spin) + quantum impurity (retarded-interaction) wormhole QMC |
+| [`cmc-rs`](https://crates.io/crates/cmc-rs) | Classical Monte Carlo — lattice (CSR graph, Ising/Potts/O(N), Metropolis/Wolff/SW/Heat-bath/Microcanonical, multi-spin coding, JSON snapshot v2) + particle (periodic cells, Lennard-Jones NVT/NPT/μVT, rigid molecules with dipolar external fields, cell lists, Metropolis-Hastings) + generalized ensembles (Wang-Landau, multicanonical, umbrella sampling) + classical worm (Ising HT graph, persistent physical/worm sectors, multi-component lattices) + classical dynamics (Kawasaki, Gillespie/BKL, hard-sphere event-chain, explicit event time) |
+| [`mcmc-rs`](MCMC.rs/README.md) | Workspace-only statistical MCMC — RW/slice/Gibbs/composed kernels, static HMC, NUTS, adaptive unit/diagonal/dense metrics, differentiable constrained transforms, replica exchange, traces and multi-chain diagnostics (E-BFMI). Its crates.io name belongs to an unrelated package. |
 
 ## Quick Start
 
 ```bash
-cd Carlo.rs
-cargo build --release --features "hdf5 mpi"
+cargo add scamper@0.1.0-dev2
 ```
 
 ## Development

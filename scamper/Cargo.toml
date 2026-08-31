@@ -1,19 +1,19 @@
 [package]
 name = "scamper"
-version = "0.1.0-dev1"
-edition = "2021"
-authors = ["Scamper Team"]
-license = "Apache-2.0"
-description = "Monte Carlo simulation stack: scheduling framework plus classical, quantum and statistical kernels"
-repository = "https://github.com/UynajGI/scamper"
-readme = "../README.md"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Monte Carlo simulation stack: scheduling framework plus classical and quantum kernels"
+repository.workspace = true
+readme = "README.md"
 keywords = ["monte-carlo", "simulation", "physics", "quantum", "sampling"]
 categories = ["science", "simulation"]
 
 [dependencies]
-carlo-rs = { path = "../Carlo.rs", version = "0.1.0-dev1" }
-cmc-rs = { path = "../CMC.rs", version = "0.1.0-dev1" }
-qmc-rs = { path = "../QMC.rs", version = "0.1.0-dev1" }
+carlo-rs = { workspace = true }
+cmc-rs = { workspace = true }
+qmc-rs = { workspace = true }
 
 [features]
 default = []

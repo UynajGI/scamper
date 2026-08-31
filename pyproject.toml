@@ -1,7 +1,7 @@
 [project]
-name = "scuttle"
+name = "scamper"
 version = "0.1.0"
-description = "Add your description here"
+description = "Development tooling for the Scamper Monte Carlo workspace"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
