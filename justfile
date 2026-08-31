@@ -117,14 +117,11 @@ deny:
 typos:
     typos
 
-# Validate the archive that each publishable package would upload. This mirrors
-# the publish closure without requiring unpublished next-version dependencies to
-# already exist in the registry.
+# Cargo rewrites workspace paths to registry dependencies during packaging, so
+# dependent dev versions cannot be packaged until carlo-rs has landed. The tag
+# workflow publishes and verifies the remaining dependency layers in order.
 publish-dry:
     cargo package -p carlo-rs --no-verify
-    cargo package -p cmc-rs --no-verify
-    cargo package -p qmc-rs --no-verify
-    cargo package -p scamper --no-verify
 
 # Run benchmarks
 bench:

@@ -74,15 +74,12 @@ jobs:
       - name: Test
         run: cargo test --all-features --workspace
 
-      - name: Package publishable crates
-        # Building was already covered by the all-feature check above. Avoid
-        # package verification here: a next-version dependent crate cannot
-        # resolve its sibling from crates.io until the publish job lands it.
-        run: |
-          cargo package -p carlo-rs --no-verify
-          cargo package -p cmc-rs --no-verify
-          cargo package -p qmc-rs --no-verify
-          cargo package -p scamper --no-verify
+      - name: Package dependency root
+        # Cargo rewrites workspace path dependencies to registry dependencies
+        # while packaging. Before this release exists, cmc-rs/qmc-rs/scamper
+        # cannot resolve their new sibling versions from crates.io. The publish
+        # job verifies them immediately after their dependencies land.
+        run: cargo package -p carlo-rs --no-verify
 
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
