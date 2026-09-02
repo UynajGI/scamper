@@ -40,7 +40,7 @@ fail() {
   Examples:
       feat(CMC): add Wolff cluster algorithm
       fix(CMC): correct beta sign in metropolis acceptance
-      docs: update CLAUDE.md architecture table
+      docs: update AGENTS.md architecture table
       refactor(qmc-rs)!: replace SSE with worldline QMC
       chore: bump version to 0.1.0-dev1
 

@@ -49,4 +49,4 @@ Files outside these dirs (or no Rust files staged) fall back to `--workspace`.
 ## See also
 
 - [`../lefthook.yml`](../lefthook.yml) — the hook configuration.
-- [`../CLAUDE.md`](../CLAUDE.md) — top-level project notes (hooks section).
+- [`../AGENTS.md`](../AGENTS.md) — top-level project notes (hooks section).

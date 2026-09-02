@@ -6,7 +6,7 @@ phases, accumulation, parallel backends, and result analysis. QMC.rs provides
 representations, model catalogs, update kernels, invariants, and estimators.
 
 The module boundary and extension rules are documented in the workspace
-`CLAUDE.md`.
+`AGENTS.md`.
 
 ## Continuous-time lattice QMC
 

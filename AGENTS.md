@@ -1,4 +1,4 @@
-# CLAUDE.md
+# Scamper Agent Guide
 
 Scamper — Monte Carlo workspace with five Rust packages: Carlo.rs (core), QMC.rs (quantum), CMC.rs (classical), MCMC.rs (statistical, workspace-only), and the published `scamper` facade.
 
@@ -33,7 +33,7 @@ MonteCarlo trait → Scheduler.run_one() → Results flow:
 | `ParallelTempering` | `parallel_tempering.rs` | PT MC with chain scheduling                                        |
 | `RunPhase`          | `phase.rs`              | Explicit lifecycle: Initialization→Thermalization→Measurement→Finished |
 | `AdaptiveRunControl`| `run_control.rs`        | Algorithm-driven phase transitions, `RunDecision`                  |
-| `CLI`               | `cli.rs`                | `carlo run/status/merge/delete`                                    |
+| `CLI`               | `cli.rs`                | `carlo-rs run/status/merge/delete`                                 |
 | `Job`               | `job/`                  | `JobInfo`, `TaskInfo`, `TaskMaker`, progress tracking              |
 
 ## CMC.rs Architecture
