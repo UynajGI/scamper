@@ -267,6 +267,32 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_spanning_sets_behave_as_documented() {
+        // Disjoint sets keep `spanning` meaningful at p = 0; overlapping sets
+        // are degenerate by design: in bond mode every site is tracked, so a
+        // site in both sets trivially spans even with nothing occupied.
+        let lattice = build_chain(3, false);
+        let occupancy = OccupancyState::new(&lattice, PercolationMode::Bond);
+        let stats = cluster_stats(&lattice, &occupancy, &[0], &[0]);
+        assert!(
+            stats.spanning,
+            "overlapping sets span trivially in bond mode"
+        );
+        assert_eq!(stats.max_size, 1);
+        assert_eq!(stats.n_clusters, 3);
+
+        // In site mode the shared site must at least be occupied (tracked).
+        let mut site = OccupancyState::new(&lattice, PercolationMode::Site);
+        let stats = cluster_stats(&lattice, &site, &[0], &[0]);
+        assert!(!stats.spanning, "closed site is not tracked in site mode");
+        site.site_open[0] = true;
+        let stats = cluster_stats(&lattice, &site, &[0], &[0]);
+        assert!(stats.spanning);
+        assert_eq!(stats.max_size, 1);
+        assert_eq!(stats.n_clusters, 1);
+    }
+
+    #[test]
     fn arbitrary_graphs_work_via_edges() {
         use crate::lattice::graph::BondType;
         // Star graph: center 0 with leaves 1..4; center plus leaves 1, 2 open.
