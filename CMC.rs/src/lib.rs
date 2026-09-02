@@ -57,6 +57,7 @@ pub mod generalized;
 pub mod lattice;
 pub mod observables;
 pub mod particle;
+pub mod percolation;
 
 // ── Flat public re-exports (backward-compatible) ─────────────
 
@@ -118,6 +119,9 @@ pub use particle::{
     ParticleSystem, ParticleTranslation, RigidMoleculeRotation, RigidMoleculeTranslation,
     SimulationCell, TorsionDefinition, TorsionRotation, TranslateParticle, VolumeChangePatch,
     WeightedMove,
+};
+pub use percolation::{
+    cluster_stats, ClusterStats, OccupancyState, PercolationMC, PercolationMode, UnionFind,
 };
 pub use postprocess::{
     binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,

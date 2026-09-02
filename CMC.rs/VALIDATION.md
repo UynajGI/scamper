@@ -1,14 +1,14 @@
 # CMC.rs — Physics Validation & Validated Domain
 
-> Updated 2026-08-19. Branch: `dev`.
+> Updated 2026-09-02. Branch: `dev`.
 
 ## Test suite summary
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 277 | ~60s |
-| Long stochastic (`--ignored`) | 15 | ~20s |
-| **Suite total** | **292** | (+73 lib unit tests) |
+| Default (`cargo test`) | 283 | ~60s |
+| Long stochastic (`--ignored`) | 16 | ~40s |
+| **Suite total** | **299** | (+89 lib unit tests) |
 
 ## Per-solver validated domain
 
@@ -145,6 +145,13 @@
 - **Equilibrium distribution:** three analytic cases against in-code quadrature references through the real solver (translation + plane-rotation moves): two-molecule pair ⟨U⟩ and bound fraction (1D Simpson); dumbbell+atom probe nematic ⟨cos 2α⟩ and ⟨U⟩ (2D midpoint); rotor-pair alignment ⟨cos 2Δθ⟩ across a coupling sweep ε=1→3 (linear response → saturation, the Langevin-x analog; max|z|=1.26 default, 7-coupling long variant max|z|=1.7). Thermalization-length pitfall documented (20k+ sweeps needed at strong coupling)
 - **External field (2026-08-19):** one-body dipolar term `DipolarExternalField` (per-atom charges, wrap-safe minimum-image dipoles, non-neutral molecules rejected loudly); free-rotor equilibrium vs the analytic Langevin-dipole answers through the real kernel — 2D: ⟨cosθ⟩=I₁(x)/I₀(x), ⟨cos²θ⟩=(1+I₂/I₀)/2; 3D: ⟨cosθ⟩=L(x), ⟨cos²θ⟩=1−2L(x)/x; x=βpE grid 0.5–5, per-seed |z|<4; machine-precision identity `external_field_energy = −E·μ` (1e-12) every sweep
 - **NOT validated:** — (external-field Langevin case validated 2026-08-19)
+
+### Percolation, site + bond (`PercolationMC`, 2026-09-02)
+- **Validated:** Ordinary site and bond percolation on arbitrary `CsrLattice` graphs (i.i.d. occupancy resampling, union-find cluster analysis). 2×2 open square: full 16-configuration enumeration vs hand-derived closed-form moments for both modes — ⟨MaxCluster⟩ = 30/16 (site) and 45/16 (bond), ⟨sum(s_i²)⟩ = 76/16 and 164/16, ⟨NClusters⟩ = 17/16 and 33/16, P(spanning) = 7/16 and 12/16 at p = 1/2; site spanning probability matches the polynomial 2p²(1−p)² + 4p³(1−p) + p⁴ across p ∈ {0.2, 0.44, 0.5927, 0.8} — `tests/physics/percolation.rs`
+- **Scheduler end-to-end:** 200k i.i.d. sweeps on the 2×2 square reproduce all four enumerated moments within |z| < 4; p = 0 and p = 1 boundary behavior exact in unit tests (no span / single spanning cluster)
+- **Statistical:** 4×4 site percolation at p = 0.6 fully enumerated (2¹⁶ = 65536 configurations) as reference; 16-seed z-scores on `Spanning` and `MaxCluster` (|z| < 4, |z̄| < 1.5, no one-sided bias) — `tests/physics/percolation_zscore.rs`
+- **Critical-point check (long):** 32×32 bond percolation at p_c = 1/2 → crossing probability within 0.06 of 1/2 (200k sweeps, `#[ignore]`, nightly)
+- **NOT validated:** invasion/kinetic percolation variants (not implemented); spanning defaults limited to square/chain (other graphs require explicit site sets, rejected loudly otherwise)
 
 ## Input-validation coverage (criterion G)
 
