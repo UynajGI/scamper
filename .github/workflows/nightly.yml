@@ -100,8 +100,9 @@ jobs:
 
   # ── Carlo.rs framework regression (HDF5 I/O + MPI backend) ─────────────
   # Serial full suite (including the HDF5 I/O tests) first, then every MPI
-  # test under mpirun at several world sizes. Runners are non-root, so plain
-  # `mpirun -np N` works with the OpenMPI packages installed above.
+  # test under mpirun at several world sizes. Runners are non-root, so
+  # mpirun works with the OpenMPI packages installed above (with
+  # --oversubscribe, see below).
   carlo-framework:
     name: carlo-rs framework (hdf5 + mpi)
     runs-on: ubuntu-latest
@@ -124,9 +125,13 @@ jobs:
       # Every MPI test gets its own mpirun invocation with an --exact filter:
       # MPI cannot be initialized twice in one process, and cargo runs all
       # matched #[test]s in a single process per rank (double-init abort).
+      # `--oversubscribe` is required on CI runners: OpenMPI caps ranks at
+      # the core count (2 on hosted runners), so np 4 would be rejected
+      # outright. Local MPICH (just mpi-test) has no such cap — don't add
+      # this flag there.
       - name: MPI distributed backend (np 1, degenerate single-rank path)
         run: |
-          mpirun -np 1 cargo test --release -p carlo-rs --features mpi,hdf5 --test suite -- --ignored --nocapture --exact mpi_backend_distributed::mpi_backend_distributed_suite
+          mpirun --oversubscribe -np 1 cargo test --release -p carlo-rs --features mpi,hdf5 --test suite -- --ignored --nocapture --exact mpi_backend_distributed::mpi_backend_distributed_suite
       - name: MPI tests (np 2 and np 4)
         run: |
           for np in 2 4; do
@@ -137,13 +142,13 @@ jobs:
               mpi_pt_dynamics::pt_exchange_dynamics_suite
             do
               echo "=== np=${np} :: ${test} ==="
-              mpirun -np "${np}" cargo test --release -p carlo-rs --features mpi,hdf5 --test suite -- --ignored --nocapture --exact "${test}"
+              mpirun --oversubscribe -np "${np}" cargo test --release -p carlo-rs --features mpi,hdf5 --test suite -- --ignored --nocapture --exact "${test}"
             done
           done
           # pt_exchange hardcodes a 2-chain config through the
           # run_parallel_tempering entry point (which owns its MPI init and
           # cannot probe the world size first) — np 2 only.
-          mpirun -np 2 cargo test --release -p carlo-rs --features mpi,hdf5 --test suite -- --ignored --nocapture --exact mpi_pt_exchange::pt_exchange_completes_and_returns_results
+          mpirun --oversubscribe -np 2 cargo test --release -p carlo-rs --features mpi,hdf5 --test suite -- --ignored --nocapture --exact mpi_pt_exchange::pt_exchange_completes_and_returns_results
 
   # ── Full workspace ignored tests (belt-and-suspenders) ─────────────────
   workspace-ignored:
@@ -160,4 +165,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libhdf5-dev libopenmpi-dev openmpi-bin
-      - run: cargo test --release --workspace --all-features -- --ignored --nocapture
+      # Belt-and-suspenders rerun of every long (--ignored) physics test
+      # across all crates. `--skip mpi` excludes the five Carlo.rs MPI
+      # suites: they need one mpirun invocation each (see the carlo-framework
+      # job) and abort when cargo runs them in-process. Verified that the
+      # only `--ignored` tests matching "mpi" are those five suites.
+      - run: cargo test --release --workspace --all-features -- --ignored --nocapture --skip mpi
