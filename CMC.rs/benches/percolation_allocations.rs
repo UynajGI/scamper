@@ -4,7 +4,9 @@ use std::mem::size_of;
 
 use allocation_counter::measure;
 use cmc_rs::{
-    Bond, BorrowedUndirectedCsr, GraphView, OccupancyState, PercolationMode, UndirectedGraphView,
+    Bond, BondBernoulli, BorrowedUndirectedCsr, GraphView, MixedBernoulli, OccupancyState,
+    PercolationMode, Probability, ProbabilityField, SiteBernoulli, StaticConfiguration,
+    UndirectedGraphView,
 };
 use percolation_support::{cases, sample_and_analyze, Case, P_BOND, P_SITE};
 use rand::SeedableRng;
@@ -149,10 +151,95 @@ fn report_topology_view_probe() {
     );
 }
 
+fn probability(value: f64) -> Probability {
+    Probability::new(value).expect("probe probability")
+}
+
+fn report_law_case(case: &Case) {
+    let vertex_count = case.lattice.vertex_count();
+    let edge_count = case.lattice.edge_count();
+    let vertex_probabilities = (0..vertex_count)
+        .map(|index| probability(if index % 2 == 0 { 0.25 } else { 0.75 }))
+        .collect::<Vec<_>>();
+    let edge_probabilities = (0..edge_count)
+        .map(|index| probability(if index % 3 == 0 { 0.2 } else { 0.6 }))
+        .collect::<Vec<_>>();
+
+    let site = SiteBernoulli::new(probability(0.5).into());
+    let bond = BondBernoulli::new(probability(0.5).into());
+    let mixed = MixedBernoulli::new(probability(0.5).into(), probability(0.5).into());
+    let heterogeneous = MixedBernoulli::new(
+        ProbabilityField::Borrowed(&vertex_probabilities),
+        ProbabilityField::Borrowed(&edge_probabilities),
+    );
+    let endpoint = MixedBernoulli::new(probability(0.0).into(), probability(1.0).into());
+    let endpoint_reverse = MixedBernoulli::new(probability(1.0).into(), probability(0.0).into());
+    let mut configuration = StaticConfiguration::new(vertex_count, edge_count);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x0046_325f_414c_4c4f);
+
+    mixed
+        .sample(&case.lattice, &mut configuration, &mut rng)
+        .expect("probe domains match");
+    endpoint
+        .sample(&case.lattice, &mut configuration, &mut rng)
+        .expect("probe domains match");
+
+    for (name, samples) in [
+        ("site-uniform", ALLOCATION_SAMPLES),
+        ("bond-uniform", ALLOCATION_SAMPLES),
+        ("mixed-uniform", ALLOCATION_SAMPLES),
+        ("mixed-heterogeneous", ALLOCATION_SAMPLES),
+        ("mixed-endpoint-switch", ALLOCATION_SAMPLES),
+    ] {
+        let info = measure(|| {
+            for _ in 0..samples {
+                let result = match name {
+                    "site-uniform" => site.sample(&case.lattice, &mut configuration, &mut rng),
+                    "bond-uniform" => bond.sample(&case.lattice, &mut configuration, &mut rng),
+                    "mixed-uniform" => mixed.sample(&case.lattice, &mut configuration, &mut rng),
+                    "mixed-heterogeneous" => {
+                        heterogeneous.sample(&case.lattice, &mut configuration, &mut rng)
+                    }
+                    "mixed-endpoint-switch" => endpoint
+                        .sample(&case.lattice, &mut configuration, &mut rng)
+                        .and_then(|()| {
+                            endpoint_reverse.sample(&case.lattice, &mut configuration, &mut rng)
+                        }),
+                    _ => unreachable!("fixed probe case"),
+                };
+                result.expect("probe domains match");
+            }
+        });
+        let owned_mask_bytes = vertex_count + edge_count;
+        eprintln!(
+            "PERCOLATION_LAW_ALLOC topology={} law={} V={} E={} measured_iterations={} \
+             owned_mask_bytes={} bytes_per_vertex={:.3} bytes_per_edge={:.3} \
+             allocations_per_iteration={:.3} allocated_bytes_per_iteration={:.3} \
+             peak_live_allocations={} peak_live_bytes={}",
+            case.name,
+            name,
+            vertex_count,
+            edge_count,
+            samples,
+            owned_mask_bytes,
+            owned_mask_bytes as f64 / vertex_count.max(1) as f64,
+            owned_mask_bytes as f64 / edge_count.max(1) as f64,
+            info.count_total as f64 / samples as f64,
+            info.bytes_total as f64 / samples as f64,
+            info.count_max,
+            info.bytes_max,
+        );
+    }
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
-    for case in cases() {
+    let benchmark_cases = cases();
+    for case in &benchmark_cases {
+        report_law_case(case);
+    }
+    for case in benchmark_cases {
         for mode in [
             PercolationMode::Site,
             PercolationMode::Bond,

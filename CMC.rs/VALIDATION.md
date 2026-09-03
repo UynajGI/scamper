@@ -7,9 +7,9 @@
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 303 | ~75s |
+| Default (`cargo test`) | 306 | ~75s |
 | Long stochastic (`--ignored`) | 17 | ~40s |
-| **Suite total** | **320** | (+97 lib unit tests) |
+| **Suite total** | **323** | (+115 lib unit tests) |
 
 ## Per-solver validated domain
 
@@ -153,7 +153,19 @@
 - **API invariants:** IDs are publicly produced only by the current view, have checked dense bounds and transparent `usize` layout, but carry no graph provenance. The public incidence contract requires only `Iterator`; directed out/in signatures and their compile fixtures remain crate-private pending D1.
 - **Validation memory:** temporary scratch is one byte per physical edge via `try_reserve_exact` and is dropped before returning the zero-payload borrowed view. Reportable reserve failures return `ValidationCapacity`; abort-on-OOM allocators remain outside the recoverability claim.
 - **Performance:** the repeated three-path `topology_view` benchmark records no >5% regression for generic owned or generic borrowed edge/incidence scans. The allocation probe measures constructor scratch separately and records zero allocations/bytes across 128 post-construction scans; machine-specific results are in [PERCOLATION.md](PERCOLATION.md). No CI timing threshold.
-- **Not implemented:** public owned/borrowed directed CSR (D1), activity/law/configuration (F2), or topology-generic analyzers (F3).
+- **Not implemented:** public owned/borrowed directed CSR (D1) or topology-generic analyzers (F3). F2 activity/configuration/Bernoulli laws are Experimental and documented below.
+
+### Activity configuration and Bernoulli laws (F2, Experimental, 2026-09-03)
+- **Ownership and API:** `StaticConfiguration` owns only private vertex/edge masks. The mask type, `law` module, concrete variants, and storage counters are not public; reviewed configuration/activity/probability/law entry points are selectively re-exported.
+- **Validation and atomicity:** `Probability` rejects NaN, infinities, and values outside `[0, 1]`. Sampling checks configuration and every heterogeneous-field length before mutation or RNG consumption. Unit tests preserve the complete logical activity
+configuration after a mixed edge-length error and compare the next 16 RNG words against an untouched clone. Uniform site, bond, and all four mixed `p=0/1` combinations consume no RNG; heterogeneous fields claim only per-element endpoint skipping.
+- **Correctness:** unit tests cover exact endpoints, fixed-seed reproduction, pure/mixed reductions, borrowed/owned fields, a fixed-RNG heterogeneous reference, zero-size borrowed graphs, ID bounds, stale clearing, and resize/capacity reuse.
+- **Statistical:** `tests/physics/percolation_law_zscore.rs` runs 16 seeds by default, scaled through the full `SCUTTLE_ZSCORE_SEEDS=1..=4096` range, with 512 samples/seed. Each of six domains (uniform site, uniform bond, uniform mixed vertex/edge, heterogeneous mixed vertex/edge) has one aggregate gate over all seeds. For probabilities `p_i`, the exact total moments are `mean = seeds * samples * sum(p_i)` and `variance = seeds * samples * sum(p_i * (1-p_i))`; uniform fields reduce to the binomial formula and heterogeneous fields are Poisson-binomial. Each aggregate requires `|z| < 4.5`; across six approximately normal gates this gives a family-wise false-alarm probability of about `4.1e-5`. A zero-variance field instead requires exact equality. No per-seed maximum, sign-fraction, or pseudo-exact dispersion gate is used.
+- **Performance:** uniform endpoint probabilities use logical all/none states without RNG loops. The 14-ID `percolation_laws` Criterion target isolates sampling with correct `V`, `E`, and `V+E` throughput denominators. Across 25 law/topology allocation records, the probe
+reports zero allocations/bytes for 128 post-warmup iterations of site, bond,
+mixed, heterogeneous mixed, and two-sample endpoint switching. Recorded measurements are in [PERCOLATION.md](PERCOLATION.md).
+- **Limitations:** the API passed F2 review but remains provisional and
+  Experimental until the foundation milestone stabilizes. Heterogeneous fields are only an Experimental F2 substrate; N1 validation/facades remain Not implemented. F3 analyzers/workspaces and F4 Carlo.rs adapters are absent.
 
 ### Percolation, site / bond / mixed (`PercolationMC`, 2026-09-02)
 - **Status:** Experimental reference implementation. The tests below are assets

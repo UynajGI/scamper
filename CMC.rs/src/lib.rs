@@ -122,7 +122,9 @@ pub use particle::{
     WeightedMove,
 };
 pub use percolation::{
-    cluster_stats, ClusterStats, OccupancyState, PercolationMC, PercolationMode, UnionFind,
+    cluster_stats, BondBernoulli, ClusterStats, EdgeActivity, MixedBernoulli, OccupancyState,
+    PercolationMC, PercolationMode, Probability, ProbabilityField, SiteBernoulli,
+    StaticConfiguration, UnionFind, VertexActivity,
 };
 pub use postprocess::{
     binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,

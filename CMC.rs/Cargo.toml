@@ -51,6 +51,10 @@ name = "topology_view"
 harness = false
 
 [[bench]]
+name = "percolation_laws"
+harness = false
+
+[[bench]]
 name = "percolation_allocations"
 harness = false
 required-features = ["allocation-probe"]

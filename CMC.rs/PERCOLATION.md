@@ -24,8 +24,9 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 |---|---|---|
 | Read-only undirected topology capability | Experimental | Independently reviewed F1 `GraphView`/`UndirectedGraphView` contracts use dense IDs and static dispatch; `CsrLattice` and validated zero-copy `BorrowedUndirectedCsr` implement them. The API remains provisional until the foundation milestone stabilizes. |
 | Directed topology capability sketch | Experimental | Separate outgoing/incoming signatures exist only crate-private with compile fixtures; no directed API is re-exported before D1 fixes arc identity and storage contracts. |
-| Static site, bond, and mixed Bernoulli percolation on arbitrary owned undirected `CsrLattice` | Experimental | PR #4 reference implementation is extensively scientifically validated, but F2-F4 production layering, reusable workspace, final observables, and stable API do not exist. |
-| Heterogeneous occupation probabilities | Not implemented | Only one uniform probability per sampled entity kind exists. |
+| Static configuration and Bernoulli-law substrate | Experimental | F2 provisional API separates private activity storage from independent site/bond/mixed laws, validates probability domains and topology lengths, and samples allocation-free after preparation. F3 analysis and F4 runtime composition do not exist. |
+| Static site, bond, and mixed Bernoulli percolation on arbitrary owned undirected `CsrLattice` | Experimental | PR #4 reference implementation is extensively scientifically validated, but F3-F4 production analysis, reusable workspace, final observables, and stable adapter API do not exist. |
+| Heterogeneous occupation probabilities | Not implemented | `ProbabilityField` and direct Bernoulli sampling form an Experimental F2 substrate only. N1 exact non-identically-distributed validation and any network/domain facade are absent, so this is not a supported family claim. |
 | Network random failure and degree-conditioned observables | Not implemented | No network facade, probability field, or original-degree profile. |
 | Targeted or adaptive attack and robustness curves | Not implemented | No removal process or vector-valued realization output. |
 | Directed static reachability, weak/strong components | Not implemented | `CsrLattice` is undirected; directedness is not a mode flag. |
@@ -291,6 +292,115 @@ cargo bench -p cmc-rs --bench percolation_allocations \
   --features allocation-probe -- --test
 ```
 
+## F2 activity configuration and Bernoulli laws
+
+The provisional F2 API separates generation from storage. `StaticConfiguration`
+owns private vertex and physical-edge masks; the mask type and storage accounting
+are crate-private and are not returned by any public method. `VertexActivity`
+and `EdgeActivity` accept dense `VertexId`/`EdgeId` values under the same
+unchanged-view provenance contract as F1: IDs from another graph or after
+structural mutation violate the caller contract and may panic, but cannot cause
+memory unsafety. The `law` module is private; reviewed law types are selectively
+re-exported. The intended crate-root F2 surface comprises `StaticConfiguration`,
+`VertexActivity`, `EdgeActivity`, `Probability`, `ProbabilityField`,
+`ProbabilityError`, `SamplingError`, `SiteBernoulli`, `BondBernoulli`, and
+`MixedBernoulli`.
+
+The internal mask has logical all, none, and dense states while retaining any
+dense byte allocation across endpoint transitions. A new pure site law
+materializes only its vertex mask and makes edges logically all-active; a new
+pure bond law materializes only its edge mask and makes vertices logically
+all-active. Mixed sampling materializes both. Every successful sample writes
+complete semantics, so switching law types cannot expose stale state.
+`StaticConfiguration::resize` changes both domains and clears logical activity
+while retaining usable capacity. Sampling checks graph/configuration and all
+heterogeneous-field lengths before any mutation or RNG consumption.
+
+`Probability` validates finite `[0, 1]` values once. `ProbabilityField` supports
+uniform, borrowed, and owned validated values without per-sample revalidation.
+Uniform exact endpoint fields use logical all/none states and consume no RNG for
+site, bond, or any mixed endpoint combination. Heterogeneous fields are sampled
+through the dense element loop; exact endpoint elements skip RNG individually,
+but no O(1) or whole-field no-RNG contract is claimed for heterogeneous data.
+Heterogeneous direct sampling is an **Experimental substrate only**: N1 exact
+non-identically-distributed production validation, domain facades, and network
+claims remain Not implemented.
+
+The F2 statistical gate aggregates activity across every requested seed rather
+than taking a maximum over a growing set of per-seed scores. For each of six
+separate domains (uniform site, uniform bond, uniform mixed vertex/edge, and
+heterogeneous mixed vertex/edge), probabilities `p_i` give exact total moments
+
+```text
+mean     = n_seeds * samples_per_seed * sum_i p_i
+variance = n_seeds * samples_per_seed * sum_i p_i * (1 - p_i).
+```
+
+Uniform fields reduce to the binomial formula; heterogeneous fields use the
+exact Poisson-binomial mean and variance. Each aggregate requires `|z| < 4.5`.
+For six approximately normal two-sided gates, the resulting family-wise false
+alarm probability is about `6 * 2 * Phi(-4.5) = 4.1e-5`. Zero variance requires
+an exact success count. There is deliberately no fixed per-seed maximum,
+sign-fraction, or dispersion gate whose rejection probability changes with
+`SCUTTLE_ZSCORE_SEEDS`. The targeted test passed at 1, 16, 64, and 4096 seeds;
+the observed six-gate z ranges were `[-1.450, 0.935]`, `[-0.759, 1.417]`,
+`[-0.568, 1.049]`, and `[-1.782, 0.815]`, respectively. The 4096-seed run took
+37.00 seconds on the recorded Xeon host.
+
+`percolation_laws` times only `sample` on an open 64x64 square (`V=4,096`,
+`E=8,064`); graph, laws, probability fields, configuration, and RNG are prepared
+outside Criterion iteration. The short run uses 10 samples, 100 ms warm-up, and
+250 ms measurement per case:
+
+```bash
+cargo bench -p cmc-rs --bench percolation_laws --no-default-features -- --test
+cargo bench -p cmc-rs --bench percolation_laws --no-default-features
+cargo bench -p cmc-rs --bench percolation_allocations \
+  --features allocation-probe -- --test
+```
+
+Recorded 2026-09-03 on the same Xeon Gold 6148 and rustc 1.98.0 toolchain as F0.
+The target contains **14 Criterion IDs**: three site, three bond, seven mixed
+uniform, and one heterogeneous mixed. Throughput denominators are `V` for site,
+`E` for bond, and `V + E = 12,160` for every mixed case.
+
+| Law | `p_vertex` | `p_edge` | Point time | Point throughput |
+|---|---:|---:|---:|---:|
+| Site uniform | 0.01 | all | 6.974 us | 587.30 M vertices/s |
+| Site uniform | 0.50 | all | 7.053 us | 580.72 M vertices/s |
+| Site uniform | 0.99 | all | 7.200 us | 568.87 M vertices/s |
+| Bond uniform | all | 0.01 | 13.708 us | 588.27 M edges/s |
+| Bond uniform | all | 0.50 | 13.637 us | 591.32 M edges/s |
+| Bond uniform | all | 0.99 | 13.869 us | 581.44 M edges/s |
+| Mixed uniform | 0.01 | 0.01 | 20.643 us | 589.07 M entities/s |
+| Mixed uniform | 0.50 | 0.50 | 21.097 us | 576.39 M entities/s |
+| Mixed uniform | 0.99 | 0.99 | 20.685 us | 587.86 M entities/s |
+| Mixed uniform | 0.01 | 0.50 | 20.917 us | 581.34 M entities/s |
+| Mixed uniform | 0.99 | 0.50 | 20.592 us | 590.53 M entities/s |
+| Mixed uniform | 0.50 | 0.01 | 20.543 us | 591.94 M entities/s |
+| Mixed uniform | 0.50 | 0.99 | 21.084 us | 576.73 M entities/s |
+| Mixed heterogeneous | alternating 0.25/0.75 | repeating 0.2/0.6/0.6 | 32.144 us | 378.30 M entities/s |
+
+The allocation probe warms a mixed dense configuration, switches through exact
+`p=0/1`, then measures 128 iterations for five laws across five topologies (25
+law/topology records). Site uniform, bond uniform, mixed uniform, mixed
+heterogeneous, and repeated mixed endpoint switching all reported
+**0 allocations/iteration**, **0 allocated bytes/iteration**, and zero peak live
+allocations for chain, square, cubic, sparse-ER, and preferential-attachment
+cases. An endpoint-switch iteration performs two samples, `(0,1)` then `(1,0)`,
+after both dense buffers have been materialized. The logical worst-case dense
+payload is `V + E` bytes: 8,191 (chain), 12,160 (square), 15,616 (cubic),
+20,480 (sparse ER), and 20,470 (preferential attachment). These figures are the
+expected byte payload for the current dense backend, not a measurement of
+private `Vec` capacity or a public runtime introspection API. They describe the
+worst-case reusable two-mask state; a fresh pure law does not materialize the
+irrelevant mask. They exclude struct headers, RNG state, probability-field
+storage, topology, and allocator metadata.
+
+F2 passed independent review and its engineering gates, but its public API
+remains **Experimental** until the foundation milestone stabilizes. F3
+analyzer/workspace and F4 Carlo.rs adapter layers remain absent.
+
 #### `Vec<bool>` storage evidence
 
 On this compiler, the reviewer concern is confirmed: these `Vec<bool>` values
@@ -317,6 +427,6 @@ For every topology and mode, the post-warmup sample+analyze measurement returned
 **7.000 allocations/sample**, **86,016 allocated bytes/sample**, and a peak of
 **7 live allocations / 86,016 live bytes** in the serial measurement region.
 These are analyzer reference costs, not targets. Both bench targets' `--test`
-commands completed successfully; Criterion exercised all 15 throughput IDs.
-Exact raw Criterion intervals remain in `target/criterion/` on the measurement
-host.
+commands completed successfully; Criterion exercised all 14 F2 law throughput
+IDs listed above. Exact raw Criterion intervals remain in `target/criterion/` on
+the measurement host.

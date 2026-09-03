@@ -44,7 +44,7 @@ adapter modules:
 | `generalized/` | Wang-Landau, frozen biases, DOS/histograms, exact enumeration and reweighting |
 | `worm/` | Persistent physical/worm sectors, generic local driver and Ising graph representation |
 | `dynamics/` | Kawasaki exchange, direct Gillespie, Fenwick BKL/n-fold way and hard-sphere event chains |
-| `percolation/` | i.i.d. site/bond/mixed occupancy sampling, union-find cluster statistics, spanning-set crossing |
+| `percolation/` | Experimental F1/F2 foundation (topology views, private activity storage, validated probability fields, independent Bernoulli laws) plus the PR #4 site/bond/mixed reference analyzer/adapter |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
 The established lattice/particle API remains re-exported flat from `lib.rs`.
@@ -230,10 +230,12 @@ Carlo.rs now records sweeps, attempts, accepted/executed moves and event time as
 
 The current branch implementation is a scientifically tested **experimental
 reference**, not a stable production API. The support matrix, frozen scientific
-definitions, PR #4 behavior, limitations, and reproducible F0 performance
-baseline live in [PERCOLATION.md](PERCOLATION.md). Production status requires
-the staged F2-F4 replacement; current type names, public storage, parameters,
-and observable names are not compatibility commitments.
+definitions, PR #4 behavior, limitations, and reproducible performance records
+live in [PERCOLATION.md](PERCOLATION.md). F2 now provides an experimental,
+selectively exported activity/configuration/Bernoulli-law substrate; its mask
+layout and law module remain private. Production status still requires F3-F4
+analysis and runtime composition. Current reference adapter names, public
+storage, parameters, and observable names are not compatibility commitments.
 
 `percolation/` samples ordinary percolation on any `CsrLattice` as i.i.d.
 configurations rather than a Markov chain: every sweep redraws occupancy,
