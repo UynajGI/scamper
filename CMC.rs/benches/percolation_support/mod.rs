@@ -82,21 +82,21 @@ fn power_law(n: usize, edges_per_vertex: usize, seed: u64) -> CsrLattice {
     lattice
 }
 
-pub fn cases() -> Vec<Case> {
-    vec![
-        Case {
+pub fn case(name: &str) -> Option<Case> {
+    match name {
+        "chain" => Some(Case {
             name: "chain",
             lattice: build_chain(4096, false),
             from: vec![0],
             to: vec![4095],
-        },
-        Case {
+        }),
+        "square" => Some(Case {
             name: "square",
             lattice: build_square(64, 64, false),
             from: (0..64).map(|row| row * 64).collect(),
             to: (0..64).map(|row| row * 64 + 63).collect(),
-        },
-        Case {
+        }),
+        "cubic" => Some(Case {
             name: "cubic",
             lattice: build_hypercubic(
                 &[16, 16, 16],
@@ -105,20 +105,28 @@ pub fn cases() -> Vec<Case> {
             ),
             from: (0..4096).filter(|site| site % 16 == 0).collect(),
             to: (0..4096).filter(|site| site % 16 == 15).collect(),
-        },
-        Case {
+        }),
+        "sparse-er" => Some(Case {
             name: "sparse-er",
             lattice: sparse_er(4096, 16_384, 0x4552),
             from: vec![0],
             to: vec![4095],
-        },
-        Case {
+        }),
+        "power-law" => Some(Case {
             name: "power-law",
             lattice: power_law(4096, 4, 0x0050_4f57_4552),
             from: vec![0],
             to: vec![4095],
-        },
-    ]
+        }),
+        _ => None,
+    }
+}
+
+pub fn cases() -> Vec<Case> {
+    ["chain", "square", "cubic", "sparse-er", "power-law"]
+        .into_iter()
+        .map(|name| case(name).expect("known benchmark case"))
+        .collect()
 }
 
 pub fn sample_and_analyze(

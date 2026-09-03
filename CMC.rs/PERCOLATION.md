@@ -24,8 +24,8 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 |---|---|---|
 | Read-only undirected topology capability | Experimental | Independently reviewed F1 `GraphView`/`UndirectedGraphView` contracts use dense IDs and static dispatch; `CsrLattice` and validated zero-copy `BorrowedUndirectedCsr` implement them. The API remains provisional until the foundation milestone stabilizes. |
 | Directed topology capability sketch | Experimental | Separate outgoing/incoming signatures exist only crate-private with compile fixtures; no directed API is re-exported before D1 fixes arc identity and storage contracts. |
-| Static configuration and Bernoulli-law substrate | Experimental | F2 provisional API separates private activity storage from independent site/bond/mixed laws, validates probability domains and topology lengths, and samples allocation-free after preparation. F3 analysis and F4 runtime composition do not exist. |
-| Static site, bond, and mixed Bernoulli percolation on arbitrary owned undirected `CsrLattice` | Experimental | PR #4 reference implementation is extensively scientifically validated, but F3-F4 production analysis, reusable workspace, final observables, and stable adapter API do not exist. |
+| Static configuration and Bernoulli-law substrate | Experimental | F2 provisional API separates private activity storage from independent site/bond/mixed laws, validates probability domains and topology lengths, and samples allocation-free after preparation. The independently reviewed F3 analyzer/workspace composes this substrate but remains Experimental; only F4 final observables and runtime composition are absent. |
+| Static site, bond, and mixed Bernoulli percolation on arbitrary owned or borrowed undirected graphs | Experimental | Independently reviewed F3 component analysis, reusable workspace, canonical identities, and multi-query boundary crossing are implemented. PR #4 remains the runtime migration source; F4 final scientific observables and stable runtime adapter are absent, so the family is not production-ready. |
 | Heterogeneous occupation probabilities | Not implemented | `ProbabilityField` and direct Bernoulli sampling form an Experimental F2 substrate only. N1 exact non-identically-distributed validation and any network/domain facade are absent, so this is not a supported family claim. |
 | Network random failure and degree-conditioned observables | Not implemented | No network facade, probability field, or original-degree profile. |
 | Targeted or adaptive attack and robustness curves | Not implemented | No removal process or vector-valued realization output. |
@@ -39,7 +39,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | FK/random-cluster q=1 | Not implemented | Ordinary bond Bernoulli exists, but no external bond-configuration/FK contract or q=1 reduction validation exists. |
 | FK q=2 Edwards-Sokal/Swendsen-Wang | Not implemented | SW exists, but its sampled FK bonds are not exposed for this analysis. The worm high-temperature even subgraph is not FK. |
 | Generic real-q random-cluster model | Not implemented | No Sweeny or Chayes-Machta sampler. |
-| Boundary crossing between explicit vertex sets | Experimental | Implemented and validated for the PR #4 reference path; square/chain have defaults, other topologies require explicit sets. |
+| Boundary crossing between explicit vertex sets | Experimental | F3 `BoundaryQuery` is validated for owned/borrowed generic undirected views, supports several queries in one component pass, and defines empty/overlap/dedup semantics. Square/chain default sets remain only in the PR #4 adapter pending F4. |
 | Periodic wrapping/winding | Not implemented | No incidence displacement/cocycle or winding analyzer. Crossing is not wrapping. |
 | Newman-Ziff parameter scans | Not implemented | No incremental activation curve or binomial reweighting. |
 
@@ -398,8 +398,155 @@ irrelevant mask. They exclude struct headers, RNG state, probability-field
 storage, topology, and allocator metadata.
 
 F2 passed independent review and its engineering gates, but its public API
-remains **Experimental** until the foundation milestone stabilizes. F3
-analyzer/workspace and F4 Carlo.rs adapter layers remain absent.
+remains **Experimental** until the foundation milestone stabilizes. The
+independently reviewed F3 analyzer/workspace is described below; F4 Carlo.rs
+composition remains absent.
+
+## F3 undirected component analyzer
+
+The F3 production path is generic over borrowed `UndirectedGraphView`,
+`VertexActivity`, and `EdgeActivity` capabilities. It has no site/bond/mixed mode:
+a tracked vertex is exactly an active vertex, and a physical edge is active only
+when the edge and both endpoints are active. Thus site laws use all-active edges,
+bond laws use all-active vertices, and mixed laws compose naturally. Physical
+edges are scanned once in edge-ID order; parallel edges remain distinct and a
+self-loop contributes one active edge.
+
+`ComponentSummary` records active vertex/edge counts, component count, largest
+component identity and size, and raw `M2`. Scientific identity is the canonical
+minimum `VertexId` in a component, never the union-find implementation root.
+Equal-size largest components choose the lowest canonical identity. Empty
+activity and empty borrowed graphs return zero counts, no largest identity, and
+zero `M2`.
+
+`BoundaryQuery::new` checks raw indices against the graph, sorts and deduplicates
+both sets, and retains their validated vertex domain. Empty sets are valid and
+never cross. Overlap means an active vertex in the intersection crosses by
+itself. `analyze` answers several queries without cloning their vectors;
+`analyze_with_labels` explicitly requests per-vertex canonical labels, with
+inactive vertices labelled `None`. `AnalysisResult<'_>` borrows outcomes and
+optional labels from `ComponentWorkspace`, so the borrow checker prevents a
+subsequent analysis from invalidating a live result.
+
+Activity and query dimensions are checked before workspace mutation. Workspace
+capacity failures are typed. Because preparation is a sequence of fallible
+`Vec::try_reserve_exact` calls, successful earlier reservations may remain after
+a later failure, but no partial scientific output is returned. Allocators that
+abort on OOM remain outside the recoverability guarantee. Equal-size graph ID
+domains have no runtime provenance token; using IDs/query semantics from another
+graph of the same size remains the documented F1 caller-contract violation.
+
+Validation retains the PR #4 analyzer and its existing tests unchanged. New F3
+coverage uses a separate incidence/stack flood fill rather than production UF:
+full 2x2 site/bond/mixed enumeration; 7 topology families x 3 laws x 128 seeded
+configurations; owned/borrowed CSR parity; and self-loop, parallel-edge,
+disconnected, isolate, empty, overlap, empty/duplicate/multiple-query, labels,
+stable-identity, typed vertex/edge/query errors, and grow/shrink/labels/query
+workspace reuse cases. Eight targeted integration tests and the internal
+stamp-wrap unit test pass.
+
+The standalone allocation probe prepares topology, query, dense activity, and
+workspace before measuring 128 sample+analyze calls. All 15 topology/law records
+(chain, square, cubic, sparse ER, power law x site/bond/mixed) report **0.000
+allocations/sample** and **0.000 allocated bytes/sample**, compared with the F0
+reference's 7 allocations and 86,016 bytes per sample. The feature-gated,
+doc-hidden audit snapshot accounts for every owned workspace vector. At
+`V=4,096`, one query, and labels prepared, allocator observation and summed
+capacity both equal 196,609 bytes across six allocations:
+
+| Workspace vector | Capacity bytes |
+|---|---:|
+| parent | 32,768 |
+| component size | 32,768 |
+| canonical identity | 32,768 |
+| query root stamps | 32,768 |
+| query outcomes | 1 |
+| optional labels | 65,536 |
+| **Total** | **196,609** |
+
+This is `48.000 bytes/V` and, for this one-query probe, `196,609 bytes/query`.
+The latter is total workspace normalized by query count, not marginal query
+storage: each additional query outcome currently costs one byte while root
+stamps remain vertex-sized. A no-label workload does not reserve label storage.
+Struct headers and allocator metadata are excluded.
+
+The Linux-only RSS target runs one case per fresh process and reads
+`/proc/self/status`; it adds no dependency or unsafe code. From before topology
+construction through 8 warmups plus 128 mixed sample+analyze calls, square
+(`V=4,096`, `E=8,064`) measured `VmHWM 2,096 -> 2,796 KiB` (+700 KiB), while
+sparse ER (`V=4,096`, `E=16,384`) measured `2,100 -> 3,572 KiB` (+1,472 KiB).
+These are whole-process lifetime high-water deltas including topology,
+configuration, RNG, runtime, and allocator effects; they are not workspace
+payload or portable RSS guarantees.
+
+`percolation_components` contains 48 short-run Criterion IDs: production
+sample+analyze, production analyze-only, and equivalent independent flood-fill
+sample+analyze for five topologies x three laws, plus three historical PR #4
+square measurements. Before timing each topology/law pair, 128 identical samples
+assert equality of all six summary fields and query outcomes. The production and
+equivalent-reference timed paths both use `TIMED_SAMPLE_SEED`, advance exactly
+`TIMED_INITIAL_SAMPLES = 1` sample before Criterion, and advance exactly one
+sample per logical iteration. A separate 129-state check (the initial sample plus
+128 following samples) compares every vertex and physical-edge activity flag,
+proving that corresponding iteration indices produce identical configuration
+sequences. Criterion may request different total iteration counts for separate
+benchmark functions, but each path starts from and advances through the same
+indexed sequence. Labels are disabled on both timed paths. Criterion throughput
+uses physical `E`, so it reports edges/s directly; samples/s below is
+`1 / point_time`. Displayed edges/s is recomputed as `E * displayed samples/s`
+and rounded to `0.01 M`, with an automated arithmetic check. Parameters are
+`V=4,096`, `p_site=0.5927`, and `p_bond=0.5`.
+
+| Topology | Law | Production samples/s | Production edges/s | Equivalent reference samples/s | Reference edges/s | Speedup |
+|---|---|---:|---:|---:|---:|---:|
+| chain | site | 13,493 | 55.25 M | 11,480 | 47.01 M | 1.175x |
+| chain | bond | 14,799 | 60.60 M | 9,475 | 38.80 M | 1.562x |
+| chain | mixed | 11,258 | 46.10 M | 8,319 | 34.07 M | 1.353x |
+| square | site | 9,738 | 78.53 M | 4,250 | 34.27 M | 2.291x |
+| square | bond | 8,683 | 70.02 M | 3,324 | 26.80 M | 2.612x |
+| square | mixed | 7,577 | 61.10 M | 2,737 | 22.07 M | 2.769x |
+| cubic | site | 7,608 | 87.64 M | 3,844 | 44.28 M | 1.979x |
+| cubic | bond | 6,540 | 75.34 M | 2,963 | 34.13 M | 2.207x |
+| cubic | mixed | 5,812 | 66.95 M | 2,260 | 26.04 M | 2.572x |
+| sparse ER | site | 3,892 | 63.77 M | 2,935 | 48.09 M | 1.326x |
+| sparse ER | bond | 4,220 | 69.14 M | 2,090 | 34.24 M | 2.019x |
+| sparse ER | mixed | 4,026 | 65.96 M | 2,102 | 34.44 M | 1.915x |
+| power law | site | 6,597 | 108.02 M | 3,122 | 51.12 M | 2.113x |
+| power law | bond | 5,521 | 90.40 M | 2,098 | 34.35 M | 2.632x |
+| power law | mixed | 4,806 | 78.69 M | 2,291 | 37.51 M | 2.098x |
+
+Production analyze-only throughput for the same fixed configurations:
+
+| Topology | Site samples/s / edges/s | Bond samples/s / edges/s | Mixed samples/s / edges/s |
+|---|---:|---:|---:|
+| chain | 17,440 / 71.42 M | 18,884 / 77.33 M | 15,536 / 63.62 M |
+| square | 10,698 / 86.27 M | 10,187 / 82.15 M | 9,660 / 77.90 M |
+| cubic | 8,237 / 94.89 M | 7,574 / 87.25 M | 7,255 / 83.58 M |
+| sparse ER | 3,882 / 63.60 M | 4,780 / 78.32 M | 4,792 / 78.51 M |
+| power law | 6,868 / 112.46 M | 6,625 / 108.48 M | 5,930 / 97.10 M |
+
+The retained PR #4 square timing computes an older, smaller output projection
+and is only a **historical non-equivalent migration baseline**. It is not used to
+claim speedup. The equivalent flood-fill table above is the F3 performance
+comparison. Short-run point estimates are not CI thresholds. Run the evidence
+with:
+
+```bash
+cargo test -p cmc-rs --test suite percolation_components --no-default-features
+cargo bench -p cmc-rs --bench percolation_components --no-default-features -- --test
+cargo bench -p cmc-rs --bench percolation_components --no-default-features
+cargo bench -p cmc-rs --bench percolation_allocations \
+  --features allocation-probe -- --test
+SCUTTLE_RSS_CASE=square SCUTTLE_RSS_LAW=mixed \
+  cargo bench -p cmc-rs --bench percolation_components_rss --no-default-features
+SCUTTLE_RSS_CASE=sparse-er SCUTTLE_RSS_LAW=mixed \
+  cargo bench -p cmc-rs --bench percolation_components_rss --no-default-features
+```
+
+F3 passed independent review and its engineering gates but remains
+**Experimental**. It does not add F4 observable normalization,
+finite-cluster susceptibility, or a Carlo.rs adapter, and no percolation family
+is promoted to production-ready.
 
 #### `Vec<bool>` storage evidence
 

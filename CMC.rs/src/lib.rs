@@ -121,10 +121,15 @@ pub use particle::{
     SimulationCell, TorsionDefinition, TorsionRotation, TranslateParticle, VolumeChangePatch,
     WeightedMove,
 };
+#[cfg(feature = "allocation-probe")]
+#[doc(hidden)]
+pub use percolation::WorkspaceCapacityAudit;
 pub use percolation::{
-    cluster_stats, BondBernoulli, ClusterStats, EdgeActivity, MixedBernoulli, OccupancyState,
-    PercolationMC, PercolationMode, Probability, ProbabilityField, SiteBernoulli,
-    StaticConfiguration, UnionFind, VertexActivity,
+    analyze, analyze_with_labels, cluster_stats, AnalysisError, AnalysisResult, BondBernoulli,
+    BoundaryQuery, BoundaryQueryError, ClusterStats, ComponentLabel, ComponentSummary,
+    ComponentWorkspace, EdgeActivity, MixedBernoulli, OccupancyState, PercolationMC,
+    PercolationMode, Probability, ProbabilityField, SiteBernoulli, StaticConfiguration, UnionFind,
+    VertexActivity,
 };
 pub use postprocess::{
     binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,

@@ -4,9 +4,9 @@ use std::mem::size_of;
 
 use allocation_counter::measure;
 use cmc_rs::{
-    Bond, BondBernoulli, BorrowedUndirectedCsr, GraphView, MixedBernoulli, OccupancyState,
-    PercolationMode, Probability, ProbabilityField, SiteBernoulli, StaticConfiguration,
-    UndirectedGraphView,
+    analyze, Bond, BondBernoulli, BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace,
+    GraphView, MixedBernoulli, OccupancyState, PercolationMode, Probability, ProbabilityField,
+    SiteBernoulli, StaticConfiguration, UndirectedGraphView,
 };
 use percolation_support::{cases, sample_and_analyze, Case, P_BOND, P_SITE};
 use rand::SeedableRng;
@@ -232,12 +232,108 @@ fn report_law_case(case: &Case) {
     }
 }
 
+fn report_component_case(case: &Case, mode: PercolationMode) {
+    let vertex_count = case.lattice.vertex_count();
+    let edge_count = case.lattice.edge_count();
+    let query = BoundaryQuery::new(&case.lattice, &case.from, &case.to)
+        .expect("probe boundary query must be valid");
+    let queries = [query];
+    let mut configuration = StaticConfiguration::new(vertex_count, edge_count);
+    let mut prepared_workspace = None;
+    let workspace_prepare_info = measure(|| {
+        let mut workspace = ComponentWorkspace::new();
+        workspace
+            .prepare(vertex_count, queries.len(), true)
+            .expect("probe workspace reservation");
+        prepared_workspace = Some(workspace);
+    });
+    let mut workspace = prepared_workspace.expect("probe must retain prepared workspace");
+    let workspace_capacity = workspace.capacity_audit();
+    let site = SiteBernoulli::new(probability(P_SITE).into());
+    let bond = BondBernoulli::new(probability(P_BOND).into());
+    let mixed = MixedBernoulli::new(probability(P_SITE).into(), probability(P_BOND).into());
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4633_414c_4c4f);
+    let sample = |configuration: &mut StaticConfiguration, rng: &mut Xoshiro256PlusPlus| {
+        match mode {
+            PercolationMode::Site => site.sample(&case.lattice, configuration, rng),
+            PercolationMode::Bond => bond.sample(&case.lattice, configuration, rng),
+            PercolationMode::SiteBond => mixed.sample(&case.lattice, configuration, rng),
+        }
+        .expect("probe dimensions match");
+    };
+    for _ in 0..8 {
+        sample(&mut configuration, &mut rng);
+        std::hint::black_box(
+            analyze(
+                &case.lattice,
+                &configuration,
+                &configuration,
+                &queries,
+                &mut workspace,
+            )
+            .expect("probe analysis dimensions match"),
+        );
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            sample(&mut configuration, &mut rng);
+            std::hint::black_box(
+                analyze(
+                    &case.lattice,
+                    &configuration,
+                    &configuration,
+                    &queries,
+                    &mut workspace,
+                )
+                .expect("probe analysis dimensions match"),
+            );
+        }
+    });
+    eprintln!(
+        "PERCOLATION_COMPONENT_ALLOC topology={} law={} V={} E={} measured_samples={} \
+         workspace_parent_bytes={} workspace_size_bytes={} workspace_canonical_bytes={} \
+         workspace_stamp_bytes={} workspace_query_output_bytes={} workspace_label_bytes={} \
+         workspace_total_capacity_bytes={} workspace_bytes_per_vertex={:.3} \
+         workspace_bytes_per_query={:.3} workspace_prepare_allocations={} \
+         workspace_prepare_allocator_bytes={} allocations_per_sample={:.3} \
+         allocated_bytes_per_sample={:.3} peak_live_allocations={} peak_live_bytes={} \
+         f0_reference_allocations_per_sample=7 f0_reference_bytes_per_sample=86016",
+        case.name,
+        mode.as_label(),
+        vertex_count,
+        edge_count,
+        ALLOCATION_SAMPLES,
+        workspace_capacity.parent,
+        workspace_capacity.size,
+        workspace_capacity.canonical,
+        workspace_capacity.query_root_stamps,
+        workspace_capacity.query_outcomes,
+        workspace_capacity.labels,
+        workspace_capacity.total_bytes(),
+        workspace_capacity.total_bytes() as f64 / vertex_count.max(1) as f64,
+        workspace_capacity.total_bytes() as f64 / queries.len().max(1) as f64,
+        workspace_prepare_info.count_total,
+        workspace_prepare_info.bytes_total,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
     let benchmark_cases = cases();
     for case in &benchmark_cases {
         report_law_case(case);
+        for mode in [
+            PercolationMode::Site,
+            PercolationMode::Bond,
+            PercolationMode::SiteBond,
+        ] {
+            report_component_case(case, mode);
+        }
     }
     for case in benchmark_cases {
         for mode in [

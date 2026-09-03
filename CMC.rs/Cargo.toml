@@ -55,6 +55,14 @@ name = "percolation_laws"
 harness = false
 
 [[bench]]
+name = "percolation_components"
+harness = false
+
+[[bench]]
+name = "percolation_components_rss"
+harness = false
+
+[[bench]]
 name = "percolation_allocations"
 harness = false
 required-features = ["allocation-probe"]

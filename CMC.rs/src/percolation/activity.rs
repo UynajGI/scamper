@@ -134,6 +134,9 @@ impl ActivityMask {
 /// IDs must belong to the unchanged graph whose vertex count matches this
 /// activity source. Violating that caller contract may panic.
 pub trait VertexActivity {
+    /// Number of vertices in this activity domain.
+    fn vertex_count(&self) -> usize;
+
     fn vertex_active(&self, vertex: VertexId) -> bool;
 }
 
@@ -142,6 +145,9 @@ pub trait VertexActivity {
 /// IDs must belong to the unchanged graph whose edge count matches this
 /// activity source. Violating that caller contract may panic.
 pub trait EdgeActivity {
+    /// Number of physical edges in this activity domain.
+    fn edge_count(&self) -> usize;
+
     fn edge_active(&self, edge: EdgeId) -> bool;
 }
 

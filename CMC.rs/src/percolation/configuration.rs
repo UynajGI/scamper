@@ -54,6 +54,11 @@ impl StaticConfiguration {
 
 impl VertexActivity for StaticConfiguration {
     #[inline]
+    fn vertex_count(&self) -> usize {
+        self.vertex_count()
+    }
+
+    #[inline]
     fn vertex_active(&self, vertex: VertexId) -> bool {
         self.vertices
             .get(vertex.index())
@@ -62,6 +67,11 @@ impl VertexActivity for StaticConfiguration {
 }
 
 impl EdgeActivity for StaticConfiguration {
+    #[inline]
+    fn edge_count(&self) -> usize {
+        self.edge_count()
+    }
+
     #[inline]
     fn edge_active(&self, edge: EdgeId) -> bool {
         self.edges

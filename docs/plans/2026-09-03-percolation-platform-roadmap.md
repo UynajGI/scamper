@@ -737,8 +737,8 @@ advertised as production-ready.
 | F0 semantics and benchmark baseline | **Complete** | Support matrix, scientific definitions, isolated throughput benchmark, allocation/storage probe, independent review and F0 verification are recorded in `CMC.rs/PERCOLATION.md` |
 | F1 read-only topology capabilities | **Complete** | Dense IDs, generic undirected views, `CsrLattice` integration, validated zero-copy borrowed CSR, independent review, correctness tests, allocation probe, and repeated <5% trait-overhead benchmark gate complete |
 | F2 configuration/activity + Bernoulli laws | **Complete** | Private reusable activity storage, `StaticConfiguration`, validated uniform/heterogeneous probability fields, independent site/bond/mixed laws, atomic validation, six-domain aggregate statistical gates over 1-4096 seeds, 14-ID Criterion data, and 25 zero-allocation probe records complete |
-| F3 undirected analyzer + reusable workspace | **Next** | Generic component analysis, physical-edge scan, multi-query crossing, independent flood-fill parity, and zero-allocation steady-state gate |
-| F4 scientific observables + production adapter | **Not started** | Execute only after F3 passes review and knowledge synchronization |
+| F3 undirected analyzer + reusable workspace | **Complete** | Mode-free generic component analysis, physical-edge scan, canonical identity, multi-query crossing, independent flood-fill parity, typed errors, workspace reuse/stamp-wrap tests, 15 zero-allocation records, measured workspace/RSS, and 48-ID equivalent-work Criterion evidence passed independent review |
+| F4 scientific observables + production adapter | **Next** | Define normalized observables and per-sample largest exclusion, then compose the owned Carlo.rs adapter and migrate PR #4 validation |
 | C0 Carlo.rs vector estimates | **Not started (parallel track)** | May proceed independently; process-curve adapters remain blocked until it lands |
 | N/Z/D/E/G/P/R/W tracks | **Not started** | Their dependency gates are defined above |
 

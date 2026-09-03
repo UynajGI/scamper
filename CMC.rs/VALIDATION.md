@@ -7,9 +7,9 @@
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 306 | ~75s |
+| Default (`cargo test`) | 314 | ~75s |
 | Long stochastic (`--ignored`) | 17 | ~40s |
-| **Suite total** | **323** | (+115 lib unit tests) |
+| **Suite total** | **331** | (+116 lib unit tests) |
 
 ## Per-solver validated domain
 
@@ -153,7 +153,7 @@
 - **API invariants:** IDs are publicly produced only by the current view, have checked dense bounds and transparent `usize` layout, but carry no graph provenance. The public incidence contract requires only `Iterator`; directed out/in signatures and their compile fixtures remain crate-private pending D1.
 - **Validation memory:** temporary scratch is one byte per physical edge via `try_reserve_exact` and is dropped before returning the zero-payload borrowed view. Reportable reserve failures return `ValidationCapacity`; abort-on-OOM allocators remain outside the recoverability claim.
 - **Performance:** the repeated three-path `topology_view` benchmark records no >5% regression for generic owned or generic borrowed edge/incidence scans. The allocation probe measures constructor scratch separately and records zero allocations/bytes across 128 post-construction scans; machine-specific results are in [PERCOLATION.md](PERCOLATION.md). No CI timing threshold.
-- **Not implemented:** public owned/borrowed directed CSR (D1) or topology-generic analyzers (F3). F2 activity/configuration/Bernoulli laws are Experimental and documented below.
+- **Not implemented:** public owned/borrowed directed CSR (D1). The independently reviewed topology-generic F3 analyzer remains Experimental; F4 scientific observables and Carlo.rs composition are absent.
 
 ### Activity configuration and Bernoulli laws (F2, Experimental, 2026-09-03)
 - **Ownership and API:** `StaticConfiguration` owns only private vertex/edge masks. The mask type, `law` module, concrete variants, and storage counters are not public; reviewed configuration/activity/probability/law entry points are selectively re-exported.
@@ -165,7 +165,15 @@ configuration after a mixed edge-length error and compare the next 16 RNG words 
 reports zero allocations/bytes for 128 post-warmup iterations of site, bond,
 mixed, heterogeneous mixed, and two-sample endpoint switching. Recorded measurements are in [PERCOLATION.md](PERCOLATION.md).
 - **Limitations:** the API passed F2 review but remains provisional and
-  Experimental until the foundation milestone stabilizes. Heterogeneous fields are only an Experimental F2 substrate; N1 validation/facades remain Not implemented. F3 analyzers/workspaces and F4 Carlo.rs adapters are absent.
+  Experimental until the foundation milestone stabilizes. Heterogeneous fields are only an Experimental F2 substrate; N1 validation/facades remain Not implemented. The independently reviewed F3 analyzer/workspace is Experimental; F4 scientific observables and Carlo.rs adapters are absent.
+
+### Undirected component analyzer (F3, Experimental, 2026-09-03)
+- **Semantics and API:** `analyze` composes `UndirectedGraphView`, `VertexActivity`, and `EdgeActivity` without a mode enum. An active physical edge is counted and joined only when its edge and both endpoints are active; self-loops count once. `ComponentSummary` reports active vertices/edges, component count, canonical-minimum largest identity with deterministic lowest-ID tie breaking, largest size, and raw `M2`. `AnalysisResult<'_>` borrows reusable query outcomes and optional labels from `ComponentWorkspace`, preventing another analysis while results are live.
+- **Boundary queries:** construction from raw indices validates range before allocation, sorts and removes duplicates, accepts empty sets (always false), and defines overlap as crossing when an active common vertex exists. Several queries are answered from one component result without cloning query storage per sample.
+- **Reference and edge cases:** eight F3 integration-test entries include exhaustive 2x2 configurations for site/bond/mixed activity; 7 topologies x 3 laws x 128 seeded configurations against an independent incidence/stack flood fill; owned/borrowed CSR parity; self-loops, parallel edges, disconnected graphs, isolates, empty borrowed CSR, overlap, empty/duplicate/multiple queries, all summary fields, labels partition, edge-order-independent identity, typed vertex/edge/query errors, and grow/shrink/labels/query workspace reuse. An internal unit test forces the query generation stamp through `u64::MAX` and verifies clearing before reuse.
+- **Atomicity:** activity and query dimensions are validated before workspace mutation. Capacity errors are typed; successful earlier `try_reserve` calls may retain capacity if a later reserve fails, but no partial scientific result is returned. Abort-on-OOM allocators remain outside the recoverability claim.
+- **Performance:** 15 allocation records (5 topologies x 3 laws, 128 post-warmup sample+analyze calls each) report zero allocations and zero bytes per sample after `ComponentWorkspace::prepare`, versus the retained F0 reference's 7 allocations / 86,016 bytes per sample. Feature-gated audit accounting measures all six workspace Vec capacities as 196,609 bytes at V=4096, Q=1, labels enabled, exactly matching allocator-observed prepare bytes. The 48-ID Criterion run reports samples/s and edges/s and compares every topology/law against an equivalent independent flood fill after 128-sample parity. Fresh-process Linux `/proc` probes record square and sparse-ER process `VmHWM`; full data are in [PERCOLATION.md](PERCOLATION.md).
+- **Maturity and limits:** passed independent review and engineering gates; still Experimental. F4 scientific observables, susceptibility/normalization policy, and Carlo.rs adapter are intentionally absent. PR #4 remains the adapter/reference source through F4.
 
 ### Percolation, site / bond / mixed (`PercolationMC`, 2026-09-02)
 - **Status:** Experimental reference implementation. The tests below are assets
