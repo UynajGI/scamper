@@ -1,14 +1,17 @@
-//! Occupancy configurations for site and bond percolation.
+//! Occupancy configurations for site, bond and mixed site-bond percolation.
 
 use crate::lattice::graph::CsrLattice;
 use rand::{Rng, RngExt};
 
-/// Percolation mode: occupied sites or occupied bonds.
+/// Percolation mode: occupied sites, occupied bonds, or both independently.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PercolationMode {
     #[default]
     Site,
     Bond,
+    /// Mixed site-bond: a bond connects only when the bond itself and both
+    /// endpoint sites are open.
+    SiteBond,
 }
 
 impl PercolationMode {
@@ -17,8 +20,9 @@ impl PercolationMode {
         match label {
             "site" => Ok(Self::Site),
             "bond" => Ok(Self::Bond),
+            "site-bond" => Ok(Self::SiteBond),
             other => Err(format!(
-                "unknown percolation mode `{other}`, expected `site` or `bond`"
+                "unknown percolation mode `{other}`, expected `site`, `bond` or `site-bond`"
             )),
         }
     }
@@ -28,15 +32,27 @@ impl PercolationMode {
         match self {
             Self::Site => "site",
             Self::Bond => "bond",
+            Self::SiteBond => "site-bond",
         }
+    }
+
+    /// Whether this mode samples site occupation.
+    pub const fn samples_sites(self) -> bool {
+        !matches!(self, Self::Bond)
+    }
+
+    /// Whether this mode samples bond occupation.
+    pub const fn samples_bonds(self) -> bool {
+        !matches!(self, Self::Site)
     }
 }
 
 /// Independent occupancy configuration of one percolation sample.
 ///
 /// Site percolation uses `site_open`; bond percolation uses `bond_open`
-/// (indexed by physical edge id). The irrelevant array stays all-`false`
-/// and is ignored by [`super::cluster_stats`].
+/// (indexed by physical edge id); mixed site-bond percolation uses both.
+/// Arrays irrelevant to the mode stay all-`false` and are ignored by
+/// [`super::cluster_stats`].
 #[derive(Debug, Clone)]
 pub struct OccupancyState {
     pub mode: PercolationMode,
@@ -56,28 +72,39 @@ impl OccupancyState {
         }
     }
 
-    /// Redraw every relevant element independently open with probability `p`.
-    pub fn resample<R: Rng + ?Sized>(&mut self, p: f64, rng: &mut R) {
-        match self.mode {
-            PercolationMode::Site => {
-                for open in &mut self.site_open {
-                    *open = rng.random::<f64>() < p;
-                }
+    /// Redraw every sampled element independently open: sites with
+    /// probability `p_site`, bonds with probability `p_bond` (pure modes
+    /// ignore the irrelevant probability).
+    pub fn resample<R: Rng + ?Sized>(&mut self, p_site: f64, p_bond: f64, rng: &mut R) {
+        if self.mode.samples_sites() {
+            for open in &mut self.site_open {
+                *open = rng.random::<f64>() < p_site;
             }
-            PercolationMode::Bond => {
-                for open in &mut self.bond_open {
-                    *open = rng.random::<f64>() < p;
-                }
+        }
+        if self.mode.samples_bonds() {
+            for open in &mut self.bond_open {
+                *open = rng.random::<f64>() < p_bond;
             }
         }
     }
 
-    /// Number of occupied elements: open sites (site mode) or open bonds
-    /// (bond mode).
+    /// Number of open sites.
+    pub fn occupied_sites(&self) -> usize {
+        self.site_open.iter().filter(|&&open| open).count()
+    }
+
+    /// Number of open bonds.
+    pub fn occupied_bonds(&self) -> usize {
+        self.bond_open.iter().filter(|&&open| open).count()
+    }
+
+    /// Mode-relevant occupied element count: open sites (site mode), open
+    /// bonds (bond mode) or both summed (site-bond mode).
     pub fn occupied(&self) -> usize {
         match self.mode {
-            PercolationMode::Site => self.site_open.iter().filter(|&&open| open).count(),
-            PercolationMode::Bond => self.bond_open.iter().filter(|&&open| open).count(),
+            PercolationMode::Site => self.occupied_sites(),
+            PercolationMode::Bond => self.occupied_bonds(),
+            PercolationMode::SiteBond => self.occupied_sites() + self.occupied_bonds(),
         }
     }
 }
@@ -91,7 +118,11 @@ mod tests {
 
     #[test]
     fn mode_labels_round_trip() {
-        for mode in [PercolationMode::Site, PercolationMode::Bond] {
+        for mode in [
+            PercolationMode::Site,
+            PercolationMode::Bond,
+            PercolationMode::SiteBond,
+        ] {
             assert_eq!(PercolationMode::from_label(mode.as_label()), Ok(mode));
         }
         assert!(PercolationMode::from_label("edge").is_err());
@@ -100,9 +131,15 @@ mod tests {
     #[test]
     fn new_configuration_is_all_closed() {
         let lattice = build_square(2, 2, false);
-        for mode in [PercolationMode::Site, PercolationMode::Bond] {
+        for mode in [
+            PercolationMode::Site,
+            PercolationMode::Bond,
+            PercolationMode::SiteBond,
+        ] {
             let occupancy = OccupancyState::new(&lattice, mode);
             assert_eq!(occupancy.occupied(), 0);
+            assert_eq!(occupancy.occupied_sites(), 0);
+            assert_eq!(occupancy.occupied_bonds(), 0);
             assert_eq!(occupancy.site_open.len(), 4);
             assert_eq!(occupancy.bond_open.len(), lattice.n_edges());
         }
@@ -112,17 +149,49 @@ mod tests {
     fn resample_extremes_are_deterministic() {
         let lattice = build_square(2, 2, false);
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(7);
-        for mode in [PercolationMode::Site, PercolationMode::Bond] {
+        for mode in [
+            PercolationMode::Site,
+            PercolationMode::Bond,
+            PercolationMode::SiteBond,
+        ] {
             let mut occupancy = OccupancyState::new(&lattice, mode);
-            occupancy.resample(0.0, &mut rng);
+            occupancy.resample(0.0, 0.0, &mut rng);
             assert_eq!(occupancy.occupied(), 0, "p = 0 must occupy nothing");
-            occupancy.resample(1.0, &mut rng);
-            let total = match mode {
+            occupancy.resample(1.0, 1.0, &mut rng);
+            let sampled = match mode {
                 PercolationMode::Site => lattice.n_sites,
                 PercolationMode::Bond => lattice.n_edges(),
+                PercolationMode::SiteBond => lattice.n_sites + lattice.n_edges(),
             };
-            assert_eq!(occupancy.occupied(), total, "p = 1 must occupy everything");
+            assert_eq!(
+                occupancy.occupied(),
+                sampled,
+                "p = 1 must occupy everything"
+            );
         }
+    }
+
+    #[test]
+    fn mixed_resample_ignores_unused_probability() {
+        // Bond mode must sample bonds even with a degenerate p_site, and
+        // vice versa; mixed mode samples both arrays.
+        let lattice = build_square(2, 2, false);
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(13);
+
+        let mut bond = OccupancyState::new(&lattice, PercolationMode::Bond);
+        bond.resample(0.0, 1.0, &mut rng);
+        assert_eq!(bond.occupied_bonds(), lattice.n_edges());
+        assert_eq!(bond.occupied_sites(), 0);
+
+        let mut site = OccupancyState::new(&lattice, PercolationMode::Site);
+        site.resample(1.0, 0.0, &mut rng);
+        assert_eq!(site.occupied_sites(), lattice.n_sites);
+        assert_eq!(site.occupied_bonds(), 0);
+
+        let mut mixed = OccupancyState::new(&lattice, PercolationMode::SiteBond);
+        mixed.resample(1.0, 1.0, &mut rng);
+        assert_eq!(mixed.occupied_sites(), lattice.n_sites);
+        assert_eq!(mixed.occupied_bonds(), lattice.n_edges());
     }
 
     #[test]
@@ -133,7 +202,7 @@ mod tests {
         let trials = 200;
         let mut total_open = 0usize;
         for _ in 0..trials {
-            occupancy.resample(0.5, &mut rng);
+            occupancy.resample(0.5, 0.0, &mut rng);
             let open = occupancy.occupied();
             assert!(open <= lattice.n_sites);
             total_open += open;

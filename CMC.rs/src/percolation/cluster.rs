@@ -74,6 +74,8 @@ pub struct ClusterStats {
 /// Site percolation connects an edge when both endpoints are open and counts
 /// clusters over open sites only. Bond percolation connects open edges and
 /// counts clusters over all sites, so isolated sites are singleton clusters.
+/// Mixed site-bond percolation connects an edge when the bond itself and
+/// both endpoint sites are open, and counts clusters over open sites.
 /// `from`/`to` are spanning test sets: [`ClusterStats::spanning`] is set when
 /// a single cluster contains at least one site of each. All set entries must
 /// be in range; disjoint sets keep `spanning = false` at `p = 0` meaningful.
@@ -91,6 +93,11 @@ pub fn cluster_stats(
                 occupancy.site_open[edge.source] && occupancy.site_open[edge.target]
             }
             PercolationMode::Bond => occupancy.bond_open[edge_id],
+            PercolationMode::SiteBond => {
+                occupancy.bond_open[edge_id]
+                    && occupancy.site_open[edge.source]
+                    && occupancy.site_open[edge.target]
+            }
         };
         if connected {
             uf.union(edge.source, edge.target);
@@ -117,8 +124,8 @@ pub fn cluster_stats(
     };
     for site in 0..n_sites {
         let tracked = match occupancy.mode {
-            PercolationMode::Site => occupancy.site_open[site],
             PercolationMode::Bond => true,
+            PercolationMode::Site | PercolationMode::SiteBond => occupancy.site_open[site],
         };
         if !tracked {
             continue;
@@ -236,13 +243,17 @@ mod tests {
         let lattice = build_square(3, 3, false);
         let from = vec![0, 3, 6];
         let to = vec![2, 5, 8];
-        for mode in [PercolationMode::Site, PercolationMode::Bond] {
+        for mode in [
+            PercolationMode::Site,
+            PercolationMode::Bond,
+            PercolationMode::SiteBond,
+        ] {
             let occupancy = OccupancyState::new(&lattice, mode);
             let stats = cluster_stats(&lattice, &occupancy, &from, &to);
             assert!(!stats.spanning, "p = 0 cannot span");
             match mode {
-                // Site: nothing occupied, so no clusters exist at all.
-                PercolationMode::Site => {
+                // Site and mixed: no open sites, so no clusters exist.
+                PercolationMode::Site | PercolationMode::SiteBond => {
                     assert_eq!(stats.max_size, 0);
                     assert_eq!(stats.second_moment, 0);
                     assert_eq!(stats.n_clusters, 0);
@@ -264,6 +275,101 @@ mod tests {
             assert_eq!(stats.second_moment, 81);
             assert_eq!(stats.n_clusters, 1, "p = 1 leaves one connected cluster");
         }
+    }
+
+    #[test]
+    fn site_bond_semantics_require_both_endpoints_and_bond() {
+        // Chain 0 - 1 - 2 in mixed mode: a bond connects only when it is
+        // open AND both endpoints are open.
+        let lattice = build_chain(3, false);
+        let mut occupancy = OccupancyState::new(&lattice, PercolationMode::SiteBond);
+
+        // Both sites open, bond closed: two singleton clusters.
+        occupancy.site_open.copy_from_slice(&[true, true, false]);
+        occupancy.bond_open.copy_from_slice(&[false, false]);
+        let stats = cluster_stats(&lattice, &occupancy, &[0], &[1]);
+        assert_eq!(
+            stats,
+            ClusterStats {
+                max_size: 1,
+                second_moment: 2,
+                n_clusters: 2,
+                spanning: false,
+            }
+        );
+
+        // Bond open but endpoint 1 closed: still no connection.
+        occupancy.site_open.copy_from_slice(&[true, false, true]);
+        occupancy.bond_open.copy_from_slice(&[true, true]);
+        let stats = cluster_stats(&lattice, &occupancy, &[0], &[2]);
+        assert_eq!(
+            stats,
+            ClusterStats {
+                max_size: 1,
+                second_moment: 2,
+                n_clusters: 2,
+                spanning: false,
+            }
+        );
+
+        // Everything open: one cluster spanning the chain.
+        occupancy.site_open.copy_from_slice(&[true, true, true]);
+        occupancy.bond_open.copy_from_slice(&[true, true]);
+        let stats = cluster_stats(&lattice, &occupancy, &[0], &[2]);
+        assert!(stats.spanning);
+        assert_eq!(stats.max_size, 3);
+        assert_eq!(stats.n_clusters, 1);
+    }
+
+    #[test]
+    fn site_bond_spanning_matches_closed_form_semantics() {
+        // 2x2 open square: crossing needs an active horizontal bond, so
+        // P(span) = 2 p_s^2 p_b - p_s^4 p_b^2 (hand-derived; the top and
+        // bottom rows are the only routes and coincide only when all four
+        // sites and both bonds are open). Spot-check the structural parts.
+        let lattice = build_square(2, 2, false);
+        let from = [0, 2];
+        let to = [1, 3];
+        let mut occupancy = OccupancyState::new(&lattice, PercolationMode::SiteBond);
+
+        // Only the top row active: sites {0,1} + bond 0 = (0,1).
+        occupancy
+            .site_open
+            .copy_from_slice(&[true, true, false, false]);
+        occupancy
+            .bond_open
+            .copy_from_slice(&[true, false, false, false]);
+        assert!(cluster_stats(&lattice, &occupancy, &from, &to).spanning);
+
+        // Same sites, bond closed: no route.
+        occupancy
+            .bond_open
+            .copy_from_slice(&[false, false, false, false]);
+        assert!(!cluster_stats(&lattice, &occupancy, &from, &to).spanning);
+
+        // All sites plus both horizontal bonds (0,1) and (2,3): two
+        // disconnected row clusters; the top row spans left-to-right.
+        occupancy
+            .site_open
+            .copy_from_slice(&[true, true, true, true]);
+        occupancy
+            .bond_open
+            .copy_from_slice(&[true, false, false, true]);
+        let stats = cluster_stats(&lattice, &occupancy, &from, &to);
+        assert!(stats.spanning);
+        assert_eq!(stats.max_size, 2);
+        assert_eq!(stats.second_moment, 8);
+        assert_eq!(stats.n_clusters, 2);
+
+        // All sites, only the vertical bonds (0,2) and (1,3): two column
+        // clusters, no left-right crossing.
+        occupancy
+            .bond_open
+            .copy_from_slice(&[false, true, true, false]);
+        let stats = cluster_stats(&lattice, &occupancy, &from, &to);
+        assert!(!stats.spanning);
+        assert_eq!(stats.max_size, 2);
+        assert_eq!(stats.n_clusters, 2);
     }
 
     #[test]
