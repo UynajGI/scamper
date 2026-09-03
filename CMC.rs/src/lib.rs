@@ -45,6 +45,7 @@ pub mod classical_mc;
 pub mod multi_spin;
 pub mod postprocess;
 pub mod statistics;
+pub mod topology;
 pub mod worm;
 
 // Hierarchical modules
@@ -128,6 +129,10 @@ pub use postprocess::{
     zero_field_ising_susceptibility,
 };
 pub use statistics::{statistical_efficiency, StatisticalEfficiency};
+pub use topology::{
+    BorrowedUndirectedCsr, EdgeId, GraphView, Incidence, TopologyError, UndirectedGraphView,
+    VertexId,
+};
 pub use worm::{
     enumerate_ising_graph_expansion, EndpointPairHistogram, ExactIsingGraphExpansion,
     IsingComponentWorm, IsingGraphConfiguration, IsingGraphPatch, IsingGraphWormEnsemble,

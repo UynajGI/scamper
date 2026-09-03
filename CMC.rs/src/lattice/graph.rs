@@ -386,6 +386,45 @@ impl CsrLattice {
     }
 }
 
+impl crate::topology::GraphView for CsrLattice {
+    #[inline(always)]
+    fn vertex_count(&self) -> usize {
+        self.n_sites
+    }
+}
+
+impl crate::topology::UndirectedGraphView for CsrLattice {
+    #[inline(always)]
+    fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    #[inline(always)]
+    fn edge_endpoints(&self, edge: crate::topology::EdgeId) -> [crate::topology::VertexId; 2] {
+        let edge = self.edges[edge.index()];
+        [
+            crate::topology::VertexId::from_valid_index(edge.source),
+            crate::topology::VertexId::from_valid_index(edge.target),
+        ]
+    }
+
+    #[inline(always)]
+    fn incidences(
+        &self,
+        vertex: crate::topology::VertexId,
+    ) -> impl Iterator<Item = crate::topology::Incidence> + '_ {
+        let range = self.offsets[vertex.index()]..self.offsets[vertex.index() + 1];
+        self.neighbors[range.clone()]
+            .iter()
+            .copied()
+            .zip(self.edge_ids[range].iter().copied())
+            .map(|(neighbor, edge)| crate::topology::Incidence {
+                neighbor: crate::topology::VertexId::from_valid_index(neighbor),
+                edge: crate::topology::EdgeId::from_valid_index(edge),
+            })
+    }
+}
+
 fn validate_dims(dims: &[usize], bond_types: &[BondType]) {
     assert!(
         !dims.is_empty(),

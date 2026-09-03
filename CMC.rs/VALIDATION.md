@@ -7,9 +7,9 @@
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 294 | ~75s |
+| Default (`cargo test`) | 303 | ~75s |
 | Long stochastic (`--ignored`) | 17 | ~40s |
-| **Suite total** | **311** | (+95 lib unit tests) |
+| **Suite total** | **320** | (+97 lib unit tests) |
 
 ## Per-solver validated domain
 
@@ -146,6 +146,14 @@
 - **Equilibrium distribution:** three analytic cases against in-code quadrature references through the real solver (translation + plane-rotation moves): two-molecule pair ⟨U⟩ and bound fraction (1D Simpson); dumbbell+atom probe nematic ⟨cos 2α⟩ and ⟨U⟩ (2D midpoint); rotor-pair alignment ⟨cos 2Δθ⟩ across a coupling sweep ε=1→3 (linear response → saturation, the Langevin-x analog; max|z|=1.26 default, 7-coupling long variant max|z|=1.7). Thermalization-length pitfall documented (20k+ sweeps needed at strong coupling)
 - **External field (2026-08-19):** one-body dipolar term `DipolarExternalField` (per-atom charges, wrap-safe minimum-image dipoles, non-neutral molecules rejected loudly); free-rotor equilibrium vs the analytic Langevin-dipole answers through the real kernel — 2D: ⟨cosθ⟩=I₁(x)/I₀(x), ⟨cos²θ⟩=(1+I₂/I₀)/2; 3D: ⟨cosθ⟩=L(x), ⟨cos²θ⟩=1−2L(x)/x; x=βpE grid 0.5–5, per-seed |z|<4; machine-precision identity `external_field_energy = −E·μ` (1e-12) every sweep
 - **NOT validated:** — (external-field Langevin case validated 2026-08-19)
+
+### Read-only topology capability (`GraphView`, F1, Experimental, 2026-09-03)
+- **Owned/borrowed parity:** `CsrLattice` and `BorrowedUndirectedCsr` agree on vertex/edge counts, physical endpoints, and every incidence for a fixture combining disconnected components, isolates, parallel edges, and a self-loop.
+- **Representation invariants:** constructor tests reject missing/nonzero/decreasing/wrong-end offsets, incidence length mismatch, out-of-range neighbors/edge IDs/endpoints (including `usize::MAX` edge ID), incidence-to-endpoint mismatch, incorrect physical-edge multiplicity, two same-direction incidences, a third self-loop incidence, and a large unreferenced edge table. Empty borrowed graphs are explicitly valid as `offsets = [0]`; private helper coverage checks reportable validation-capacity overflow.
+- **API invariants:** IDs are publicly produced only by the current view, have checked dense bounds and transparent `usize` layout, but carry no graph provenance. The public incidence contract requires only `Iterator`; directed out/in signatures and their compile fixtures remain crate-private pending D1.
+- **Validation memory:** temporary scratch is one byte per physical edge via `try_reserve_exact` and is dropped before returning the zero-payload borrowed view. Reportable reserve failures return `ValidationCapacity`; abort-on-OOM allocators remain outside the recoverability claim.
+- **Performance:** the repeated three-path `topology_view` benchmark records no >5% regression for generic owned or generic borrowed edge/incidence scans. The allocation probe measures constructor scratch separately and records zero allocations/bytes across 128 post-construction scans; machine-specific results are in [PERCOLATION.md](PERCOLATION.md). No CI timing threshold.
+- **Not implemented:** public owned/borrowed directed CSR (D1), activity/law/configuration (F2), or topology-generic analyzers (F3).
 
 ### Percolation, site / bond / mixed (`PercolationMC`, 2026-09-02)
 - **Status:** Experimental reference implementation. The tests below are assets

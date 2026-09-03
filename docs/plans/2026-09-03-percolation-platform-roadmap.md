@@ -687,7 +687,9 @@ A family or capability PR is complete only when all applicable items pass:
    allocations; optimization data appears in the same PR.
 9. README and VALIDATION update Supported/Validated/Experimental/Not
    implemented claims.
-10. Crate-root re-exports expose only stable user entry points.
+10. Crate-root re-exports expose only independently reviewed public entry points
+    with explicit maturity; crate-private sketches and unreviewed types remain
+    unexported.
 
 A correct but unbenchmarked optimized path remains experimental. A fast path
 without independent parity evidence does not merge.
@@ -733,8 +735,9 @@ advertised as production-ready.
 |-------|--------|----------------------|
 | Philosophy and roadmap | **Established** | Normative philosophy and this staged roadmap are committed |
 | F0 semantics and benchmark baseline | **Complete** | Support matrix, scientific definitions, isolated throughput benchmark, allocation/storage probe, independent review and F0 verification are recorded in `CMC.rs/PERCOLATION.md` |
-| F1 read-only topology capabilities | **Next** | Review exact trait signatures against `CsrLattice`, a borrowed CSR fixture, and a directed CSR sketch before implementation |
-| F2-F4 static production foundation | **Not started** | Execute only after the preceding foundation stage passes review and knowledge synchronization |
+| F1 read-only topology capabilities | **Complete** | Dense IDs, generic undirected views, `CsrLattice` integration, validated zero-copy borrowed CSR, independent review, correctness tests, allocation probe, and repeated <5% trait-overhead benchmark gate complete |
+| F2 configuration/activity + Bernoulli laws | **Next** | Separate configuration storage from site/bond/mixed sampling laws; require fixed-seed, invalid-probability, reduction, and zero-allocation gates |
+| F3-F4 static analyzer and production adapter | **Not started** | Execute only after F2 passes review and knowledge synchronization |
 | C0 Carlo.rs vector estimates | **Not started (parallel track)** | May proceed independently; process-curve adapters remain blocked until it lands |
 | N/Z/D/E/G/P/R/W tracks | **Not started** | Their dependency gates are defined above |
 

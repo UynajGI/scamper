@@ -22,7 +22,9 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 
 | Family or capability | Status | Current scope or reason |
 |---|---|---|
-| Static site, bond, and mixed Bernoulli percolation on arbitrary owned undirected `CsrLattice` | Experimental | PR #4 reference implementation is extensively scientifically validated, but F1-F4 production layering, borrowed topology, reusable workspace, final observables, and stable API do not exist. |
+| Read-only undirected topology capability | Experimental | Independently reviewed F1 `GraphView`/`UndirectedGraphView` contracts use dense IDs and static dispatch; `CsrLattice` and validated zero-copy `BorrowedUndirectedCsr` implement them. The API remains provisional until the foundation milestone stabilizes. |
+| Directed topology capability sketch | Experimental | Separate outgoing/incoming signatures exist only crate-private with compile fixtures; no directed API is re-exported before D1 fixes arc identity and storage contracts. |
+| Static site, bond, and mixed Bernoulli percolation on arbitrary owned undirected `CsrLattice` | Experimental | PR #4 reference implementation is extensively scientifically validated, but F2-F4 production layering, reusable workspace, final observables, and stable API do not exist. |
 | Heterogeneous occupation probabilities | Not implemented | Only one uniform probability per sampled entity kind exists. |
 | Network random failure and degree-conditioned observables | Not implemented | No network facade, probability field, or original-degree profile. |
 | Targeted or adaptive attack and robustness curves | Not implemented | No removal process or vector-valued realization output. |
@@ -167,7 +169,9 @@ cargo bench -p cmc-rs --bench percolation_allocations \
   --features allocation-probe -- --test
 ```
 
-The standalone probe prints `VEC_BOOL_PROBE` and `PERCOLATION_ALLOC` records.
+The standalone probe prints `VEC_BOOL_PROBE`, `PERCOLATION_ALLOC`, and
+`TOPOLOGY_VIEW_ALLOC` records. The topology construction/scan probe uses a
+separate measurement region from the F0 sample/analyze allocation baseline.
 `site_logical_capacity` and `bond_logical_capacity` are the capacities reported
 by `Vec<bool>` in logical elements; they are not byte counts by API contract.
 `estimated_owned_storage_bytes` sums the owned CSR vector capacities plus
@@ -209,6 +213,83 @@ following measurements do not include that crate's global allocator wrapper.
 | cubic | 4096 | 11,520 | 941,320 | 229.814 | 81.712 | 7,469 | 6,392 | 5,308 |
 | sparse ER | 4096 | 16,384 | 1,101,832 | 269.002 | 67.250 | 4,243 | 4,203 | 3,852 |
 | preferential attachment | 4096 | 16,374 | 1,101,374 | 268.890 | 67.264 | 6,515 | 5,553 | 4,552 |
+
+## F1 read-only topology capability
+
+The F1 API remains **Experimental and provisional** after independent review.
+`GraphView` and
+`UndirectedGraphView` expose dense `VertexId`/`EdgeId`, physical edge endpoints,
+and incidence iteration through static dispatch. The public iterator contract is
+only `Iterator`; current CSR implementations may provide stronger iterator
+properties internally without imposing them on future mmap, generated, or
+filtered views. `GraphView::vertex_ids()` is a default convenience, not a
+performance requirement for every implementation.
+
+IDs are created publicly only by `GraphView::vertex_id` and
+`UndirectedGraphView::edge_id`. Their transparent newtypes guarantee a dense
+numeric representation but carry no graph provenance. An ID must be used only
+with the unchanged validated view that produced it. Cross-graph IDs or IDs kept
+across structural mutation violate the caller contract and may panic at
+infallible accessors, but cannot cause memory unsafety. This matters for
+`CsrLattice`: its existing public fields remain mutable, so construction or an
+explicit successful `CsrLattice::validate()` is the precondition for trait use.
+
+`BorrowedUndirectedCsr` borrows offsets, neighbors, physical edge IDs, and AoS
+`[[usize; 2]]` physical endpoints without copying. Its constructor accepts the
+empty graph (`offsets = [0]`) and validates offsets, ranges, endpoint agreement,
+and exactly two correctly oriented incidences per physical edge. Parallel edges
+and self-loops are preserved; adjacency ordering is unrestricted.
+Offsets/neighbors alone are insufficient because stable physical edge IDs cannot
+be inferred for parallel edges or self-loops.
+
+Construction uses temporary validation state of one byte per physical edge and
+drops it before returning the zero-payload view. `try_reserve_exact` capacity or
+allocation failures return `TopologyError::ValidationCapacity`; allocator
+configurations that abort on OOM cannot be promised recoverable.
+
+Directed out/in signatures remain a crate-private compile sketch. They are not
+crate-root exports or compatibility commitments; D1 must define stable arc
+identity before publishing them.
+
+`topology_view` compares direct owned access, generic owned access, and generic
+borrowed access on an open 128x128 square (`V=16,384`, `E=32,512`, `I=65,024`).
+Run with:
+
+```bash
+cargo bench -p cmc-rs --bench topology_view --no-default-features -- --test
+cargo bench -p cmc-rs --bench topology_view --no-default-features
+```
+
+Recorded on 2026-09-03 on the same Xeon Gold 6148 and rustc 1.98.0 toolchain as
+F0, using 20 samples, 250 ms warm-up, and 1 s measurement per case. These are the
+second complete run after the three-path benchmark was added:
+
+| Scan | Direct owned | Generic owned | Owned delta | Generic borrowed | Borrowed delta |
+|---|---:|---:|---:|---:|---:|
+| Physical edges | 24.211 us | 23.472 us | -3.05% | 13.768 us | -43.13% |
+| CSR incidences | 58.033 us | 56.896 us | -1.96% | 57.978 us | -0.09% |
+
+The first complete run also stayed below the 5% regression gate: generic owned
+was -0.08% for edge scan and +0.32% for incidence scan; generic borrowed was
+-42.93% and +0.89%, respectively. Borrowed edge scans benefit from compact AoS
+endpoint input compared with the wider `Bond` records; this is a data-layout
+effect, not evidence that trait dispatch accelerates work. There is no CI timing
+threshold.
+
+The separate allocation probe constructs and validates the borrowed view outside
+the scan measurement region, then repeats a generic edge+incidence scan 128
+times. For its open 64x64 square (`V=4,096`, `E=8,064`, `I=16,128`), the 64-byte
+view header is an x86_64 rustc 1.98 measurement, not a cross-platform guarantee.
+Construction performed one 8,064-byte scratch allocation, exactly one byte per
+physical edge. The view owns zero payload bytes. The four borrowed input arrays
+total 419,848 bytes (`102.502 bytes/V`, `52.064 bytes/E`); each steady-state scan
+performed **0 allocations**, allocated **0 bytes**, and had **0 peak live
+allocations/bytes**. Run the probe with:
+
+```bash
+cargo bench -p cmc-rs --bench percolation_allocations \
+  --features allocation-probe -- --test
+```
 
 #### `Vec<bool>` storage evidence
 

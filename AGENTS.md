@@ -45,6 +45,7 @@ Directories group related modules; public API is re-exported flat from `lib.rs`.
 |-----------|-------|---------|
 | `core/` | `move.rs`, `cache.rs`, `trial.rs`, `ensemble.rs`, `acceptance.rs`, `visit.rs` | Move types, incremental patches, `TrialEvaluator`, `MetropolisHastingsAcceptance`, visit schedules |
 | `lattice/` | `graph.rs`, `state.rs`, `interaction.rs`, `models.rs`, `proposal.rs` | `CsrLattice` + builders, `System`, `Hamiltonian` + capability traits, built-in models, `ProposalStrategy` |
+| `topology/` | `id.rs`, `view.rs`, `borrowed_csr.rs`, `error.rs` | Dense `VertexId`/`EdgeId`, read-only graph capabilities, validated zero-copy borrowed undirected CSR |
 | `algorithms/` | `metropolis.rs`, `wolff.rs`, `swendsen_wang.rs`, `heat_bath.rs`, `microcanonical.rs`, `hybrid.rs`, `common.rs` | `Algorithm<H>` trait + 6 kernels, `SimulationPhase`, `checked_probability` |
 | `observables/` | `energy.rs`, `magnetization.rs`, `correlation.rs`, `common.rs` | `Observable<H>`, `DefaultObservableSet`, `TotalEnergy`, `Magnetization`, `compute_correlation_1d` |
 | `particle/` | `potential.rs`, `cell.rs`, `cell_list.rs`, `configuration.rs`, `state.rs`, `movement.rs`, `algorithm.rs`, `mc.rs`, `error.rs`, `batch.rs`, `grand.rs`, `mixture.rs`, `molecule.rs`, `volume.rs` | `PairPotential` trait, `LennardJones` 12-6 (Lorentz-Berthelot mixing, 3 cutoff modes), `OrthorhombicCell<D>`, packed `CellList`, `ParticleSystem` transactional evaluate/commit, `ParticleMetropolisCore` (NVT), `ParticleNptMetropolisCore` (NPT), `ParticleGrandCanonicalCore` (μVT), `MolecularMetropolisCore` (rigid molecules), `DipolarExternalField` (one-body −E·μ coupling), `MoveMixture`, `LennardJonesNvt/Npt/MuVt` Carlo.rs adapters |
@@ -59,6 +60,7 @@ Key patterns:
 - Models are stateless — temperature (β) lives in `System`, not in model structs
 - Algorithm trait: `sweep(&mut self, system, model, rng)` — directly mutates system.energy
 - CSR lattice: cache-friendly neighbor iteration via `lattice.neighbors(site)` returning `&[usize]`
+- Topology views (F1 Experimental): public `GraphView` + `UndirectedGraphView` use dense IDs and static dispatch; IDs carry no graph provenance and must come from the unchanged validated view used for access. `CsrLattice` and zero-copy `BorrowedUndirectedCsr` implement the undirected contract; because `CsrLattice` fields are public, callers must preserve or revalidate structure before trait use. Complete borrowed undirected CSR requires offsets, neighbors, physical edge IDs, and physical endpoints; offsets/neighbors alone cannot preserve multigraph edge identity. Directed out/in signatures remain crate-private sketches until D1.
 - `SmallVec<[f64; 3]>` for spin proposals (stack-allocated, no heap for spin_dim ≤ 3)
 - Heat-bath (Glauber): discrete (Ising/Potts → `HeatBathable`) + continuous (XY/Heisenberg → `ContinuousHeatBathable`, vMF/Best-Fisher sampling)
 - Over-relaxation: `MicrocanonicalCore` reflects spins across local field (ΔE=0), no acceptance

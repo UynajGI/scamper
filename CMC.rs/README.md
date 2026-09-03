@@ -30,12 +30,14 @@ The same wrapper continues to support `WolffCore`, `SWCore`, `HeatBathCore`, `Co
 
 ## Module organisation (Phases 1–2)
 
-Source code is organised into five subdirectories plus three top-level adapter modules:
+Source code is organised into capability-focused subdirectories and top-level
+adapter modules:
 
 | Directory | Purpose |
 |-----------|---------|
 | `core/` | Move types, caches, `TrialEvaluator`, `Ensemble`, `AcceptanceRule`, visit schedules |
 | `lattice/` | `CsrLattice` graph, `System` state, `Hamiltonian` traits, built-in models, `ProposalStrategy` |
+| `topology/` | Dense IDs, capability-specific read-only graph views, validated zero-copy borrowed undirected CSR |
 | `algorithms/` | `Algorithm<H>` trait, 6 kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
 | `observables/` | `Observable<H>`, `DefaultObservableSet`, energy, magnetisation, correlation |
 | `particle/` | Periodic cells, AoS coordinates, pair potentials, packed cell lists, translations and NVT/NPT/μVT adapters, rigid molecules with an optional dipolar external field |
@@ -45,9 +47,14 @@ Source code is organised into five subdirectories plus three top-level adapter m
 | `percolation/` | i.i.d. site/bond/mixed occupancy sampling, union-find cluster statistics, spanning-set crossing |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
-The established lattice/particle API remains re-exported flat from `lib.rs`;
-the Experimental percolation API is provisional and may change during the
-staged platform refactor.
+The established lattice/particle API remains re-exported flat from `lib.rs`.
+The Experimental F1 topology API exposes `GraphView` and `UndirectedGraphView`
+for owned `CsrLattice` and zero-copy `BorrowedUndirectedCsr`; it was
+independently reviewed but remains provisional until the foundation milestone. Complete borrowed undirected CSR input must include
+physical edge IDs and endpoints. Offsets/neighbors alone are not promoted to an
+undirected physical-edge view. Directed capability sketches stay crate-private
+until D1 defines stable arc identity. The Experimental percolation API is also
+provisional and may change during the staged platform refactor.
 
 ## Sampling foundation
 
@@ -225,7 +232,7 @@ The current branch implementation is a scientifically tested **experimental
 reference**, not a stable production API. The support matrix, frozen scientific
 definitions, PR #4 behavior, limitations, and reproducible F0 performance
 baseline live in [PERCOLATION.md](PERCOLATION.md). Production status requires
-the staged F1-F4 replacement; current type names, public storage, parameters,
+the staged F2-F4 replacement; current type names, public storage, parameters,
 and observable names are not compatibility commitments.
 
 `percolation/` samples ordinary percolation on any `CsrLattice` as i.i.d.
