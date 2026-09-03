@@ -42,6 +42,7 @@ Source code is organised into five subdirectories plus three top-level adapter m
 | `generalized/` | Wang-Landau, frozen biases, DOS/histograms, exact enumeration and reweighting |
 | `worm/` | Persistent physical/worm sectors, generic local driver and Ising graph representation |
 | `dynamics/` | Kawasaki exchange, direct Gillespie, Fenwick BKL/n-fold way and hard-sphere event chains |
+| `percolation/` | i.i.d. site/bond/mixed occupancy sampling, union-find cluster statistics, spanning-set crossing |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
 The public API is re-exported flat from `lib.rs` — user code sees no change.
@@ -215,6 +216,47 @@ Stage 6 adds three distinct dynamic paths:
 - `HardSphereEventChain<D>` for lifted rejection-free hard-sphere chains.
 
 Carlo.rs now records sweeps, attempts, accepted/executed moves and event time as separate clocks. `KineticIsingBklMC` advances fixed event-time observation windows, while event-chain lifted distance remains a separate geometric quantity.
+
+## Site, bond and mixed percolation
+
+`percolation/` samples ordinary percolation on any `CsrLattice` as i.i.d.
+configurations rather than a Markov chain: every sweep redraws occupancy,
+every measurement runs union-find over the occupied subgraph. Set
+`thermalization_sweeps = 0`; there is nothing to equilibrate.
+
+Three modes (`mode` parameter): `"site"` (default) opens sites with
+probability `p`; `"bond"` opens bonds with probability `p`; `"site-bond"`
+opens sites with `p_site` and bonds with `p_bond`, where a bond connects
+only when it is open **and** both endpoint sites are open.
+
+```rust
+use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
+use cmc_rs::PercolationMC;
+
+let mut params = Params::new();
+params.set("lattice_type", "square");
+params.set("Lx", 32);
+params.set("Ly", 32);
+params.set("mode", "bond");        // "site" (default) | "bond" | "site-bond"
+params.set("p", 0.5);              // pure modes; mixed uses p_site/p_bond
+let config = RunConfig {
+    thermalization_sweeps: 0,
+    measurement_sweeps: 100_000,
+    binsize: 100,
+    ..Default::default()
+};
+let results = Scheduler::new(RayonBackend::new(1), config)
+    .run_one::<PercolationMC>(&params);
+```
+
+Measured observables: `MaxCluster`, `SecondMoment` (`sum(s_i^2)`),
+`NClusters` and `Spanning` (mean = crossing probability). Pure modes also
+measure `Occupied`; the mixed mode measures `OccupiedSites` and
+`OccupiedBonds` instead. Crossing is tested between
+`spanning_from`/`spanning_to` site sets; square lattices default to the
+left vs. right column, chains to the two end sites, and arbitrary graphs
+take explicit comma-separated site lists. `cluster_stats` and `UnionFind`
+are public for direct, RNG-free analysis of fixed configurations.
 
 ## Arbitrary weighted graph
 

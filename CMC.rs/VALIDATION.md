@@ -1,14 +1,14 @@
 # CMC.rs — Physics Validation & Validated Domain
 
-> Updated 2026-08-19. Branch: `dev`.
+> Updated 2026-09-02. Branch: `dev`.
 
 ## Test suite summary
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 277 | ~60s |
-| Long stochastic (`--ignored`) | 15 | ~20s |
-| **Suite total** | **292** | (+73 lib unit tests) |
+| Default (`cargo test`) | 294 | ~75s |
+| Long stochastic (`--ignored`) | 17 | ~40s |
+| **Suite total** | **311** | (+95 lib unit tests) |
 
 ## Per-solver validated domain
 
@@ -145,6 +145,18 @@
 - **Equilibrium distribution:** three analytic cases against in-code quadrature references through the real solver (translation + plane-rotation moves): two-molecule pair ⟨U⟩ and bound fraction (1D Simpson); dumbbell+atom probe nematic ⟨cos 2α⟩ and ⟨U⟩ (2D midpoint); rotor-pair alignment ⟨cos 2Δθ⟩ across a coupling sweep ε=1→3 (linear response → saturation, the Langevin-x analog; max|z|=1.26 default, 7-coupling long variant max|z|=1.7). Thermalization-length pitfall documented (20k+ sweeps needed at strong coupling)
 - **External field (2026-08-19):** one-body dipolar term `DipolarExternalField` (per-atom charges, wrap-safe minimum-image dipoles, non-neutral molecules rejected loudly); free-rotor equilibrium vs the analytic Langevin-dipole answers through the real kernel — 2D: ⟨cosθ⟩=I₁(x)/I₀(x), ⟨cos²θ⟩=(1+I₂/I₀)/2; 3D: ⟨cosθ⟩=L(x), ⟨cos²θ⟩=1−2L(x)/x; x=βpE grid 0.5–5, per-seed |z|<4; machine-precision identity `external_field_energy = −E·μ` (1e-12) every sweep
 - **NOT validated:** — (external-field Langevin case validated 2026-08-19)
+
+### Percolation, site / bond / mixed (`PercolationMC`, 2026-09-02)
+- **Validated:** Ordinary site, bond and mixed site-bond percolation on arbitrary `CsrLattice` graphs (i.i.d. occupancy resampling, union-find cluster analysis; mixed connects a bond only when it and both endpoint sites are open). 2×2 open square: full 16-configuration enumeration vs hand-derived closed-form moments for site and bond — ⟨MaxCluster⟩ = 30/16 and 45/16, ⟨sum(s_i²)⟩ = 76/16 and 164/16, ⟨NClusters⟩ = 17/16 and 33/16, P(spanning) = 7/16 and 12/16 at p = 1/2; site spanning matches the polynomial 2p²(1−p)² + 4p³(1−p) + p⁴ across p ∈ {0.2, 0.44, 0.5927, 0.8}
+- **Mixed closed form (hand-derived):** 2×2 site-bond P(span) = 2·p_s²·p_b − p_s⁴·p_b² (only an active horizontal bond crosses; the two rows coincide only when everything is open) — exact at (p_s, p_b) ∈ {(0.6,0.7), (0.9,0.4), (1,0.5), (0.5,1), (0.3,0.3)}; reduces exactly to the pure-mode values in both limits
+- **Reduction identities (strict):** mixed at p_site = 1 reproduces pure bond moments, at p_bond = 1 pure site moments (all four, 1e-12, at p ∈ {0.2, 0.5, 0.8})
+- **Independent algorithm cross-check:** `cluster_stats` (union find) vs an in-test flood-fill reference sharing no algorithmic path, configuration-by-configuration, all three modes — exhaustive on chain-8, square-3x3, cubic-2x2x2, triangular-2x2, honeycomb-2x2, kagome-2x2 site, random-graph site (≈22k configurations); seeded random configurations beyond
+- **1D exact solution:** open chain P(span) = p^L (site), p^(L−1) (bond), p_s^L·p_b^(L−1) (mixed) — exact enumeration at three (p_s, p_b) points and through the full scheduler stack at L = 6 for all three modes (100k sweeps, |z| < 4)
+- **Scheduler end-to-end:** 200k i.i.d. sweeps on the 2×2 square reproduce all four enumerated moments within |z| < 4; p = 0 and p = 1 boundary behavior exact in unit tests (no span / single spanning cluster); fixed seed reproduces bitwise for pure and mixed modes, different seed shifts the stream
+- **Statistical:** 4×4 site at p = 0.6 (2¹⁶ = 65536 configurations), 3×3 bond at p = 0.55 near p_c = 1/2 (2¹²) and 3×3 mixed at (0.6, 0.7) (2²¹ = 2097152 configurations, shared across its two tests) fully enumerated as references; 16-seed z-scores on `Spanning` and `MaxCluster` for all three modes (|z| < 4, |z̄| < 1.5, no one-sided bias) — `tests/physics/percolation_zscore.rs`
+- **Physics sanity:** crossing probability monotone non-decreasing in p (8×8, site and bond, p = 0.1…0.9) and separately in p_site / p_bond for mixed (fixed coordinate at 0.9); overlapping spanning-set degeneracy pinned by unit test; probability-parameter mismatches (p in mixed mode, p_site/p_bond in pure modes) rejected loudly
+- **Critical-point checks (long, `#[ignore]`, nightly):** 32×32 bond at p_c = 1/2 (exact self-duality) → crossing within 0.06 of 1/2; 16³ cubic bond brackets the critical region — P(cross) < 0.05 at p = 0.12 and > 0.95 at p = 0.40 around p_c ≈ 0.2488 (no unproven 3D duality assumed)
+- **NOT validated:** invasion/kinetic percolation variants (not implemented); spanning defaults limited to square/chain (other graphs require explicit site sets, rejected loudly otherwise); critical crossing on pbc triangular/honeycomb/kagome (builders are periodic-only; no clean crossing convention); no exact mixed critical line exists for the square lattice (validated via reductions and closed forms instead)
 
 ## Input-validation coverage (criterion G)
 

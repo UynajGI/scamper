@@ -98,6 +98,10 @@ mod p2_validation;
 mod particle_zscore;
 #[path = "physics/particles_exact.rs"]
 mod particles_exact;
+#[path = "physics/percolation.rs"]
+mod percolation;
+#[path = "physics/percolation_zscore.rs"]
+mod percolation_zscore;
 #[path = "physics/potts_exact.rs"]
 mod potts_exact;
 #[path = "physics/statistical_regression.rs"]
