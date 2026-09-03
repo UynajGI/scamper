@@ -136,7 +136,7 @@ impl Evaluator {
     /// - `func`: Function that computes the derived observable from ingredient means
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// evaluator.evaluate("susceptibility", &["magnetization", "magnetization_sq"], |args| {
     ///     &args[1] - &(&args[0] * &args[0])  // χ = <M²> - <M>²
     /// });
@@ -199,7 +199,7 @@ impl Evaluator {
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```text
 /// let mut multi_eval = MultiplexEvaluator::new(4); // 4 PT chains
 ///
 /// // Register evaluator for each chain

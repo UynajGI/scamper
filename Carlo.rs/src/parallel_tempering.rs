@@ -183,7 +183,7 @@ impl<MC: ParallelTemperingCompatible> ParallelTemperingMC<MC> {
 ///
 /// # Usage
 ///
-/// ```rust,ignore
+/// ```text
 /// use carlo_rs::parallel_tempering::PtExchange;
 ///
 /// let exchange = PtExchange::new(comm, &config, &params, seed, binsize, target_sweeps)?;

@@ -45,7 +45,9 @@ pub struct ResultRow {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```
+/// use carlo_rs::make_scalar;
+///
 /// let val = serde_json::json!([1.23]);
 /// assert_eq!(make_scalar(&val), &serde_json::json!(1.23));
 ///

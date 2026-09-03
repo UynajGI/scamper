@@ -38,11 +38,12 @@
 //!
 //! A complete 1D Ising chain simulation from definition to results:
 //!
-//! ```rust,ignore
+//! ```rust
 //! use carlo_rs::{
 //!     accept_log_probability, MonteCarlo, FromParams, Context, Params, CarloError,
-//!     Scheduler, RunConfig, RayonBackend, Backend,
+//!     Scheduler, RunConfig, RayonBackend, Backend, Results,
 //! };
+//! use rand::RngExt;
 //! use rand_xoshiro::Xoshiro256PlusPlus;
 //!
 //! // ── Step 1: define your model ──
@@ -79,7 +80,7 @@
 //!         let n = params.get::<usize>("L").unwrap_or(100);
 //!         // Random initial configuration
 //!         let spins: Vec<i8> = (0..n)
-//!             .map(|_| if rng.gen::<bool>() { 1 } else { -1 })
+//!             .map(|_| if rng.random::<bool>() { 1 } else { -1 })
 //!             .collect();
 //!         let beta = params.get::<f64>("beta").unwrap_or(1.0);
 //!         Ok(Self { spins, beta })

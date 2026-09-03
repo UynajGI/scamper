@@ -5,7 +5,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```text
 //! let mut run = Run::new(params, task_id, run_id, &config, seed)?;
 //! while !run.is_complete() {
 //!     run.step();

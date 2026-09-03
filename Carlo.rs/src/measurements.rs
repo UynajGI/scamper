@@ -16,7 +16,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```text
 //! // Scalar observable
 //! ctx.measure("Energy", energy_value);
 //!
