@@ -266,6 +266,14 @@ A proposal that fails the first nine questions is not ready for implementation.
 A proposal that passes correctness but fails performance questions remains a
 reference implementation, not the production path.
 
+## Implementation Roadmap
+
+Execution is staged in the
+[CMC.rs Percolation Platform Implementation Roadmap](../plans/2026-09-03-percolation-platform-roadmap.md).
+The roadmap is subordinate to this philosophy: implementation phases may be
+reordered as evidence changes, but the semantic and validation criteria above
+remain the decision standard.
+
 ---
 
 *This philosophy was clarified through Socratic dialogue and established on
