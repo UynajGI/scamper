@@ -727,13 +727,17 @@ monitoring, API documentation, and provenance. Any family that has not passed
 its definition of done remains Experimental or Not implemented; it is not
 advertised as production-ready.
 
-## 19. Immediate Next Actions
+## 19. Stage Status
 
-1. Open a standalone docs PR for the philosophy and this roadmap.
-2. Execute F0 and record the current reference implementation's semantic and
-   performance baseline.
-3. Design and review the exact F1 trait signatures against `CsrLattice`, a
-   borrowed CSR fixture, and a directed CSR sketch before implementation.
-4. In parallel, open a Carlo.rs issue for C0; do not block F1-F4 scalar static
-   work on it.
-5. Keep PR #4 open as a validation source until F4 has migrated all its gates.
+| Stage | Status | Evidence / next gate |
+|-------|--------|----------------------|
+| Philosophy and roadmap | **Established** | Normative philosophy and this staged roadmap are committed |
+| F0 semantics and benchmark baseline | **Complete** | Support matrix, scientific definitions, isolated throughput benchmark, allocation/storage probe, independent review and F0 verification are recorded in `CMC.rs/PERCOLATION.md` |
+| F1 read-only topology capabilities | **Next** | Review exact trait signatures against `CsrLattice`, a borrowed CSR fixture, and a directed CSR sketch before implementation |
+| F2-F4 static production foundation | **Not started** | Execute only after the preceding foundation stage passes review and knowledge synchronization |
+| C0 Carlo.rs vector estimates | **Not started (parallel track)** | May proceed independently; process-curve adapters remain blocked until it lands |
+| N/Z/D/E/G/P/R/W tracks | **Not started** | Their dependency gates are defined above |
+
+PR #4 remains open as a validation source until F4 migrates all applicable
+gates. It is not a stable API baseline and must not be merged as the final
+platform architecture.

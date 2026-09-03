@@ -1,6 +1,7 @@
 # CMC.rs — Physics Validation & Validated Domain
 
-> Updated 2026-09-02. Branch: `dev`.
+> Updated 2026-09-03. Validation snapshot; current implementation status is
+> tracked separately in [PERCOLATION.md](PERCOLATION.md).
 
 ## Test suite summary
 
@@ -147,7 +148,11 @@
 - **NOT validated:** — (external-field Langevin case validated 2026-08-19)
 
 ### Percolation, site / bond / mixed (`PercolationMC`, 2026-09-02)
-- **Validated:** Ordinary site, bond and mixed site-bond percolation on arbitrary `CsrLattice` graphs (i.i.d. occupancy resampling, union-find cluster analysis; mixed connects a bond only when it and both endpoint sites are open). 2×2 open square: full 16-configuration enumeration vs hand-derived closed-form moments for site and bond — ⟨MaxCluster⟩ = 30/16 and 45/16, ⟨sum(s_i²)⟩ = 76/16 and 164/16, ⟨NClusters⟩ = 17/16 and 33/16, P(spanning) = 7/16 and 12/16 at p = 1/2; site spanning matches the polynomial 2p²(1−p)² + 4p³(1−p) + p⁴ across p ∈ {0.2, 0.44, 0.5927, 0.8}
+- **Status:** Experimental reference implementation. The tests below are assets
+  to migrate, not a stable-API or production-ready claim; see
+  [PERCOLATION.md](PERCOLATION.md) for the four-state support matrix, scientific
+  definitions, limitations, and F0 benchmark baseline.
+- **Validation assets:** Ordinary site, bond and mixed site-bond percolation on arbitrary `CsrLattice` graphs (i.i.d. occupancy resampling, union-find cluster analysis; mixed connects a bond only when it and both endpoint sites are open). 2×2 open square: full 16-configuration enumeration vs hand-derived closed-form moments for site and bond — ⟨MaxCluster⟩ = 30/16 and 45/16, ⟨sum(s_i²)⟩ = 76/16 and 164/16, ⟨NClusters⟩ = 17/16 and 33/16, P(spanning) = 7/16 and 12/16 at p = 1/2; site spanning matches the polynomial 2p²(1−p)² + 4p³(1−p) + p⁴ across p ∈ {0.2, 0.44, 0.5927, 0.8}
 - **Mixed closed form (hand-derived):** 2×2 site-bond P(span) = 2·p_s²·p_b − p_s⁴·p_b² (only an active horizontal bond crosses; the two rows coincide only when everything is open) — exact at (p_s, p_b) ∈ {(0.6,0.7), (0.9,0.4), (1,0.5), (0.5,1), (0.3,0.3)}; reduces exactly to the pure-mode values in both limits
 - **Reduction identities (strict):** mixed at p_site = 1 reproduces pure bond moments, at p_bond = 1 pure site moments (all four, 1e-12, at p ∈ {0.2, 0.5, 0.8})
 - **Independent algorithm cross-check:** `cluster_stats` (union find) vs an in-test flood-fill reference sharing no algorithmic path, configuration-by-configuration, all three modes — exhaustive on chain-8, square-3x3, cubic-2x2x2, triangular-2x2, honeycomb-2x2, kagome-2x2 site, random-graph site (≈22k configurations); seeded random configurations beyond

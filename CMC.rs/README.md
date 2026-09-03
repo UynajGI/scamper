@@ -45,7 +45,9 @@ Source code is organised into five subdirectories plus three top-level adapter m
 | `percolation/` | i.i.d. site/bond/mixed occupancy sampling, union-find cluster statistics, spanning-set crossing |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
-The public API is re-exported flat from `lib.rs` — user code sees no change.
+The established lattice/particle API remains re-exported flat from `lib.rs`;
+the Experimental percolation API is provisional and may change during the
+staged platform refactor.
 
 ## Sampling foundation
 
@@ -219,6 +221,13 @@ Carlo.rs now records sweeps, attempts, accepted/executed moves and event time as
 
 ## Site, bond and mixed percolation
 
+The current branch implementation is a scientifically tested **experimental
+reference**, not a stable production API. The support matrix, frozen scientific
+definitions, PR #4 behavior, limitations, and reproducible F0 performance
+baseline live in [PERCOLATION.md](PERCOLATION.md). Production status requires
+the staged F1-F4 replacement; current type names, public storage, parameters,
+and observable names are not compatibility commitments.
+
 `percolation/` samples ordinary percolation on any `CsrLattice` as i.i.d.
 configurations rather than a Markov chain: every sweep redraws occupancy,
 every measurement runs union-find over the occupied subgraph. Set
@@ -319,8 +328,7 @@ input is rejected with errors across all solvers — never silently accepted
 
 ## Roadmap — algorithms and models not yet included
 
-Everything below is **not implemented and not validated** today; it is
-recorded here so the validated domain stays unambiguous (see VALIDATION.md
+Everything below is **not implemented and not validated**; it is recorded here so the validated domain stays unambiguous (see VALIDATION.md
 for what *is* covered). None of these block the production status of the
 existing solvers — they are the next application frontiers.
 
@@ -345,8 +353,8 @@ existing solvers — they are the next application frontiers.
 ### Dynamics and irreversible methods
 
 - **Momentum HMC / Langevin / Brownian-dynamics integrators** — molecular
-  systems are pure MC moves today; the HMC in MCMC.rs is statistical-posterior
-  HMC, not a physical momentum coupling.
+  systems currently provide pure MC moves; the HMC in MCMC.rs is
+  statistical-posterior HMC, not a physical momentum coupling.
 - **Geometric cluster algorithm (Dress–Krauth)** — global reflection moves
   for hard disks/polygons; complements event chain, which covers hard
   spheres only.

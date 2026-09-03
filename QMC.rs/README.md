@@ -435,8 +435,8 @@ production status of the existing solvers.
 ### Non-equilibrium and impurity extensions
 
 - **Keldysh real-time QMC**, **multi-impurity retarded interactions**
-  (RKKY), **non-Gaussian/anharmonic baths** — `Bath` today is
-  single-mode/power-law/tabulated, all Gaussian.
+(RKKY), **non-Gaussian/anharmonic baths** — the current `Bath` API supports
+single-mode/power-law/tabulated Gaussian baths.
 
 ### Suggested priority (by reuse)
 

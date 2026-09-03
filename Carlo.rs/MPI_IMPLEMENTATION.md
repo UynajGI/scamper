@@ -82,8 +82,17 @@ Run MPI integration binaries separately because each process owns one MPI
 initialization lifetime:
 
 ```bash
-mpirun -np 4 cargo test --features mpi --test mpi_test -- --nocapture
-mpirun -np 4 cargo test --features mpi --test mpi_distributed_test -- --nocapture
+# Run each MPI test under its own mpirun invocation; MPI cannot be initialized
+# twice in one process. The just recipe selects each exact test separately.
+just mpi-test 4
+```
+
+To target one test manually, use the unified suite binary and its exact test
+name:
+
+```bash
+mpirun -np 4 cargo test -p carlo-rs --features mpi --test suite \
+  '<exact mpi test name>' -- --exact --nocapture
 ```
 
 Checkpoint tests require both features:
