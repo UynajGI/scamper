@@ -2,10 +2,11 @@ mod percolation_support;
 
 use std::time::Duration;
 
+use carlo_rs::{Context, MonteCarlo};
 use cmc_rs::{
     analyze, BondBernoulli, BoundaryQuery, ComponentSummary, ComponentWorkspace, EdgeActivity,
-    GraphView, MixedBernoulli, OccupancyState, PercolationMode, Probability, SiteBernoulli,
-    StaticConfiguration, UndirectedGraphView, VertexActivity,
+    GraphView, MixedBernoulli, ObservablePlan, Probability, SiteBernoulli, StaticConfiguration,
+    StaticLaw, StaticPercolationMC, UndirectedGraphView, VertexActivity,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use percolation_support::{cases, sample_and_analyze, P_BOND, P_SITE};
@@ -311,11 +312,11 @@ fn bench_percolation_components(criterion: &mut Criterion) {
 
             if case.name == "square" {
                 let mode = match law {
-                    Law::Site => PercolationMode::Site,
-                    Law::Bond => PercolationMode::Bond,
-                    Law::Mixed => PercolationMode::SiteBond,
+                    Law::Site => percolation_support::ReferenceMode::Site,
+                    Law::Bond => percolation_support::ReferenceMode::Bond,
+                    Law::Mixed => percolation_support::ReferenceMode::Mixed,
                 };
-                let mut occupancy = OccupancyState::new(&case.lattice, mode);
+                let mut occupancy = percolation_support::ReferenceConfiguration::new(&case, mode);
                 let mut historical_rng = Xoshiro256PlusPlus::seed_from_u64(0x4630_5245_4645);
                 group.bench_function(
                     BenchmarkId::new("historical-pr4-sample+analyze", law.label()),
@@ -330,6 +331,47 @@ fn bench_percolation_components(criterion: &mut Criterion) {
                     },
                 );
             }
+
+            // F4 production adapter: sweep + measure through a Carlo.rs
+            // Context with the full observable plan. The context has its own
+            // RNG seeded like the core paths, so this is an independent
+            // measurement of the adapter composition, not a sequence-locked
+            // rerun of `sample+analyze`. The difference to `sample+analyze`
+            // is the measure overhead: summary projection, boundary events,
+            // and recording nine scalars into the binned accumulators.
+            let law_static = match law {
+                Law::Site => StaticLaw::site(P_SITE),
+                Law::Bond => StaticLaw::bond(P_BOND),
+                Law::Mixed => StaticLaw::mixed(P_SITE, P_BOND),
+            }
+            .expect("benchmark probability");
+            let plan = ObservablePlan::all(vec![BoundaryQuery::new(
+                &case.lattice,
+                &case.from,
+                &case.to,
+            )
+            .unwrap()]);
+            let mut adapter =
+                StaticPercolationMC::new(case.lattice.clone(), law_static, plan).unwrap();
+            let mut mc_context = Context::new_with_binsize(
+                Xoshiro256PlusPlus::seed_from_u64(TIMED_SAMPLE_SEED),
+                0,
+                1024,
+            );
+            for _ in 0..TIMED_INITIAL_SAMPLES {
+                adapter.sweep(&mut mc_context);
+                adapter.measure(&mut mc_context);
+            }
+            group.bench_function(
+                BenchmarkId::new("static-mc-sweep+measure", law.label()),
+                |bencher| {
+                    bencher.iter(|| {
+                        adapter.sweep(&mut mc_context);
+                        adapter.measure(&mut mc_context);
+                        black_box(&mut mc_context);
+                    });
+                },
+            );
             group.finish();
         }
     }

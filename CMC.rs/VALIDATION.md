@@ -1,15 +1,15 @@
 # CMC.rs — Physics Validation & Validated Domain
 
-> Updated 2026-09-03. Validation snapshot; current implementation status is
+> Updated 2026-10-02. Validation snapshot; current implementation status is
 > tracked separately in [PERCOLATION.md](PERCOLATION.md).
 
 ## Test suite summary
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 314 | ~75s |
+| Default (`cargo test`) | 315 | ~75s |
 | Long stochastic (`--ignored`) | 17 | ~40s |
-| **Suite total** | **331** | (+116 lib unit tests) |
+| **Suite total** | **332** | (+104 lib unit tests) |
 
 ## Per-solver validated domain
 
@@ -153,7 +153,7 @@
 - **API invariants:** IDs are publicly produced only by the current view, have checked dense bounds and transparent `usize` layout, but carry no graph provenance. The public incidence contract requires only `Iterator`; directed out/in signatures and their compile fixtures remain crate-private pending D1.
 - **Validation memory:** temporary scratch is one byte per physical edge via `try_reserve_exact` and is dropped before returning the zero-payload borrowed view. Reportable reserve failures return `ValidationCapacity`; abort-on-OOM allocators remain outside the recoverability claim.
 - **Performance:** the repeated three-path `topology_view` benchmark records no >5% regression for generic owned or generic borrowed edge/incidence scans. The allocation probe measures constructor scratch separately and records zero allocations/bytes across 128 post-construction scans; machine-specific results are in [PERCOLATION.md](PERCOLATION.md). No CI timing threshold.
-- **Not implemented:** public owned/borrowed directed CSR (D1). The independently reviewed topology-generic F3 analyzer remains Experimental; F4 scientific observables and Carlo.rs composition are absent.
+- **Not implemented:** public owned/borrowed directed CSR (D1). The independently reviewed topology-generic F3 analyzer and the F4 `StaticPercolationMC` composition remain Experimental until the platform merges into `dev`.
 
 ### Activity configuration and Bernoulli laws (F2, Experimental, 2026-09-03)
 - **Ownership and API:** `StaticConfiguration` owns only private vertex/edge masks. The mask type, `law` module, concrete variants, and storage counters are not public; reviewed configuration/activity/probability/law entry points are selectively re-exported.
@@ -165,7 +165,7 @@ configuration after a mixed edge-length error and compare the next 16 RNG words 
 reports zero allocations/bytes for 128 post-warmup iterations of site, bond,
 mixed, heterogeneous mixed, and two-sample endpoint switching. Recorded measurements are in [PERCOLATION.md](PERCOLATION.md).
 - **Limitations:** the API passed F2 review but remains provisional and
-  Experimental until the foundation milestone stabilizes. Heterogeneous fields are only an Experimental F2 substrate; N1 validation/facades remain Not implemented. The independently reviewed F3 analyzer/workspace is Experimental; F4 scientific observables and Carlo.rs adapters are absent.
+  Experimental until the platform merges into `dev`. Heterogeneous fields are only an Experimental F2 substrate; N1 validation/facades remain Not implemented. The independently reviewed F3 analyzer/workspace and the F4 adapter compose into the Validated static family (see below).
 
 ### Undirected component analyzer (F3, Experimental, 2026-09-03)
 - **Semantics and API:** `analyze` composes `UndirectedGraphView`, `VertexActivity`, and `EdgeActivity` without a mode enum. An active physical edge is counted and joined only when its edge and both endpoints are active; self-loops count once. `ComponentSummary` reports active vertices/edges, component count, canonical-minimum largest identity with deterministic lowest-ID tie breaking, largest size, and raw `M2`. `AnalysisResult<'_>` borrows reusable query outcomes and optional labels from `ComponentWorkspace`, preventing another analysis while results are live.
@@ -173,13 +173,28 @@ mixed, heterogeneous mixed, and two-sample endpoint switching. Recorded measurem
 - **Reference and edge cases:** eight F3 integration-test entries include exhaustive 2x2 configurations for site/bond/mixed activity; 7 topologies x 3 laws x 128 seeded configurations against an independent incidence/stack flood fill; owned/borrowed CSR parity; self-loops, parallel edges, disconnected graphs, isolates, empty borrowed CSR, overlap, empty/duplicate/multiple queries, all summary fields, labels partition, edge-order-independent identity, typed vertex/edge/query errors, and grow/shrink/labels/query workspace reuse. An internal unit test forces the query generation stamp through `u64::MAX` and verifies clearing before reuse.
 - **Atomicity:** activity and query dimensions are validated before workspace mutation. Capacity errors are typed; successful earlier `try_reserve` calls may retain capacity if a later reserve fails, but no partial scientific result is returned. Abort-on-OOM allocators remain outside the recoverability claim.
 - **Performance:** 15 allocation records (5 topologies x 3 laws, 128 post-warmup sample+analyze calls each) report zero allocations and zero bytes per sample after `ComponentWorkspace::prepare`, versus the retained F0 reference's 7 allocations / 86,016 bytes per sample. Feature-gated audit accounting measures all six workspace Vec capacities as 196,609 bytes at V=4096, Q=1, labels enabled, exactly matching allocator-observed prepare bytes. The 48-ID Criterion run reports samples/s and edges/s and compares every topology/law against an equivalent independent flood fill after 128-sample parity. Fresh-process Linux `/proc` probes record square and sparse-ER process `VmHWM`; full data are in [PERCOLATION.md](PERCOLATION.md).
-- **Maturity and limits:** passed independent review and engineering gates; still Experimental. F4 scientific observables, susceptibility/normalization policy, and Carlo.rs adapter are intentionally absent. PR #4 remains the adapter/reference source through F4.
+- **Maturity and limits:** passed independent review and engineering gates; still Experimental. F4 now composes this analyzer into `ObservablePlan` observables and the `StaticPercolationMC` adapter (see below).
 
-### Percolation, site / bond / mixed (`PercolationMC`, 2026-09-02)
-- **Status:** Experimental reference implementation. The tests below are assets
-  to migrate, not a stable-API or production-ready claim; see
+### Static observables and production adapter (F4, `StaticPercolationMC`, Validated — review passed, 2026-10-02)
+- **Observable semantics:** `ObservablePlan` explicitly requests `ActiveVertexCount`, `ActiveEdgeCount`, `ComponentCount`, `LargestSize`, `GiantFraction` (denominator fixed to total topology `V`), `RawSecondMoment` (`M2 = sum s_i^2`, unnormalized, largest included), and `FiniteClusterSusceptibility`. The susceptibility removes exactly one largest component per sample — equal sizes choose the canonical lowest identity, matching the F3 tie policy — before averaging, so it cannot be reconstructed from separately aggregated means (unit-tested counterexample against the ratio of means). `chi = (M2 - S_max^2)/(V_active - S_max)`; samples with a zero denominator are undefined: the chi scalar is not written for them (its `n_bins` counts only defined samples), while the always-recorded `FiniteClusterSusceptibilityDefined` indicator (0/1 per sample) keeps the defined fraction explicit in `results.json`. Boundary queries record `BoundaryCrossing0`, `BoundaryCrossing1`, ... in plan order. Labels are intentionally not part of the plan; `analyze_with_labels` serves direct label consumers.
+- **Conversion policy:** moment observables convert u128 sums of squares up to `V^2` into f64. Plans whose topology could exceed the exact 2^53 f64 integer range (V > 94,906,265) are rejected at construction (`ObservablePlanError::InexactMomentConversion`) for both `RawSecondMoment` and the susceptibility numerator, so no silent precision loss is possible.
+- **Adapter composition:** `StaticPercolationMC` composes an owned `CsrLattice`, the uniform `StaticLaw` enum (site/bond/mixed, only at this adapter boundary), `StaticConfiguration`, a prepared `ComponentWorkspace`, and the `ObservablePlan`. `sweep()` only resamples occupancy; `measure()` analyzes with the preallocated workspace and records exactly the planned scalars. Borrowed graphs and custom laws bypass the adapter through `analyze` or `Run::from_parts()`.
+- **Parameter schema:** `mode` site/bond/site-bond with strict `p` vs `p_site`/`p_bond` mutual exclusion; lattice parameters reuse the standard builders; `pbc` defaults to `false`; spanning defaults are square left/right columns and chain endpoints, everything else requires explicit `spanning_from`/`spanning_to` comma lists (always both, or the adapter is constructed directly with a `BoundaryQuery`); `observables` defaults to the full plan. Invalid modes, probabilities, observable names, site lists, mismatched dimensions, and missing probabilities are typed rejections (unit-tested error paths).
+- **Migrated validation:** every PR #4 asset now runs against the final API in `tests/physics/percolation.rs` (14 tests, 2 `#[ignore]` long) — 2x2 exhaustive enumeration vs hand-derived moments, site spanning polynomial, mixed closed form `2 p_s^2 p_b - p_s^4 p_b^2`, mixed-to-pure reduction identities, p = 0 / p = 1 occupation extremes, chain closed forms, union-find vs flood-fill parity across seven topologies x three modes, crossing monotonicity (pure and per-probability mixed), scheduler 2x2 exact moments, scheduler chain closed forms, fixed-seed bitwise reproduction, and the ignored 32x32 bond p_c = 1/2 and 16^3 cubic critical-bracket long tests. `tests/physics/percolation_zscore.rs` gates `BoundaryCrossing0` and `LargestSize` for site, bond, and mixed modes over 16 default seeds (SCUTTLE_ZSCORE_SEEDS-scalable, |z| < 4, |zbar| < 1.5, no one-sided bias).
+- **New F4 coverage:** per-sample tie exclusion (canonical largest), no-active-vertices and V=0, single-giant-component undefined chi, multi-finite-cluster values, per-sample exclusion vs ratio-of-means counterexample, undefined-chi Results behavior and indicator counts under the scheduler, JSON schema and observable selection, and the full FromParams rejection matrix. Adapter unit tests (observable.rs + carlo.rs) add 10 cases; the whole percolation unit+integration set is green with `SCUTTLE_ZSCORE_SEEDS=64`.
+- **Performance:** 15 adapter allocation records (5 topologies x 3 laws, 128 post-warmup sweep+measure cycles each) report 0.000 allocations and 0.000 bytes per cycle in steady state; the Criterion target adds 15 `static-mc-sweep+measure` IDs composing sampling, analysis, and recording. F3 core throughput paths are unchanged code whose parity and sequence assertions still pass; same-run adapter-vs-core comparison shows measure overhead within contention noise, and cross-day point estimates carry documented host-load inflation (see [PERCOLATION.md](PERCOLATION.md)).
+- **NOT validated (unchanged scope):** heterogeneous probabilities (N1), wrapping (W2), parameter scans (Z1), process families; chi tie conventions other than single canonical-largest exclusion are separate named policies and do not exist.
+
+### Percolation, site / bond / mixed (`PercolationMC`, 2026-09-02 — superseded)
+- **Status:** Experimental PR #4 reference implementation, now **superseded**:
+  the API (`PercolationMC`, `PercolationMode`, `OccupancyState`, `cluster_stats`,
+  `UnionFind`) has been deleted and every validation asset below is migrated to
+  the F4 `StaticPercolationMC` API (observable names updated: `MaxCluster` ->
+  `LargestSize`, `SecondMoment` -> `RawSecondMoment`, `NClusters` ->
+  `ComponentCount`, `Spanning` -> `BoundaryCrossing0`, `Occupied` ->
+  `ActiveVertexCount`/`ActiveEdgeCount`). See
   [PERCOLATION.md](PERCOLATION.md) for the four-state support matrix, scientific
-  definitions, limitations, and F0 benchmark baseline.
+  definitions, limitations, and benchmark baselines.
 - **Validation assets:** Ordinary site, bond and mixed site-bond percolation on arbitrary `CsrLattice` graphs (i.i.d. occupancy resampling, union-find cluster analysis; mixed connects a bond only when it and both endpoint sites are open). 2×2 open square: full 16-configuration enumeration vs hand-derived closed-form moments for site and bond — ⟨MaxCluster⟩ = 30/16 and 45/16, ⟨sum(s_i²)⟩ = 76/16 and 164/16, ⟨NClusters⟩ = 17/16 and 33/16, P(spanning) = 7/16 and 12/16 at p = 1/2; site spanning matches the polynomial 2p²(1−p)² + 4p³(1−p) + p⁴ across p ∈ {0.2, 0.44, 0.5927, 0.8}
 - **Mixed closed form (hand-derived):** 2×2 site-bond P(span) = 2·p_s²·p_b − p_s⁴·p_b² (only an active horizontal bond crosses; the two rows coincide only when everything is open) — exact at (p_s, p_b) ∈ {(0.6,0.7), (0.9,0.4), (1,0.5), (0.5,1), (0.3,0.3)}; reduces exactly to the pure-mode values in both limits
 - **Reduction identities (strict):** mixed at p_site = 1 reproduces pure bond moments, at p_bond = 1 pure site moments (all four, 1e-12, at p ∈ {0.2, 0.5, 0.8})

@@ -5,7 +5,7 @@ use std::fs;
 
 use cmc_rs::{
     analyze, BondBernoulli, BoundaryQuery, ComponentWorkspace, GraphView, MixedBernoulli,
-    PercolationMode, Probability, SiteBernoulli, StaticConfiguration, UndirectedGraphView,
+    Probability, SiteBernoulli, StaticConfiguration, UndirectedGraphView,
 };
 use percolation_support::{case, P_BOND, P_SITE};
 use rand::SeedableRng;
@@ -36,10 +36,8 @@ fn probability(value: f64) -> Probability {
 fn main() -> Result<(), String> {
     let case_name = std::env::var("SCUTTLE_RSS_CASE").unwrap_or_else(|_| "square".to_string());
     let law_name = std::env::var("SCUTTLE_RSS_LAW").unwrap_or_else(|_| "mixed".to_string());
-    let mode = match law_name.as_str() {
-        "site" => PercolationMode::Site,
-        "bond" => PercolationMode::Bond,
-        "mixed" => PercolationMode::SiteBond,
+    let law = match law_name.as_str() {
+        "site" | "bond" | "mixed" => law_name.as_str(),
         _ => return Err(format!("unknown SCUTTLE_RSS_LAW={law_name}")),
     };
     let before_rss = kibibytes("VmRSS:")?;
@@ -62,10 +60,11 @@ fn main() -> Result<(), String> {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4633_5253_5350);
 
     for _ in 0..8 + SAMPLES {
-        match mode {
-            PercolationMode::Site => site.sample(&case.lattice, &mut configuration, &mut rng),
-            PercolationMode::Bond => bond.sample(&case.lattice, &mut configuration, &mut rng),
-            PercolationMode::SiteBond => mixed.sample(&case.lattice, &mut configuration, &mut rng),
+        match law {
+            "site" => site.sample(&case.lattice, &mut configuration, &mut rng),
+            "bond" => bond.sample(&case.lattice, &mut configuration, &mut rng),
+            "mixed" => mixed.sample(&case.lattice, &mut configuration, &mut rng),
+            _ => unreachable!("validated law"),
         }
         .map_err(|error| error.to_string())?;
         std::hint::black_box(

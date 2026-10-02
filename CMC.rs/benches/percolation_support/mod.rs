@@ -1,6 +1,7 @@
 use cmc_rs::{
-    build_chain, build_hypercubic, build_square, cluster_stats, Bond, BondType, ClusterStats,
-    CsrLattice, OccupancyState,
+    analyze, build_chain, build_hypercubic, build_square, Bond, BondType, BoundaryQuery,
+    ComponentSummary, ComponentWorkspace, CsrLattice, EdgeActivity, EdgeId, GraphView,
+    UndirectedGraphView, VertexActivity, VertexId,
 };
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -129,11 +130,98 @@ pub fn cases() -> Vec<Case> {
         .collect()
 }
 
+#[derive(Clone, Copy)]
+pub enum ReferenceMode {
+    Site,
+    Bond,
+    Mixed,
+}
+
+impl ReferenceMode {
+    // Each Criterion bench target is a separate crate, so items shared across
+    // benches are dead in the ones that do not use them.
+    #[allow(dead_code)]
+    pub const ALL: [Self; 3] = [Self::Site, Self::Bond, Self::Mixed];
+
+    #[allow(dead_code)]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Site => "site",
+            Self::Bond => "bond",
+            Self::Mixed => "mixed",
+        }
+    }
+}
+
+pub struct ReferenceConfiguration {
+    mode: ReferenceMode,
+    sites: Vec<bool>,
+    bonds: Vec<bool>,
+}
+
+impl ReferenceConfiguration {
+    pub fn new(case: &Case, mode: ReferenceMode) -> Self {
+        Self {
+            mode,
+            sites: vec![matches!(mode, ReferenceMode::Bond); case.lattice.vertex_count()],
+            bonds: vec![matches!(mode, ReferenceMode::Site); case.lattice.edge_count()],
+        }
+    }
+
+    pub fn sample(&mut self, rng: &mut Xoshiro256PlusPlus) {
+        if !matches!(self.mode, ReferenceMode::Bond) {
+            self.sites
+                .iter_mut()
+                .for_each(|active| *active = rng.random::<f64>() < P_SITE);
+        }
+        if !matches!(self.mode, ReferenceMode::Site) {
+            self.bonds
+                .iter_mut()
+                .for_each(|active| *active = rng.random::<f64>() < P_BOND);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn storage_bytes(&self) -> usize {
+        self.sites.capacity() + self.bonds.capacity()
+    }
+}
+
+impl VertexActivity for ReferenceConfiguration {
+    fn vertex_count(&self) -> usize {
+        self.sites.len()
+    }
+
+    fn vertex_active(&self, vertex: VertexId) -> bool {
+        self.sites[vertex.index()]
+    }
+}
+
+impl EdgeActivity for ReferenceConfiguration {
+    fn edge_count(&self) -> usize {
+        self.bonds.len()
+    }
+
+    fn edge_active(&self, edge: EdgeId) -> bool {
+        self.bonds[edge.index()]
+    }
+}
+
 pub fn sample_and_analyze(
     case: &Case,
-    occupancy: &mut OccupancyState,
+    occupancy: &mut ReferenceConfiguration,
     rng: &mut Xoshiro256PlusPlus,
-) -> ClusterStats {
-    occupancy.resample(P_SITE, P_BOND, rng);
-    cluster_stats(&case.lattice, occupancy, &case.from, &case.to)
+) -> ComponentSummary {
+    occupancy.sample(rng);
+    let queries = [BoundaryQuery::new(&case.lattice, &case.from, &case.to).unwrap()];
+    let mut workspace = ComponentWorkspace::new();
+    analyze(
+        &case.lattice,
+        occupancy,
+        occupancy,
+        &queries,
+        &mut workspace,
+    )
+    .unwrap()
+    .summary()
 }

@@ -44,7 +44,7 @@ adapter modules:
 | `generalized/` | Wang-Landau, frozen biases, DOS/histograms, exact enumeration and reweighting |
 | `worm/` | Persistent physical/worm sectors, generic local driver and Ising graph representation |
 | `dynamics/` | Kawasaki exchange, direct Gillespie, Fenwick BKL/n-fold way and hard-sphere event chains |
-| `percolation/` | Experimental F1-F3 foundation (topology/activity capabilities, Bernoulli laws, generic component analyzer and reusable workspace) plus the retained PR #4 adapter reference |
+| `percolation/` | Experimental F1-F4 foundation (topology/activity capabilities, Bernoulli laws, generic component analyzer, reusable workspace, explicit observable plan and owned `StaticPercolationMC` adapter) |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
 The established lattice/particle API remains re-exported flat from `lib.rs`.
@@ -228,31 +228,34 @@ Carlo.rs now records sweeps, attempts, accepted/executed moves and event time as
 
 ## Site, bond and mixed percolation
 
-The current branch implementation is a scientifically tested **experimental
-reference**, not a stable production API. The support matrix, frozen scientific
-definitions, PR #4 behavior, limitations, and reproducible performance records
-live in [PERCOLATION.md](PERCOLATION.md). F2 provides the experimental activity,
-configuration, and Bernoulli-law substrate. F3 adds a topology-generic static
-undirected component analyzer, validated boundary queries, optional canonical
-labels, and a reusable zero-allocation workspace. F1-F3 passed their engineering
-reviews but remain Experimental; production status and scheduler composition
-still require F4. Current
-reference adapter names, public storage, parameters, and observable names are
-not compatibility commitments.
-
 `percolation/` samples ordinary percolation on any `CsrLattice` as i.i.d.
 configurations rather than a Markov chain: every sweep redraws occupancy,
 every measurement runs union-find over the occupied subgraph. Set
-`thermalization_sweeps = 0`; there is nothing to equilibrate.
+`thermalization_sweeps = 0`; there is nothing to equilibrate. The support
+matrix, frozen scientific definitions, observable semantics, limitations, and
+reproducible performance records live in [PERCOLATION.md](PERCOLATION.md). F2
+provides the activity, configuration, and Bernoulli-law substrate. F3 adds a
+topology-generic static undirected component analyzer, validated boundary
+queries, optional canonical labels, and a reusable zero-allocation workspace.
+F4 composes them into the production `StaticPercolationMC` adapter with an
+explicit `ObservablePlan`. The foundation passed its engineering gates and
+independent review; the static family is Validated and becomes production-ready
+when the branch merges into `dev`.
+
+### `StaticPercolationMC` (owned Carlo.rs adapter)
 
 Three modes (`mode` parameter): `"site"` (default) opens sites with
 probability `p`; `"bond"` opens bonds with probability `p`; `"site-bond"`
 opens sites with `p_site` and bonds with `p_bond`, where a bond connects
-only when it is open **and** both endpoint sites are open.
+only when it is open **and** both endpoint sites are open. Giving `p` in
+mixed mode, or `p_site`/`p_bond` in a pure mode, is a typed error; so are
+probabilities outside `[0, 1]` and unknown modes. `pbc` defaults to `false`
+and lattice parameters reuse the standard builders (`chain`, `square`,
+`cubic`/`hypercubic`).
 
 ```rust
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
-use cmc_rs::PercolationMC;
+use cmc_rs::StaticPercolationMC;
 
 let mut params = Params::new();
 params.set("lattice_type", "square");
@@ -261,23 +264,41 @@ params.set("Ly", 32);
 params.set("mode", "bond");        // "site" (default) | "bond" | "site-bond"
 params.set("p", 0.5);              // pure modes; mixed uses p_site/p_bond
 let config = RunConfig {
-    thermalization_sweeps: 0,
+    thermalization_sweeps: 0,      // i.i.d. samples; nothing to equilibrate
     measurement_sweeps: 100_000,
     binsize: 100,
     ..Default::default()
 };
 let results = Scheduler::new(RayonBackend::new(1), config)
-    .run_one::<PercolationMC>(&params);
+    .run_one::<StaticPercolationMC>(&params);
 ```
 
-Measured observables: `MaxCluster`, `SecondMoment` (`sum(s_i^2)`),
-`NClusters` and `Spanning` (mean = crossing probability). Pure modes also
-measure `Occupied`; the mixed mode measures `OccupiedSites` and
-`OccupiedBonds` instead. Crossing is tested between
-`spanning_from`/`spanning_to` site sets; square lattices default to the
-left vs. right column, chains to the two end sites, and arbitrary graphs
-take explicit comma-separated site lists. `cluster_stats` and `UnionFind`
-are public for direct, RNG-free analysis of fixed configurations.
+Crossing is tested between `spanning_from`/`spanning_to` site sets, given as
+comma-separated site lists and always supplied together. Defaults: square
+lattices use the left vs. right column, chains the two end sites; every other
+parameter-built topology is rejected loudly and needs explicit sets (or build
+the adapter directly with a `BoundaryQuery`).
+
+Observables are chosen with the `observables` parameter as a comma-separated
+list (`active-vertices,active-edges,components,largest-size,giant-fraction,
+raw-second-moment,finite-cluster-susceptibility`); the default records all of
+them under the names `ActiveVertexCount`, `ActiveEdgeCount`, `ComponentCount`,
+`LargestSize`, `GiantFraction` (`S_max / V`, total topology vertices),
+`RawSecondMoment` (`M2 = sum s_i^2`, construction rejected beyond the exact
+f64 integer range), and `FiniteClusterSusceptibility`. The susceptibility
+removes one largest component per sample (equal sizes: the canonical lowest-ID
+one) before averaging: `chi = (M2 - S_max^2) / (V_active - S_max)`. Samples
+where the denominator is zero are undefined: the chi scalar is not written for
+them, and the always-recorded `FiniteClusterSusceptibilityDefined` indicator
+(0/1 per sample) makes the defined count explicit in `results.json`. Each
+boundary query records `BoundaryCrossing0`, `BoundaryCrossing1`, ... in plan
+order. Labels are intentionally not part of the plan; `analyze_with_labels`
+serves direct label consumers.
+
+Borrowed graphs and custom laws bypass the owned adapter: call `analyze`
+directly, or compose a runtime with `Run::from_parts()`. Arbitrary graphs can
+also construct `StaticPercolationMC::new(lattice, law, plan)` with an explicit
+`BoundaryQuery` instead of going through `FromParams`.
 
 ## Arbitrary weighted graph
 

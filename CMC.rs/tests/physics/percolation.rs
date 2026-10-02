@@ -9,7 +9,8 @@
 //!    `P = p_s^L * p_b^(L-1)` (mixed), and mixed 2x2 satisfies
 //!    `P = 2 p_s^2 p_b - p_s^4 p_b^2` (only an active horizontal bond can
 //!    cross, and the two rows coincide only when everything is open).
-//! 2. **Independent algorithm cross-check.** `cluster_stats` (union find) is
+//! 2. **Independent algorithm cross-check.** The union-find component
+//!    analysis (via [`analyze`]) is
 //!    compared configuration-by-configuration against a flood-fill reference
 //!    sharing no algorithmic path — exhaustively on small lattices, on seeded
 //!    random configurations for larger ones, across every lattice family
@@ -21,9 +22,10 @@
 
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use cmc_rs::{
-    build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
-    cluster_stats, Bond, BondType, ClusterStats, CsrLattice, OccupancyState, PercolationMC,
-    PercolationMode,
+    analyze, build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square,
+    build_triangular, Bond, BondBernoulli, BondType, BoundaryQuery, ComponentWorkspace, CsrLattice,
+    EdgeActivity, EdgeId, GraphView, MixedBernoulli, Probability, SiteBernoulli,
+    StaticConfiguration, StaticPercolationMC, UndirectedGraphView, VertexActivity, VertexId,
 };
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -31,6 +33,103 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 const L: usize = 2;
 const FROM: [usize; 2] = [0, 2];
 const TO: [usize; 2] = [1, 3];
+
+#[derive(Clone, Copy, Debug)]
+enum PercolationMode {
+    Site,
+    Bond,
+    SiteBond,
+}
+
+impl PercolationMode {
+    const fn samples_sites(self) -> bool {
+        !matches!(self, Self::Bond)
+    }
+
+    const fn samples_bonds(self) -> bool {
+        !matches!(self, Self::Site)
+    }
+}
+
+struct OccupancyState {
+    mode: PercolationMode,
+    site_open: Vec<bool>,
+    bond_open: Vec<bool>,
+}
+
+impl OccupancyState {
+    fn new(lattice: &CsrLattice, mode: PercolationMode) -> Self {
+        Self {
+            mode,
+            site_open: vec![matches!(mode, PercolationMode::Bond); lattice.vertex_count()],
+            bond_open: vec![matches!(mode, PercolationMode::Site); lattice.edge_count()],
+        }
+    }
+
+    fn resample(&mut self, p_site: f64, p_bond: f64, rng: &mut Xoshiro256PlusPlus) {
+        if self.mode.samples_sites() {
+            self.site_open
+                .iter_mut()
+                .for_each(|open| *open = rng.random::<f64>() < p_site);
+        } else {
+            self.site_open.fill(true);
+        }
+        if self.mode.samples_bonds() {
+            self.bond_open
+                .iter_mut()
+                .for_each(|open| *open = rng.random::<f64>() < p_bond);
+        } else {
+            self.bond_open.fill(true);
+        }
+    }
+}
+
+impl VertexActivity for OccupancyState {
+    fn vertex_count(&self) -> usize {
+        self.site_open.len()
+    }
+
+    fn vertex_active(&self, vertex: VertexId) -> bool {
+        self.site_open[vertex.index()]
+    }
+}
+
+impl EdgeActivity for OccupancyState {
+    fn edge_count(&self) -> usize {
+        self.bond_open.len()
+    }
+
+    fn edge_active(&self, edge: EdgeId) -> bool {
+        self.bond_open[edge.index()]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ClusterStats {
+    max_size: usize,
+    second_moment: u128,
+    n_clusters: usize,
+    spanning: bool,
+}
+
+fn cluster_stats(
+    lattice: &CsrLattice,
+    occupancy: &OccupancyState,
+    from: &[usize],
+    to: &[usize],
+) -> ClusterStats {
+    let query = BoundaryQuery::new(lattice, from, to).unwrap();
+    let mut workspace = ComponentWorkspace::new();
+    let result = analyze(lattice, occupancy, occupancy, &[query], &mut workspace).unwrap();
+    let summary = result.summary();
+    ClusterStats {
+        max_size: summary.largest_component_size,
+        second_moment: summary.raw_second_moment,
+        n_clusters: summary.component_count,
+        spanning: result.query_outcomes()[0],
+    }
+}
+
 const ALL_MODES: [PercolationMode; 3] = [
     PercolationMode::Site,
     PercolationMode::Bond,
@@ -140,7 +239,7 @@ fn enumerate_moments(
 
 /// Independent cluster statistics: flood fill with an explicit stack instead
 /// of union find, so the reference shares no algorithmic path with
-/// [`cmc_rs::cluster_stats`].
+/// [`cmc_rs::analyze`].
 fn reference_stats(
     lattice: &CsrLattice,
     occupancy: &OccupancyState,
@@ -198,7 +297,7 @@ fn reference_stats(
         }
         stats.n_clusters += 1;
         stats.max_size = stats.max_size.max(size);
-        stats.second_moment += (size as u64) * (size as u64);
+        stats.second_moment += (size as u128) * (size as u128);
         stats.spanning |= touches_from && touches_to;
     }
     stats
@@ -292,6 +391,73 @@ fn site_bond_spanning_matches_hand_derived_closed_form() {
             enumerate_moments(&lattice, PercolationMode::SiteBond, p_s, p_b, &FROM, &TO);
         let closed_form = 2.0 * p_s * p_s * p_b - p_s.powi(4) * p_b * p_b;
         assert_close(span, closed_form, 1e-12, "site-bond spanning polynomial");
+    }
+}
+
+/// Occupation-probability extremes through the final API: `p = 0` leaves
+/// nothing occupied (site/mixed: no clusters; bond: every site an isolated
+/// tracked cluster) and never spans; `p = 1` occupies everything, leaves one
+/// connected cluster and must span. Migrated from the PR #4 unit-test asset
+/// `extremes_match_percolation_physics`.
+#[test]
+fn occupation_extremes_match_percolation_physics() {
+    let lattice = build_square(3, 3, false);
+    let mut workspace = ComponentWorkspace::new();
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(5);
+    let probability = |value: f64| Probability::new(value).unwrap();
+
+    for p in [0.0, 1.0] {
+        for kind in ["site", "bond", "mixed"] {
+            let mut configuration =
+                StaticConfiguration::new(lattice.vertex_count(), lattice.edge_count());
+            match kind {
+                "site" => SiteBernoulli::new(probability(p).into()).sample(
+                    &lattice,
+                    &mut configuration,
+                    &mut rng,
+                ),
+                "bond" => BondBernoulli::new(probability(p).into()).sample(
+                    &lattice,
+                    &mut configuration,
+                    &mut rng,
+                ),
+                _ => MixedBernoulli::new(probability(p).into(), probability(p).into()).sample(
+                    &lattice,
+                    &mut configuration,
+                    &mut rng,
+                ),
+            }
+            .unwrap();
+            let queries = [BoundaryQuery::new(&lattice, &[0, 3, 6], &[2, 5, 8]).unwrap()];
+            let result = analyze(
+                &lattice,
+                &configuration,
+                &configuration,
+                &queries,
+                &mut workspace,
+            )
+            .unwrap();
+            let summary = result.summary();
+            if p == 0.0 {
+                assert!(!result.query_outcomes()[0], "{kind}: p = 0 cannot span");
+                if kind == "bond" {
+                    // Bond mode tracks every site as an isolated singleton.
+                    assert_eq!(summary.largest_component_size, 1);
+                    assert_eq!(summary.raw_second_moment, 9);
+                    assert_eq!(summary.component_count, 9);
+                } else {
+                    // Site and mixed: no open sites, so no clusters exist.
+                    assert_eq!(summary.largest_component_size, 0);
+                    assert_eq!(summary.raw_second_moment, 0);
+                    assert_eq!(summary.component_count, 0);
+                }
+            } else {
+                assert!(result.query_outcomes()[0], "{kind}: p = 1 must span");
+                assert_eq!(summary.largest_component_size, 9);
+                assert_eq!(summary.raw_second_moment, 81);
+                assert_eq!(summary.component_count, 1, "{kind}: one cluster");
+            }
+        }
     }
 }
 
@@ -505,9 +671,9 @@ fn scheduler_runs_reproduce_for_fixed_seeds() {
     };
     let mean = |params: &Params, seed: u64| {
         Scheduler::new(RayonBackend::new(1), config(seed))
-            .run_one::<PercolationMC>(params)
-            .get("Spanning")
-            .expect("Spanning measured")
+            .run_one::<StaticPercolationMC>(params)
+            .get("BoundaryCrossing0")
+            .expect("BoundaryCrossing0 measured")
             .mean
     };
     for mode in ["site", "site-bond"] {
@@ -542,16 +708,17 @@ fn scheduler_run_matches_exact_moments() {
         base_seed: 2026,
         ..Default::default()
     };
-    let results = Scheduler::new(RayonBackend::new(1), config).run_one::<PercolationMC>(&params);
+    let results =
+        Scheduler::new(RayonBackend::new(1), config).run_one::<StaticPercolationMC>(&params);
 
     let lattice = build_square(L, L, false);
     let (exact_max, exact_s2, exact_n, exact_span) =
         enumerate_moments(&lattice, PercolationMode::Site, 0.5, 0.5, &FROM, &TO);
     for (name, exact) in [
-        ("MaxCluster", exact_max),
-        ("SecondMoment", exact_s2),
-        ("NClusters", exact_n),
-        ("Spanning", exact_span),
+        ("LargestSize", exact_max),
+        ("RawSecondMoment", exact_s2),
+        ("ComponentCount", exact_n),
+        ("BoundaryCrossing0", exact_span),
     ] {
         let estimate = results
             .get(name)
@@ -588,9 +755,9 @@ fn scheduler_chain_crossing_matches_closed_form() {
             ..Default::default()
         };
         Scheduler::new(RayonBackend::new(1), config)
-            .run_one::<PercolationMC>(&params)
-            .get("Spanning")
-            .expect("Spanning measured")
+            .run_one::<StaticPercolationMC>(&params)
+            .get("BoundaryCrossing0")
+            .expect("BoundaryCrossing0 measured")
             .clone()
     };
     let check = |label: &str, estimate: &carlo_rs::Estimate, exact: f64| {
@@ -629,8 +796,11 @@ fn bond_crossing_at_critical_probability_tends_to_half() {
         base_seed: 7,
         ..Default::default()
     };
-    let results = Scheduler::new(RayonBackend::new(1), config).run_one::<PercolationMC>(&params);
-    let spanning = results.get("Spanning").expect("Spanning measured");
+    let results =
+        Scheduler::new(RayonBackend::new(1), config).run_one::<StaticPercolationMC>(&params);
+    let spanning = results
+        .get("BoundaryCrossing0")
+        .expect("BoundaryCrossing0 measured");
     assert!(
         (spanning.mean - 0.5).abs() < 0.06,
         "P(cross) at p_c = {} deviates too far from 1/2",
@@ -674,9 +844,9 @@ fn cubic_bond_crossing_brackets_the_critical_region() {
             ..Default::default()
         };
         Scheduler::new(RayonBackend::new(1), config)
-            .run_one::<PercolationMC>(&params)
-            .get("Spanning")
-            .expect("Spanning measured")
+            .run_one::<StaticPercolationMC>(&params)
+            .get("BoundaryCrossing0")
+            .expect("BoundaryCrossing0 measured")
             .clone()
     };
     let below = run(0.12);

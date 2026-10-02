@@ -1,14 +1,16 @@
 # Maturity Assessment — Physics Validation Coverage
 
-> Updated 2026-09-03. Covers all 4 crates: Carlo.rs, CMC.rs, QMC.rs, MCMC.rs.
+> Updated 2026-10-02. Covers all 4 crates: Carlo.rs, CMC.rs, QMC.rs, MCMC.rs.
 > Per-solver assessment against 8 production-readiness criteria.
 > The 2026-08-19 hardening tracker completed its original 22/22 scope.
 > CMC.rs production hardening covered the original 19 assessed solvers:
 > criterion-G input validation and per-solver domains are recorded in
 > `CMC.rs/tests/physics/input_validation.rs` and `CMC.rs/VALIDATION.md`.
 > All 19 rows in that assessment remain production-ready. New capabilities are
-> assessed separately and do not inherit that status; the percolation platform
-> is currently an **Experimental reference** (see `CMC.rs/PERCOLATION.md`).
+> assessed separately and do not inherit that status; the percolation static
+> family passed all its family-specific production gates (F1-F4, independently
+> reviewed; production availability conditioned on the `dev` merge), while the
+> remaining platform tracks are not implemented (see `CMC.rs/PERCOLATION.md`).
 > QMC.rs production hardening completed 2026-08-19: **all 4 assessed solvers
 > production-ready** — generic-S scattering identities, occupation per-update
 > DB + update-graph connectivity, cluster ergodicity and multi-mode baths,
@@ -86,7 +88,7 @@ must not inherit this status.
 | Particle NPT | **production-ready** | Finite-N ideal gas ⟨V⟩ = (N+1)kT/P exact (long test) + directional response |
 | Particle μVT | **production-ready** | Ideal gas Poisson ⟨N⟩ exact (long test) + directional response |
 | Rigid molecule | **production-ready** | Equilibrium vs quadrature references; one-body dipolar external field (`DipolarExternalField`) validated vs 2D von Mises + 3D Langevin free-rotor answers with a machine-precision −E·μ identity |
-| Percolation platform reference | **Experimental** | Static site/bond/mixed sampling and extensive validation assets exist. F1-F3 provide independently reviewed provisional topology, activity/law, reusable component-analysis, and boundary-query layers; F4 scientific observables and Carlo adaptation remain incomplete (`CMC.rs/PERCOLATION.md`) |
+| Percolation platform (static family) | **production-ready (on `dev` merge)** | F1-F4 complete and independently reviewed: topology views, activity/law, reusable zero-allocation component analysis, and the `StaticPercolationMC` adapter with every validation asset migrated; static site/bond/mixed on arbitrary undirected graphs is Validated per `CMC.rs/PERCOLATION.md`. Heterogeneous, network, directed, process, continuum, FK, and wrapping tracks remain Not implemented |
 
 ### QMC.rs (4 solvers)
 
@@ -349,6 +351,6 @@ Same as NUTS minus U-turn tests.
 **Repository: research-grade overall (MCMC physics complete); CMC.rs, QMC.rs and the Carlo.rs framework core reached their target maturity on 2026-08-19.**
 
 - **Carlo.rs**: stable framework core; HDF5 checkpoint, MPI backend, and PT exchange now **production-ready** (analytic exchange-acceptance validation, np 1/2/4 exact fan-out, loud legacy fallback; nightly `carlo-framework` regression job) — 302 suite tests (297 + 5 MPI-ignored); error analysis/merge still research-grade
-- **CMC.rs**: the original 19-solver assessment remains production-ready against physics A–F, audited input validation G, and documented domains H. Current test counts and per-solver evidence live in `CMC.rs/VALIDATION.md`. New capabilities do not inherit the 2026-08-19 assessment: the percolation platform is an **Experimental reference**; independently reviewed F1-F3 topology, activity/law, reusable component-analysis, and boundary-query stages are complete, while scientific observables and Carlo adaptation remain in F4 (`CMC.rs/PERCOLATION.md`).
+- **CMC.rs**: the original 19-solver assessment remains production-ready against physics A–F, audited input validation G, and documented domains H. Current test counts and per-solver evidence live in `CMC.rs/VALIDATION.md`. New capabilities do not inherit the 2026-08-19 assessment: the percolation F1-F4 foundation (topology views, activity/law, reusable component analysis, boundary queries, observables, `StaticPercolationMC`) passed its own gates and independent review — the static site/bond/mixed family is Validated, production-ready on the `dev` merge — while heterogeneous, network, directed, process, continuum, FK, and wrapping tracks remain Not implemented (`CMC.rs/PERCOLATION.md`).
 - **QMC.rs**: 202 tests (195 + 7 long). **Production hardening complete (2026-08-19)**: all 4 solvers **production-ready** — generic-S scattering identities (S ∈ {1/2…5/2}, both policies, 1e-12); occupation machine-precision heat-bath-kernel DB + empirical flow balance + strongly-connected update graph; cluster multi-init/sector ergodicity and **multi-mode baths validated** (kernel identity + 3-obs ED); criterion-G audit with a silent free-spin fallback on unknown model names fixed in source
 - **MCMC.rs**: 72 tests (69 + 3 long). All 6 kernels research-grade: detailed balance (machine-precision + statistical), ESS calibrated on AR(1), 6-solver posterior agreement, non-Gaussian recovery; nightly z-score monitoring covers CMC/QMC at 64 seeds

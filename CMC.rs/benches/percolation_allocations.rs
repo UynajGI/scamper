@@ -3,24 +3,27 @@ mod percolation_support;
 use std::mem::size_of;
 
 use allocation_counter::measure;
+use carlo_rs::{Context, MonteCarlo};
 use cmc_rs::{
     analyze, Bond, BondBernoulli, BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace,
-    GraphView, MixedBernoulli, OccupancyState, PercolationMode, Probability, ProbabilityField,
-    SiteBernoulli, StaticConfiguration, UndirectedGraphView,
+    GraphView, MixedBernoulli, ObservablePlan, Probability, ProbabilityField, SiteBernoulli,
+    StaticConfiguration, StaticLaw, StaticPercolationMC, UndirectedGraphView,
 };
-use percolation_support::{cases, sample_and_analyze, Case, P_BOND, P_SITE};
+use percolation_support::{
+    cases, sample_and_analyze, Case, ReferenceConfiguration, ReferenceMode, P_BOND, P_SITE,
+};
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 const ALLOCATION_SAMPLES: usize = 128;
+const ADAPTER_WARMUP: usize = 8;
 
-fn estimated_owned_storage_bytes(case: &Case, occupancy: &OccupancyState) -> usize {
+fn estimated_owned_storage_bytes(case: &Case, occupancy: &ReferenceConfiguration) -> usize {
     case.lattice.offsets.capacity() * size_of::<usize>()
         + case.lattice.neighbors.capacity() * size_of::<usize>()
         + case.lattice.edge_ids.capacity() * size_of::<usize>()
         + case.lattice.edges.capacity() * size_of::<Bond>()
-        + occupancy.site_open.capacity()
-        + occupancy.bond_open.capacity()
+        + occupancy.storage_bytes()
 }
 
 fn report_vec_bool_probe() {
@@ -46,8 +49,8 @@ fn report_vec_bool_probe() {
     }
 }
 
-fn report_case(case: &Case, mode: PercolationMode) {
-    let mut occupancy = OccupancyState::new(&case.lattice, mode);
+fn report_case(case: &Case, mode: ReferenceMode) {
+    let mut occupancy = ReferenceConfiguration::new(case, mode);
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x0041_4c4c_4f43);
     for _ in 0..8 {
         std::hint::black_box(sample_and_analyze(case, &mut occupancy, &mut rng));
@@ -60,23 +63,73 @@ fn report_case(case: &Case, mode: PercolationMode) {
     let storage_bytes = estimated_owned_storage_bytes(case, &occupancy);
     eprintln!(
         "PERCOLATION_ALLOC topology={} mode={} V={} E={} p_site={} p_bond={} \
-         site_len={} site_logical_capacity={} bond_len={} bond_logical_capacity={} \
          estimated_owned_storage_bytes={} estimated_bytes_per_vertex={:.3} \
          estimated_bytes_per_edge={:.3} measured_samples={} allocations_per_sample={:.3} \
          allocated_bytes_per_sample={:.3} peak_live_allocations={} peak_live_bytes={}",
         case.name,
-        mode.as_label(),
+        mode.label(),
         case.lattice.n_sites,
         case.lattice.n_edges(),
         P_SITE,
         P_BOND,
-        occupancy.site_open.len(),
-        occupancy.site_open.capacity(),
-        occupancy.bond_open.len(),
-        occupancy.bond_open.capacity(),
         storage_bytes,
         storage_bytes as f64 / case.lattice.n_sites as f64,
         storage_bytes as f64 / case.lattice.n_edges() as f64,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
+/// Adapter probe: `StaticPercolationMC::sweep` + `measure` must be
+/// allocation-free in steady state. The first `measure` of each observable
+/// name allocates inside `Measurements` (HashMap insert, first bin), and every
+/// `bin_capacity`-th sample allocates one completed bin, so the context uses a
+/// binsize strictly larger than warmup plus measured samples and both are
+/// exhausted before the measured window.
+fn report_adapter_case(case: &Case, mode: ReferenceMode) {
+    let law = match mode {
+        ReferenceMode::Site => StaticLaw::site(P_SITE),
+        ReferenceMode::Bond => StaticLaw::bond(P_BOND),
+        ReferenceMode::Mixed => StaticLaw::mixed(P_SITE, P_BOND),
+    }
+    .expect("probe probability");
+    let plan = ObservablePlan::all(vec![BoundaryQuery::new(
+        &case.lattice,
+        &case.from,
+        &case.to,
+    )
+    .expect("probe boundary query must be valid")]);
+    let mut adapter = StaticPercolationMC::new(case.lattice.clone(), law, plan)
+        .expect("probe adapter must construct");
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0x4633_4144_4150),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        adapter.sweep(&mut context);
+        adapter.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    let observable_count = 7 + 1 + 1; // plan scalars + defined indicator + one query
+    eprintln!(
+        "PERCOLATION_ADAPTER_ALLOC topology={} law={} V={} E={} observables={} \
+         measured_samples={} allocations_per_sample={:.3} allocated_bytes_per_sample={:.3} \
+         peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        mode.label(),
+        case.lattice.vertex_count(),
+        case.lattice.edge_count(),
+        observable_count,
         ALLOCATION_SAMPLES,
         info.count_total as f64 / ALLOCATION_SAMPLES as f64,
         info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
@@ -232,7 +285,7 @@ fn report_law_case(case: &Case) {
     }
 }
 
-fn report_component_case(case: &Case, mode: PercolationMode) {
+fn report_component_case(case: &Case, mode: ReferenceMode) {
     let vertex_count = case.lattice.vertex_count();
     let edge_count = case.lattice.edge_count();
     let query = BoundaryQuery::new(&case.lattice, &case.from, &case.to)
@@ -255,9 +308,9 @@ fn report_component_case(case: &Case, mode: PercolationMode) {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4633_414c_4c4f);
     let sample = |configuration: &mut StaticConfiguration, rng: &mut Xoshiro256PlusPlus| {
         match mode {
-            PercolationMode::Site => site.sample(&case.lattice, configuration, rng),
-            PercolationMode::Bond => bond.sample(&case.lattice, configuration, rng),
-            PercolationMode::SiteBond => mixed.sample(&case.lattice, configuration, rng),
+            ReferenceMode::Site => site.sample(&case.lattice, configuration, rng),
+            ReferenceMode::Bond => bond.sample(&case.lattice, configuration, rng),
+            ReferenceMode::Mixed => mixed.sample(&case.lattice, configuration, rng),
         }
         .expect("probe dimensions match");
     };
@@ -299,7 +352,7 @@ fn report_component_case(case: &Case, mode: PercolationMode) {
          allocated_bytes_per_sample={:.3} peak_live_allocations={} peak_live_bytes={} \
          f0_reference_allocations_per_sample=7 f0_reference_bytes_per_sample=86016",
         case.name,
-        mode.as_label(),
+        mode.label(),
         vertex_count,
         edge_count,
         ALLOCATION_SAMPLES,
@@ -327,20 +380,15 @@ fn main() {
     let benchmark_cases = cases();
     for case in &benchmark_cases {
         report_law_case(case);
-        for mode in [
-            PercolationMode::Site,
-            PercolationMode::Bond,
-            PercolationMode::SiteBond,
-        ] {
+        for mode in ReferenceMode::ALL {
             report_component_case(case, mode);
+        }
+        for mode in ReferenceMode::ALL {
+            report_adapter_case(case, mode);
         }
     }
     for case in benchmark_cases {
-        for mode in [
-            PercolationMode::Site,
-            PercolationMode::Bond,
-            PercolationMode::SiteBond,
-        ] {
+        for mode in ReferenceMode::ALL {
             report_case(&case, mode);
         }
     }

@@ -125,11 +125,11 @@ pub use particle::{
 #[doc(hidden)]
 pub use percolation::WorkspaceCapacityAudit;
 pub use percolation::{
-    analyze, analyze_with_labels, cluster_stats, AnalysisError, AnalysisResult, BondBernoulli,
-    BoundaryQuery, BoundaryQueryError, ClusterStats, ComponentLabel, ComponentSummary,
-    ComponentWorkspace, EdgeActivity, MixedBernoulli, OccupancyState, PercolationMC,
-    PercolationMode, Probability, ProbabilityField, SiteBernoulli, StaticConfiguration, UnionFind,
-    VertexActivity,
+    analyze, analyze_with_labels, AnalysisError, AnalysisResult, BondBernoulli, BoundaryQuery,
+    BoundaryQueryError, ComponentLabel, ComponentSummary, ComponentWorkspace, EdgeActivity,
+    MixedBernoulli, ObservablePlan, ObservablePlanError, Probability, ProbabilityField,
+    SiteBernoulli, StaticConfiguration, StaticLaw, StaticObservable, StaticPercolationError,
+    StaticPercolationMC, VertexActivity,
 };
 pub use postprocess::{
     binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,

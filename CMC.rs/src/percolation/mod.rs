@@ -7,31 +7,33 @@
 //! set `thermalization_sweeps = 0` and read every sweep as one independent
 //! sample.
 //!
-//! The scheduler-ready adapter is [`PercolationMC`]. [`cluster_stats`] and
-//! [`UnionFind`] are public for direct, RNG-free analysis of fixed
-//! configurations (exact-enumeration validation builds on this).
+//! The scheduler-ready adapter is [`StaticPercolationMC`], composed from an
+//! owned [`crate::CsrLattice`], a uniform [`StaticLaw`], a
+//! [`StaticConfiguration`], a reusable [`ComponentWorkspace`], and an explicit
+//! [`ObservablePlan`]. [`analyze`] and [`ComponentSummary`] are public for
+//! direct, RNG-free analysis of fixed configurations (exact-enumeration
+//! validation builds on this); borrowed graphs and custom laws call them
+//! directly, optionally through `carlo_rs::Run::from_parts`.
 
 mod activity;
 mod analyzer;
-mod cluster;
+mod carlo;
 mod configuration;
 mod law;
-mod mc;
+mod observable;
 mod probability;
 mod query;
-mod state;
 mod summary;
 mod workspace;
 
 pub use activity::{EdgeActivity, VertexActivity};
 pub use analyzer::{analyze, analyze_with_labels, AnalysisError, AnalysisResult};
-pub use cluster::{cluster_stats, ClusterStats, UnionFind};
+pub use carlo::{StaticLaw, StaticPercolationError, StaticPercolationMC};
 pub use configuration::StaticConfiguration;
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
-pub use mc::PercolationMC;
+pub use observable::{ObservablePlan, ObservablePlanError, StaticObservable};
 pub use probability::{Probability, ProbabilityError, ProbabilityField};
 pub use query::{BoundaryQuery, BoundaryQueryError};
-pub use state::{OccupancyState, PercolationMode};
 pub use summary::ComponentSummary;
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]

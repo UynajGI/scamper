@@ -32,9 +32,12 @@ Do not treat these provisional interfaces as compatibility commitments:
 - the current `PercolationMC` constructor, parameter schema, or observable
   names.
 
-Foundation work starts from `dev` in reviewable PRs. Validation migrates as the
-new layers become available. After the production static adapter lands, PR #4
-is closed as superseded rather than rebased into the new architecture.
+Foundation work is delivered as successive independently reviewed commits
+stacked on the `feat/cmc-percolation` branch (PR #4). The provisional API that
+PR #4 originally introduced is deleted in-branch before merge — superseded in
+place under the never-merged-API rule — so the merged diff contains only the
+final architecture; PR #4 itself is updated and serves as the delivery vehicle
+rather than being closed.
 
 The philosophy and roadmap should be reviewed independently from provisional
 implementation code.
@@ -355,7 +358,8 @@ compatibility wrapper for an API that has never merged.
 - `thermalization_sweeps = 0` is explicit in adapter docs and examples.
 - After merge, ordinary site, bond, mixed, and arbitrary static undirected graph
   percolation are production-ready.
-- PR #4 is closed as superseded.
+- PR #4 carries the final architecture; its provisional API is deleted in-branch
+  before merge.
 
 ## 8. C0: Carlo.rs Vector Estimates and Extensible Provenance
 
@@ -738,10 +742,11 @@ advertised as production-ready.
 | F1 read-only topology capabilities | **Complete** | Dense IDs, generic undirected views, `CsrLattice` integration, validated zero-copy borrowed CSR, independent review, correctness tests, allocation probe, and repeated <5% trait-overhead benchmark gate complete |
 | F2 configuration/activity + Bernoulli laws | **Complete** | Private reusable activity storage, `StaticConfiguration`, validated uniform/heterogeneous probability fields, independent site/bond/mixed laws, atomic validation, six-domain aggregate statistical gates over 1-4096 seeds, 14-ID Criterion data, and 25 zero-allocation probe records complete |
 | F3 undirected analyzer + reusable workspace | **Complete** | Mode-free generic component analysis, physical-edge scan, canonical identity, multi-query crossing, independent flood-fill parity, typed errors, workspace reuse/stamp-wrap tests, 15 zero-allocation records, measured workspace/RSS, and 48-ID equivalent-work Criterion evidence passed independent review |
-| F4 scientific observables + production adapter | **Next** | Define normalized observables and per-sample largest exclusion, then compose the owned Carlo.rs adapter and migrate PR #4 validation |
-| C0 Carlo.rs vector estimates | **Not started (parallel track)** | May proceed independently; process-curve adapters remain blocked until it lands |
-| N/Z/D/E/G/P/R/W tracks | **Not started** | Their dependency gates are defined above |
+| F4 scientific observables + production adapter | **Complete** | `ObservablePlan` observables with per-sample canonical-largest exclusion and undefined-sample indicator, owned `StaticPercolationMC` adapter, provisional API deleted in-branch with every validation asset migrated, zero-allocation adapter probe, 63-ID Criterion evidence, and independent review passed; the static family is Validated (production on the `dev` merge). Definitions and data in `CMC.rs/PERCOLATION.md` |
+| C0 Carlo.rs vector estimates | **Not started (parallel track)** | Tracked as [issue #5](https://github.com/UynajGI/scamper/issues/5); may proceed independently — process-curve adapters (N3/D3/E2/E3/G2/G3) remain blocked until it lands |
+| N/Z/D/E/G/P/R/W tracks | **Not started — entry stages unblocked** | F0-F4 prerequisites are complete; parallel entry stages N1, Z1, W1, D1, E1, G1, P1, and R1 may start in any order, subject to their dependency gates above |
 
-PR #4 remains open as a validation source until F4 migrates all applicable
-gates. It is not a stable API baseline and must not be merged as the final
-platform architecture.
+PR #4 carries the F0-F4 final architecture as its delivery vehicle: the
+provisional API it originally proposed is deleted in-branch (never merged, so
+no compatibility debt), and every applicable validation gate was migrated to
+the final API before the F4 review landed.

@@ -15,8 +15,73 @@ use std::sync::OnceLock;
 use super::common::zscore_seed_count;
 use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
 use cmc_rs::{
-    build_square, cluster_stats, CsrLattice, OccupancyState, PercolationMC, PercolationMode,
+    analyze, build_square, BoundaryQuery, ComponentWorkspace, CsrLattice, EdgeActivity, EdgeId,
+    GraphView, StaticPercolationMC, UndirectedGraphView, VertexActivity, VertexId,
 };
+
+#[derive(Clone, Copy)]
+enum PercolationMode {
+    Site,
+    Bond,
+    SiteBond,
+}
+
+impl PercolationMode {
+    const fn samples_sites(self) -> bool {
+        !matches!(self, Self::Bond)
+    }
+
+    const fn samples_bonds(self) -> bool {
+        !matches!(self, Self::Site)
+    }
+}
+
+struct OccupancyState {
+    sites: Vec<bool>,
+    bonds: Vec<bool>,
+}
+
+impl OccupancyState {
+    fn new(graph: &CsrLattice, mode: PercolationMode) -> Self {
+        Self {
+            sites: vec![matches!(mode, PercolationMode::Bond); graph.vertex_count()],
+            bonds: vec![matches!(mode, PercolationMode::Site); graph.edge_count()],
+        }
+    }
+}
+
+impl VertexActivity for OccupancyState {
+    fn vertex_count(&self) -> usize {
+        self.sites.len()
+    }
+    fn vertex_active(&self, vertex: VertexId) -> bool {
+        self.sites[vertex.index()]
+    }
+}
+
+impl EdgeActivity for OccupancyState {
+    fn edge_count(&self) -> usize {
+        self.bonds.len()
+    }
+    fn edge_active(&self, edge: EdgeId) -> bool {
+        self.bonds[edge.index()]
+    }
+}
+
+fn cluster_stats(
+    graph: &CsrLattice,
+    occupancy: &OccupancyState,
+    from: &[usize],
+    to: &[usize],
+) -> (bool, usize) {
+    let queries = [BoundaryQuery::new(graph, from, to).unwrap()];
+    let mut workspace = ComponentWorkspace::new();
+    let result = analyze(graph, occupancy, occupancy, &queries, &mut workspace).unwrap();
+    (
+        result.query_outcomes()[0],
+        result.summary().largest_component_size,
+    )
+}
 
 const N_SEEDS: usize = 16;
 const MEASUREMENT_SWEEPS: u64 = 100_000;
@@ -52,7 +117,7 @@ fn exact_moments(
     let (mut p_span, mut mean_max) = (0.0, 0.0);
     for mask in 0..(1usize << n_bits) {
         if mode.samples_sites() {
-            for (bit, open) in occupancy.site_open.iter_mut().enumerate() {
+            for (bit, open) in occupancy.sites.iter_mut().enumerate() {
                 *open = (mask >> bit) & 1 == 1;
             }
         }
@@ -61,7 +126,7 @@ fn exact_moments(
                 PercolationMode::SiteBond => n_sites,
                 _ => 0,
             };
-            for (bit, open) in occupancy.bond_open.iter_mut().enumerate() {
+            for (bit, open) in occupancy.bonds.iter_mut().enumerate() {
                 *open = (mask >> (offset + bit)) & 1 == 1;
             }
         }
@@ -86,9 +151,9 @@ fn exact_moments(
             PercolationMode::Bond => bond_factor,
             PercolationMode::SiteBond => site_factor * bond_factor,
         };
-        let stats = cluster_stats(lattice, &occupancy, &from, &to);
-        p_span += weight * f64::from(u8::from(stats.spanning));
-        mean_max += weight * stats.max_size as f64;
+        let (spans, largest) = cluster_stats(lattice, &occupancy, &from, &to);
+        p_span += weight * f64::from(u8::from(spans));
+        mean_max += weight * largest as f64;
     }
     (p_span, mean_max)
 }
@@ -133,9 +198,9 @@ fn run_seeds(mode: &str, side: usize, p_site: f64, p_bond: f64) -> Vec<[(f64, f6
                 base_seed: seed,
                 ..Default::default()
             };
-            let results =
-                Scheduler::new(RayonBackend::new(1), config).run_one::<PercolationMC>(&params);
-            ["Spanning", "MaxCluster"].map(|name| {
+            let results = Scheduler::new(RayonBackend::new(1), config)
+                .run_one::<StaticPercolationMC>(&params);
+            ["BoundaryCrossing0", "LargestSize"].map(|name| {
                 let estimate = results
                     .get(name)
                     .unwrap_or_else(|| panic!("missing {name}"));
