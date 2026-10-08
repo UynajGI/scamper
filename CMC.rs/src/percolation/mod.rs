@@ -8,7 +8,8 @@
 //! sample.
 //!
 //! The scheduler-ready adapter is [`StaticPercolationMC`], composed from an
-//! owned [`crate::CsrLattice`], a uniform [`StaticLaw`], a
+//! owned [`crate::CsrLattice`], a uniform or heterogeneous (per-vertex and
+//! per-edge [`Probability`] fields) [`StaticLaw`], a
 //! [`StaticConfiguration`], a reusable [`ComponentWorkspace`], and an explicit
 //! [`ObservablePlan`]. [`analyze`] and [`ComponentSummary`] are public for
 //! direct, RNG-free analysis of fixed configurations (exact-enumeration

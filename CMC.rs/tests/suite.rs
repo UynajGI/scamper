@@ -102,6 +102,10 @@ mod particles_exact;
 mod percolation;
 #[path = "physics/percolation_components.rs"]
 mod percolation_components;
+#[path = "physics/percolation_heterogeneous.rs"]
+mod percolation_heterogeneous;
+#[path = "physics/percolation_heterogeneous_zscore.rs"]
+mod percolation_heterogeneous_zscore;
 #[path = "physics/percolation_law_zscore.rs"]
 mod percolation_law_zscore;
 #[path = "physics/percolation_zscore.rs"]

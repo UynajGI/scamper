@@ -374,6 +374,67 @@ fn report_component_case(case: &Case, mode: ReferenceMode) {
     );
 }
 
+/// Heterogeneous (N1) adapter probe: `StaticPercolationMC` sweep+measure with
+/// per-vertex and per-edge probability fields must be allocation-free in
+/// steady state, exactly like the uniform adapter above.
+fn report_heterogeneous_adapter_case(case: &Case, mode: ReferenceMode) {
+    let vertex_count = case.lattice.vertex_count();
+    let edge_count = case.lattice.edge_count();
+    let vertex_probabilities = (0..vertex_count)
+        .map(|index| probability(if index % 2 == 0 { 0.25 } else { 0.75 }))
+        .collect::<Vec<_>>();
+    let edge_probabilities = (0..edge_count)
+        .map(|index| probability(if index % 3 == 0 { 0.2 } else { 0.6 }))
+        .collect::<Vec<_>>();
+    let law = match mode {
+        ReferenceMode::Site => StaticLaw::site_heterogeneous(vertex_probabilities),
+        ReferenceMode::Bond => StaticLaw::bond_heterogeneous(edge_probabilities),
+        ReferenceMode::Mixed => {
+            StaticLaw::mixed_heterogeneous(vertex_probabilities, edge_probabilities)
+        }
+    };
+    let plan = ObservablePlan::all(vec![BoundaryQuery::new(
+        &case.lattice,
+        &case.from,
+        &case.to,
+    )
+    .expect("probe boundary query must be valid")]);
+    let mut adapter = StaticPercolationMC::new(case.lattice.clone(), law, plan)
+        .expect("probe adapter must construct");
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0x4845_5445_4150),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        adapter.sweep(&mut context);
+        adapter.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    let observable_count = 7 + 1 + 1; // plan scalars + defined indicator + one query
+    eprintln!(
+        "PERCOLATION_ADAPTER_ALLOC topology={} law=heterogeneous-{} V={} E={} observables={} \
+         measured_samples={} allocations_per_sample={:.3} allocated_bytes_per_sample={:.3} \
+         peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        mode.label(),
+        vertex_count,
+        edge_count,
+        observable_count,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
@@ -385,6 +446,9 @@ fn main() {
         }
         for mode in ReferenceMode::ALL {
             report_adapter_case(case, mode);
+        }
+        for mode in ReferenceMode::ALL {
+            report_heterogeneous_adapter_case(case, mode);
         }
     }
     for case in benchmark_cases {

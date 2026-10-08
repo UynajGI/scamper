@@ -44,7 +44,7 @@ adapter modules:
 | `generalized/` | Wang-Landau, frozen biases, DOS/histograms, exact enumeration and reweighting |
 | `worm/` | Persistent physical/worm sectors, generic local driver and Ising graph representation |
 | `dynamics/` | Kawasaki exchange, direct Gillespie, Fenwick BKL/n-fold way and hard-sphere event chains |
-| `percolation/` | Experimental F1-F4 foundation (topology/activity capabilities, Bernoulli laws, generic component analyzer, reusable workspace, explicit observable plan and owned `StaticPercolationMC` adapter) |
+| `percolation/` | F1-F4 foundation — substrate layers Experimental, static family Validated — (topology/activity capabilities, Bernoulli laws, generic component analyzer, reusable workspace, explicit observable plan and owned `StaticPercolationMC` adapter) plus Validated N1 heterogeneous per-vertex/per-edge `StaticLaw` variants |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
 The established lattice/particle API remains re-exported flat from `lib.rs`.
@@ -299,6 +299,59 @@ Borrowed graphs and custom laws bypass the owned adapter: call `analyze`
 directly, or compose a runtime with `Run::from_parts()`. Arbitrary graphs can
 also construct `StaticPercolationMC::new(lattice, law, plan)` with an explicit
 `BoundaryQuery` instead of going through `FromParams`.
+
+### Heterogeneous per-vertex / per-edge probabilities
+
+`StaticLaw` also carries one validated `Probability` per vertex and/or per
+physical edge (N1). The constructors take pre-validated values and cannot
+fail; the adapter constructor checks field lengths against the topology and
+returns a typed `StaticPercolationError::LawDomain` on mismatch. The
+`FromParams` schema stays uniform-only, so heterogeneous adapters are
+scheduled with `Run::from_parts()`:
+
+```rust
+use carlo_rs::{Context, Run, RunConfig, RunId, TaskId};
+use cmc_rs::{
+    build_square, BoundaryQuery, GraphView, ObservablePlan, Probability, StaticLaw,
+    StaticPercolationMC,
+};
+use rand::SeedableRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
+
+let lattice = build_square(32, 32, false);
+let site_p: Vec<Probability> = (0..lattice.vertex_count())
+    .map(|i| Probability::new(0.4 + 0.3 * ((i % 7) as f64) / 6.0).unwrap())
+    .collect();
+let plan = ObservablePlan::all(vec![BoundaryQuery::new(
+    &lattice,
+    &(0..32).map(|r| r * 32).collect::<Vec<_>>(),
+    &(0..32).map(|r| r * 32 + 31).collect::<Vec<_>>(),
+)
+.unwrap()]);
+let adapter = StaticPercolationMC::new(
+    lattice,
+    StaticLaw::site_heterogeneous(site_p),
+    plan,
+)
+.unwrap();
+let mut run = Run::from_parts(
+    Context::new_with_binsize(Xoshiro256PlusPlus::seed_from_u64(42), 0, 100),
+    adapter,
+    TaskId::new(0),
+    RunId::new(0),
+    RunConfig { thermalization_sweeps: 0, measurement_sweeps: 100_000,
+               binsize: 100, ..Default::default() },
+);
+run.run(100_000);
+let results = run.finalize(42);
+```
+
+`StaticLaw::bond_heterogeneous(probabilities)` and
+`StaticLaw::mixed_heterogeneous(site_probabilities, bond_probabilities)`
+follow the same pattern; a mixed bond connects only when it is open and both
+endpoint sites are open. Validation evidence, the uniform-vs-heterogeneous
+benchmark, and the zero-allocation adapter gate are recorded in
+[PERCOLATION.md](PERCOLATION.md).
 
 ## Arbitrary weighted graph
 

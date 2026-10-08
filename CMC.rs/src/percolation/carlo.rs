@@ -8,14 +8,24 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::{
     analyze, BondBernoulli, BoundaryQuery, ComponentWorkspace, MixedBernoulli, ObservablePlan,
-    ObservablePlanError, Probability, SamplingError, SiteBernoulli, StaticConfiguration,
-    StaticObservable,
+    ObservablePlanError, Probability, ProbabilityField, SamplingError, SiteBernoulli,
+    StaticConfiguration, StaticObservable,
 };
 use crate::classical_mc::{build_lattice_from_params, parse_bool, parse_param};
 use crate::{CsrLattice, GraphView, UndirectedGraphView};
 
-/// Uniform static law used only at the owned runtime-adapter boundary.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Static Bernoulli occupation law used only at the owned runtime-adapter
+/// boundary: one uniform probability per sampled domain, or one validated
+/// [`Probability`] per vertex and/or per physical edge (N1).
+///
+/// The heterogeneous variants own their fields (`Vec<Probability>`), because
+/// [`StaticPercolationMC`] owns its law with no lifetime; the constructors
+/// accept owned vectors or borrowed slices through `impl Into<Vec<_>>`.
+/// Field lengths are validated against the adapter topology in
+/// [`StaticPercolationMC::new`], so the per-sweep domain checks inside the
+/// F2 sampler can never fail for a constructed adapter. The values themselves
+/// are validated by construction ([`Probability::new`]).
+#[derive(Clone, Debug, PartialEq)]
 pub enum StaticLaw {
     Site {
         probability: Probability,
@@ -26,6 +36,16 @@ pub enum StaticLaw {
     Mixed {
         site_probability: Probability,
         bond_probability: Probability,
+    },
+    SiteHeterogeneous {
+        probabilities: Vec<Probability>,
+    },
+    BondHeterogeneous {
+        probabilities: Vec<Probability>,
+    },
+    MixedHeterogeneous {
+        site_probabilities: Vec<Probability>,
+        bond_probabilities: Vec<Probability>,
     },
 }
 
@@ -56,36 +76,116 @@ impl StaticLaw {
         })
     }
 
+    /// One independent occupation probability per vertex (N1 heterogeneous
+    /// site percolation). Cannot fail: each value is already a validated
+    /// [`Probability`]; the vertex count is checked against the adapter
+    /// topology in [`StaticPercolationMC::new`].
+    pub fn site_heterogeneous(probabilities: impl Into<Vec<Probability>>) -> Self {
+        Self::SiteHeterogeneous {
+            probabilities: probabilities.into(),
+        }
+    }
+
+    /// One independent occupation probability per physical edge (N1
+    /// heterogeneous bond percolation), indexed by dense edge ID.
+    pub fn bond_heterogeneous(probabilities: impl Into<Vec<Probability>>) -> Self {
+        Self::BondHeterogeneous {
+            probabilities: probabilities.into(),
+        }
+    }
+
+    /// One independent occupation probability per vertex and per physical
+    /// edge (N1 heterogeneous mixed percolation); a bond connects only when
+    /// it is open and both endpoint sites are open.
+    pub fn mixed_heterogeneous(
+        site_probabilities: impl Into<Vec<Probability>>,
+        bond_probabilities: impl Into<Vec<Probability>>,
+    ) -> Self {
+        Self::MixedHeterogeneous {
+            site_probabilities: site_probabilities.into(),
+            bond_probabilities: bond_probabilities.into(),
+        }
+    }
+
     fn sample<R: Rng + ?Sized>(
-        self,
+        &self,
         graph: &impl UndirectedGraphView,
         configuration: &mut StaticConfiguration,
         rng: &mut R,
     ) -> Result<(), SamplingError> {
         match self {
             Self::Site { probability } => {
-                SiteBernoulli::new(probability.into()).sample(graph, configuration, rng)
+                SiteBernoulli::new((*probability).into()).sample(graph, configuration, rng)
             }
             Self::Bond { probability } => {
-                BondBernoulli::new(probability.into()).sample(graph, configuration, rng)
+                BondBernoulli::new((*probability).into()).sample(graph, configuration, rng)
             }
             Self::Mixed {
                 site_probability,
                 bond_probability,
-            } => MixedBernoulli::new(site_probability.into(), bond_probability.into()).sample(
-                graph,
-                configuration,
-                rng,
-            ),
+            } => MixedBernoulli::new((*site_probability).into(), (*bond_probability).into())
+                .sample(graph, configuration, rng),
+            Self::SiteHeterogeneous { probabilities } => SiteBernoulli::new(
+                ProbabilityField::Borrowed(probabilities),
+            )
+            .sample(graph, configuration, rng),
+            Self::BondHeterogeneous { probabilities } => BondBernoulli::new(
+                ProbabilityField::Borrowed(probabilities),
+            )
+            .sample(graph, configuration, rng),
+            Self::MixedHeterogeneous {
+                site_probabilities,
+                bond_probabilities,
+            } => MixedBernoulli::new(
+                ProbabilityField::Borrowed(site_probabilities),
+                ProbabilityField::Borrowed(bond_probabilities),
+            )
+            .sample(graph, configuration, rng),
+        }
+    }
+
+    /// Validate every heterogeneous field length against the adapter topology.
+    /// The error reuses the F2 [`SamplingError`] vocabulary so adapter and
+    /// law-level rejections report identical typed diagnostics.
+    fn validate_domain(&self, vertices: usize, edges: usize) -> Result<(), StaticPercolationError> {
+        let check = |entity: &'static str,
+                     probabilities: &[Probability],
+                     expected: usize|
+         -> Result<(), StaticPercolationError> {
+            if probabilities.len() == expected {
+                Ok(())
+            } else {
+                Err(StaticPercolationError::LawDomain(
+                    SamplingError::ProbabilityFieldLength {
+                        entity,
+                        expected,
+                        actual: probabilities.len(),
+                    },
+                ))
+            }
+        };
+        match self {
+            Self::SiteHeterogeneous { probabilities } => check("vertex", probabilities, vertices),
+            Self::BondHeterogeneous { probabilities } => check("edge", probabilities, edges),
+            Self::MixedHeterogeneous {
+                site_probabilities,
+                bond_probabilities,
+            } => check("vertex", site_probabilities, vertices)
+                .and_then(|()| check("edge", bond_probabilities, edges)),
+            Self::Site { .. } | Self::Bond { .. } | Self::Mixed { .. } => Ok(()),
         }
     }
 }
 
-/// Owned convenience adapter for i.i.d. site, bond, or mixed percolation.
+/// Owned convenience adapter for i.i.d. site, bond, or mixed percolation with
+/// uniform or heterogeneous (per-vertex/per-edge) probabilities.
 ///
 /// One `sweep()` draws one complete realization and the following `measure()`
 /// analyzes it. Configure `thermalization_sweeps = 0`; the adapter cannot see
 /// scheduler configuration and therefore cannot enforce this runtime setting.
+/// Heterogeneous laws reach this adapter only through the constructor (and
+/// `Run::from_parts()` for scheduling); the `FromParams` parameter schema
+/// stays uniform-only (N1 adds no graph/probability-list input format).
 /// Borrowed graphs and custom laws use the core APIs directly, optionally with
 /// `Run::from_parts()`.
 pub struct StaticPercolationMC {
@@ -105,6 +205,7 @@ impl StaticPercolationMC {
         lattice
             .validate()
             .map_err(|error| StaticPercolationError::Topology(error.to_string()))?;
+        law.validate_domain(lattice.vertex_count(), lattice.edge_count())?;
         plan.validate(lattice.vertex_count())
             .map_err(StaticPercolationError::Observable)?;
         for (index, query) in plan.boundary_queries().iter().enumerate() {
@@ -134,8 +235,8 @@ impl StaticPercolationMC {
         &self.lattice
     }
 
-    pub const fn law(&self) -> StaticLaw {
-        self.law
+    pub const fn law(&self) -> &StaticLaw {
+        &self.law
     }
 
     pub const fn configuration(&self) -> &StaticConfiguration {
@@ -361,6 +462,7 @@ fn invalid(field: impl Into<String>, reason: impl fmt::Display) -> CarloError {
 pub enum StaticPercolationError {
     Probability(&'static str, super::ProbabilityError),
     Topology(String),
+    LawDomain(SamplingError),
     Observable(ObservablePlanError),
     QueryDomain {
         query: usize,
@@ -375,6 +477,9 @@ impl fmt::Display for StaticPercolationError {
         match self {
             Self::Probability(name, source) => write!(formatter, "invalid `{name}`: {source}"),
             Self::Topology(reason) => write!(formatter, "invalid topology: {reason}"),
+            Self::LawDomain(source) => {
+                write!(formatter, "static-law domain mismatch: {source}")
+            }
             Self::Observable(source) => write!(formatter, "invalid observable plan: {source}"),
             Self::QueryDomain {
                 query,
@@ -408,6 +513,118 @@ mod tests {
         params.set("Ly", 2);
         params.set("p", 0.5);
         params
+    }
+
+    fn probability(value: f64) -> Probability {
+        Probability::new(value).expect("test probability")
+    }
+
+    fn square_lattice() -> CsrLattice {
+        crate::build_square(2, 2, false)
+    }
+
+    fn full_plan(lattice: &CsrLattice) -> ObservablePlan {
+        let query = BoundaryQuery::new(lattice, &[0, 2], &[1, 3]).expect("test boundary query");
+        ObservablePlan::all(vec![query])
+    }
+
+    #[test]
+    fn heterogeneous_laws_construct_from_owned_and_borrowed_fields() {
+        let lattice = square_lattice();
+        let plan = full_plan(&lattice);
+        let site_values = [0.1, 0.9, 0.4, 0.65].map(probability);
+        let adapter = StaticPercolationMC::new(
+            lattice.clone(),
+            StaticLaw::site_heterogeneous(&site_values[..]),
+            plan.clone(),
+        )
+        .expect("borrowed site field matches V=4");
+        assert_eq!(
+            adapter.law(),
+            &StaticLaw::site_heterogeneous(site_values.to_vec())
+        );
+
+        let bond_values = [0.2, 0.75, 0.5, 0.35].map(probability);
+        let adapter = StaticPercolationMC::new(
+            lattice.clone(),
+            StaticLaw::bond_heterogeneous(bond_values.to_vec()),
+            plan.clone(),
+        )
+        .expect("owned bond field matches E=4");
+        assert_eq!(
+            adapter.law(),
+            &StaticLaw::bond_heterogeneous(bond_values.to_vec())
+        );
+
+        let adapter = StaticPercolationMC::new(
+            lattice,
+            StaticLaw::mixed_heterogeneous(site_values.to_vec(), &bond_values[..]),
+            plan,
+        )
+        .expect("mixed fields match V=4 and E=4");
+        assert_eq!(
+            adapter.law(),
+            &StaticLaw::mixed_heterogeneous(site_values.to_vec(), bond_values.to_vec())
+        );
+    }
+
+    #[test]
+    fn heterogeneous_length_mismatches_are_typed_rejections() {
+        let lattice = square_lattice();
+        let plan = full_plan(&lattice);
+        let wrong_site = StaticLaw::site_heterogeneous(vec![probability(0.5); 3]);
+        assert!(matches!(
+            StaticPercolationMC::new(lattice.clone(), wrong_site, plan.clone())
+                .err()
+                .expect("short site field is rejected"),
+            StaticPercolationError::LawDomain(SamplingError::ProbabilityFieldLength {
+                entity: "vertex",
+                expected: 4,
+                actual: 3,
+            })
+        ));
+        let wrong_bond = StaticLaw::bond_heterogeneous(vec![probability(0.5); 5]);
+        assert!(matches!(
+            StaticPercolationMC::new(lattice.clone(), wrong_bond, plan.clone())
+                .err()
+                .expect("long bond field is rejected"),
+            StaticPercolationError::LawDomain(SamplingError::ProbabilityFieldLength {
+                entity: "edge",
+                expected: 4,
+                actual: 5,
+            })
+        ));
+        // The vertex field is checked first; a wrong bond length alone is
+        // still reported against the edge domain.
+        let wrong_both = StaticLaw::mixed_heterogeneous(vec![probability(0.5); 4], vec![]);
+        assert!(matches!(
+            StaticPercolationMC::new(lattice.clone(), wrong_both, plan.clone())
+                .err()
+                .expect("empty mixed bond field is rejected"),
+            StaticPercolationError::LawDomain(SamplingError::ProbabilityFieldLength {
+                entity: "edge",
+                expected: 4,
+                actual: 0,
+            })
+        ));
+        let empty_site = StaticLaw::site_heterogeneous(Vec::new());
+        assert!(matches!(
+            StaticPercolationMC::new(lattice, empty_site, plan)
+                .err()
+                .expect("empty site field is rejected"),
+            StaticPercolationError::LawDomain(_)
+        ));
+    }
+
+    #[test]
+    fn invalid_probabilities_cannot_reach_the_heterogeneous_adapter() {
+        // The heterogeneous constructors take pre-validated `Probability`
+        // values, so the invalid-probability gate stays at `Probability::new`
+        // (typed `ProbabilityError`); no unvalidated f64 path exists into the
+        // adapter.
+        for value in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+            assert!(Probability::new(value).is_err(), "accepted {value}");
+        }
     }
 
     #[test]

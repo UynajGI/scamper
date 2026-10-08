@@ -1,15 +1,15 @@
 # CMC.rs — Physics Validation & Validated Domain
 
-> Updated 2026-10-02. Validation snapshot; current implementation status is
+> Updated 2026-10-08. Validation snapshot; current implementation status is
 > tracked separately in [PERCOLATION.md](PERCOLATION.md).
 
 ## Test suite summary
 
 | Layer | Tests | Runtime |
 |-------|-------|---------|
-| Default (`cargo test`) | 315 | ~75s |
+| Default (`cargo test`) | 329 | ~60s |
 | Long stochastic (`--ignored`) | 17 | ~40s |
-| **Suite total** | **332** | (+104 lib unit tests) |
+| **Suite total** | **346** | (+107 lib unit tests) |
 
 ## Per-solver validated domain
 
@@ -165,7 +165,10 @@ configuration after a mixed edge-length error and compare the next 16 RNG words 
 reports zero allocations/bytes for 128 post-warmup iterations of site, bond,
 mixed, heterogeneous mixed, and two-sample endpoint switching. Recorded measurements are in [PERCOLATION.md](PERCOLATION.md).
 - **Limitations:** the API passed F2 review but remains provisional and
-  Experimental until the platform merges into `dev`. Heterogeneous fields are only an Experimental F2 substrate; N1 validation/facades remain Not implemented. The independently reviewed F3 analyzer/workspace and the F4 adapter compose into the Validated static family (see below).
+  Experimental until the platform merges into `dev`. Heterogeneous fields were
+  an Experimental F2 substrate until N1 promoted them to the Validated
+  heterogeneous family (see the N1 section below); network facades over them
+  remain Not implemented. The independently reviewed F3 analyzer/workspace and the F4 adapter compose into the Validated static family (see below).
 
 ### Undirected component analyzer (F3, Experimental, 2026-09-03)
 - **Semantics and API:** `analyze` composes `UndirectedGraphView`, `VertexActivity`, and `EdgeActivity` without a mode enum. An active physical edge is counted and joined only when its edge and both endpoints are active; self-loops count once. `ComponentSummary` reports active vertices/edges, component count, canonical-minimum largest identity with deterministic lowest-ID tie breaking, largest size, and raw `M2`. `AnalysisResult<'_>` borrows reusable query outcomes and optional labels from `ComponentWorkspace`, preventing another analysis while results are live.
@@ -183,7 +186,19 @@ mixed, heterogeneous mixed, and two-sample endpoint switching. Recorded measurem
 - **Migrated validation:** every PR #4 asset now runs against the final API in `tests/physics/percolation.rs` (14 tests, 2 `#[ignore]` long) — 2x2 exhaustive enumeration vs hand-derived moments, site spanning polynomial, mixed closed form `2 p_s^2 p_b - p_s^4 p_b^2`, mixed-to-pure reduction identities, p = 0 / p = 1 occupation extremes, chain closed forms, union-find vs flood-fill parity across seven topologies x three modes, crossing monotonicity (pure and per-probability mixed), scheduler 2x2 exact moments, scheduler chain closed forms, fixed-seed bitwise reproduction, and the ignored 32x32 bond p_c = 1/2 and 16^3 cubic critical-bracket long tests. `tests/physics/percolation_zscore.rs` gates `BoundaryCrossing0` and `LargestSize` for site, bond, and mixed modes over 16 default seeds (SCUTTLE_ZSCORE_SEEDS-scalable, |z| < 4, |zbar| < 1.5, no one-sided bias).
 - **New F4 coverage:** per-sample tie exclusion (canonical largest), no-active-vertices and V=0, single-giant-component undefined chi, multi-finite-cluster values, per-sample exclusion vs ratio-of-means counterexample, undefined-chi Results behavior and indicator counts under the scheduler, JSON schema and observable selection, and the full FromParams rejection matrix. Adapter unit tests (observable.rs + carlo.rs) add 10 cases; the whole percolation unit+integration set is green with `SCUTTLE_ZSCORE_SEEDS=64`.
 - **Performance:** 15 adapter allocation records (5 topologies x 3 laws, 128 post-warmup sweep+measure cycles each) report 0.000 allocations and 0.000 bytes per cycle in steady state; the Criterion target adds 15 `static-mc-sweep+measure` IDs composing sampling, analysis, and recording. F3 core throughput paths are unchanged code whose parity and sequence assertions still pass; same-run adapter-vs-core comparison shows measure overhead within contention noise, and cross-day point estimates carry documented host-load inflation (see [PERCOLATION.md](PERCOLATION.md)).
-- **NOT validated (unchanged scope):** heterogeneous probabilities (N1), wrapping (W2), parameter scans (Z1), process families; chi tie conventions other than single canonical-largest exclusion are separate named policies and do not exist.
+- **NOT validated (unchanged scope):** wrapping (W2), parameter scans (Z1), process families, network facades over heterogeneous fields (N2/N3); chi tie conventions other than single canonical-largest exclusion are separate named policies and do not exist. Heterogeneous probabilities were promoted to Validated by N1 (see below).
+
+### Heterogeneous Bernoulli laws (N1, `StaticLaw` heterogeneous variants, Validated — independently reviewed, 2026-10-08)
+- **API surface:** `StaticLaw::site_heterogeneous` / `bond_heterogeneous` / `mixed_heterogeneous` own one validated `Probability` per vertex and/or per physical edge (`impl Into<Vec<Probability>>`, infallible by construction); `StaticPercolationMC::new` validates field lengths against the topology and returns the typed `StaticPercolationError::LawDomain(SamplingError::ProbabilityFieldLength {..})` on mismatch. The analyzer/workspace/observable plan are untouched (roadmap §9 N1). `FromParams` stays uniform-only; heterogeneous adapters are scheduled through `Run::from_parts()` with a seeded `Context`.
+- **Exact non-iid enumeration:** 2x2 open square with four distinct probabilities per domain, per-element weights `prod p_i^{x_i} (1-p_i)^{1-x_i}` (sum-to-one asserted); scheduler `BoundaryCrossing0`/`LargestSize`/`RawSecondMoment` within |z| < 4 for site/bond/mixed over 4 seeds x 200k sweeps. Hand-derived chain closed forms `P = prod p_i` (site), `prod q_j` (bond), element-product (mixed) through the scheduler at L = 6 within |z| < 4. The 3x3 mixed z-score reference (2^21 configurations) was reproduced during independent N1 review by a from-scratch Python flood-fill enumeration (different code and summation order) agreeing to ~1e-13-1e-14 relative.
+- **Reductions and identities (bitwise):** heterogeneous all-equal-p fields reproduce uniform-law `Results` means bit-for-bit at identical seeds for site, bond, and mixed (p in {0.0, 0.3, 0.5, 1.0}; six observables) because the RNG draw order is identical and exact endpoints consume no RNG; heterogeneous mixed with an all-one edge field equals the heterogeneous site law and with an all-one site field the heterogeneous bond law, bitwise.
+- **Endpoint exactness:** all-0/1 fields are deterministic; hand-checked chain configurations pin ActiveVertexCount, ActiveEdgeCount, ComponentCount, LargestSize, RawSecondMoment, and BoundaryCrossing0 exactly.
+- **Invalid-domain rejection:** wrong-length site (3 vs V=4), bond (5 vs E=4), and mixed fields are typed `LawDomain` rejections before any sampling; NaN/±inf/out-of-range f64 cannot reach the constructors (`Probability::new` is the only f64 entry point).
+- **Statistical (scheduler-level, `tests/physics/percolation_heterogeneous_zscore.rs`, 7 tests):** 16 default seeds, SCUTTLE_ZSCORE_SEEDS-scalable (verified at 64), labeled seed base `0x4845_5445_0000` ("HETE"). `BoundaryCrossing0` and `LargestSize` against full heterogeneous enumeration on the 3x3 square — site 2^9, bond 2^12, mixed 2^21 shared across its two tests — with per-seed |z| < 4, |z̄| < 1.5, no one-sided bias; plus a Poisson-binomial activity gate through the adapter (site `ActiveVertexCount` mean `sum p_i`, bond `ActiveEdgeCount` mean `sum q_j`, mixed `ActiveEdgeCount` mean `sum_j q_j p_u(j) p_v(j)`, |z| < 4 per seed).
+- **Deterministic gates (`tests/physics/percolation_heterogeneous.rs`, 7 tests):** weight normalization, chain element-product closed forms (3 modes), 2x2 heterogeneous enumeration vs scheduler (3 modes x 4 seeds x 3 observables), bitwise uniform reduction (3 families x 4 probabilities x 6 observables), bitwise mixed-to-pure identities, endpoint determinism (3 hand-checked configurations), construction rejections.
+- **Unit coverage (`src/percolation/carlo.rs`, 3 heterogeneous tests):** owned/borrowed constructor round-trips for all three variants, exact typed payloads for site/bond/mixed length mismatches, and the `Probability::new` invalid-value gate.
+- **Performance:** `percolation_laws` grows to 16 Criterion IDs with heterogeneous site and bond rows next to heterogeneous mixed; on the recorded Xeon Gold 6148 host, heterogeneous sampling costs ~47-51% more time than uniform p = 0.5 (584-595 vs 393-397 M entities/s) from the per-element probability load in the dense loop — point estimates, not CI thresholds. The `percolation_allocations` probe adds 15 heterogeneous adapter records (5 topologies x site/bond/mixed): 0.000 allocations and 0.000 bytes per steady-state sweep+measure cycle, zero peak live allocations. Data and commands in [PERCOLATION.md](PERCOLATION.md).
+- **Limitations:** `FromParams` uniform-only (no probability-list input format — by roadmap design); per-element values must be validated upstream; no network facade, degree conditioning (N2), or attacks (N3); scalar observables only (C0 pending).
 
 ### Percolation, site / bond / mixed (`PercolationMC`, 2026-09-02 — superseded)
 - **Status:** Experimental PR #4 reference implementation, now **superseded**:

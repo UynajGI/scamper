@@ -394,7 +394,7 @@ names.
 
 ## 9. N Track: Heterogeneous and Network Percolation
 
-### N1: Heterogeneous Bernoulli Laws — PR 5
+### N1: Heterogeneous Bernoulli Laws — delivered in-branch on PR #4
 
 Use borrowed or owned `ProbabilityField` values per vertex and per edge. The
 analyzer remains unchanged.
@@ -408,7 +408,7 @@ Gates:
 - length and invalid-probability rejection;
 - uniform versus heterogeneous sampling benchmark.
 
-### N2: Random Network Failure and Degree Observables — PR 6
+### N2: Random Network Failure and Degree Observables — planned
 
 Add a `NetworkProfile` that caches original-graph degree. Random failure is a
 domain facade over heterogeneous site occupation, not a duplicate sampler.
@@ -430,7 +430,7 @@ Gates:
 - graph relabeling invariance;
 - stable array shapes and explicit empty-degree-bin semantics.
 
-### N3: Targeted Attacks and Robustness Curves — PR 7, depends on C0
+### N3: Targeted Attacks and Robustness Curves — planned, depends on C0
 
 The first production attack orders vertices by original degree. Tie policy is
 explicit:
@@ -744,9 +744,10 @@ advertised as production-ready.
 | F3 undirected analyzer + reusable workspace | **Complete** | Mode-free generic component analysis, physical-edge scan, canonical identity, multi-query crossing, independent flood-fill parity, typed errors, workspace reuse/stamp-wrap tests, 15 zero-allocation records, measured workspace/RSS, and 48-ID equivalent-work Criterion evidence passed independent review |
 | F4 scientific observables + production adapter | **Complete** | `ObservablePlan` observables with per-sample canonical-largest exclusion and undefined-sample indicator, owned `StaticPercolationMC` adapter, provisional API deleted in-branch with every validation asset migrated, zero-allocation adapter probe, 63-ID Criterion evidence, and independent review passed; the static family is Validated (production on the `dev` merge). Definitions and data in `CMC.rs/PERCOLATION.md` |
 | C0 Carlo.rs vector estimates | **Not started (parallel track)** | Tracked as [issue #5](https://github.com/UynajGI/scamper/issues/5); may proceed independently — process-curve adapters (N3/D3/E2/E3/G2/G3) remain blocked until it lands |
-| N/Z/D/E/G/P/R/W tracks | **Not started — entry stages unblocked** | F0-F4 prerequisites are complete; parallel entry stages N1, Z1, W1, D1, E1, G1, P1, and R1 may start in any order, subject to their dependency gates above |
+| N1 heterogeneous Bernoulli laws | **Complete** | All §9 N1 gates pass: owned heterogeneous `StaticLaw` variants on `StaticPercolationMC` with typed adapter-level length validation (analyzer unchanged); exact non-iid small-graph enumeration vs scheduler (\|z\| < 4, reference independently reproduced), bitwise uniform and mixed-pure reductions, endpoint determinism, length/invalid-probability rejection, 16-seed scheduler z-scores for site/bond/mixed (enumeration + Poisson-binomial references, verified at 64 seeds), 16-ID uniform-vs-heterogeneous Criterion comparison, and 15 zero-allocation heterogeneous adapter probe records. Evidence in `CMC.rs/PERCOLATION.md` and `CMC.rs/VALIDATION.md`; `FromParams` stays uniform-only by design |
+| Z/D/E/G/P/R/W tracks | **Not started — entry stages unblocked** | F0-F4 prerequisites are complete; parallel entry stages Z1, W1, D1, E1, G1, P1, and R1 may start in any order, subject to their dependency gates above |
 
-PR #4 carries the F0-F4 final architecture as its delivery vehicle: the
+PR #4 carries the F0-F4 final architecture plus the in-branch N1 delivery as its vehicle: the
 provisional API it originally proposed is deleted in-branch (never merged, so
 no compatibility debt), and every applicable validation gate was migrated to
 the final API before the F4 review landed.

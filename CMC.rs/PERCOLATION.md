@@ -26,7 +26,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Directed topology capability sketch | Experimental | Separate outgoing/incoming signatures exist only crate-private with compile fixtures; no directed API is re-exported before D1 fixes arc identity and storage contracts. |
 | Static configuration and Bernoulli-law substrate | Experimental | F2 provisional API separates private activity storage from independent site/bond/mixed laws, validates probability domains and topology lengths, and samples allocation-free after preparation. The independently reviewed F3 analyzer/workspace and F4 observables build on this substrate; the layer remains Experimental until the platform merges into `dev`. |
 | Static site, bond, and mixed Bernoulli percolation on arbitrary owned or borrowed undirected graphs | Validated | All family-specific gates pass: F3 component analysis with reusable workspace, canonical identities, and multi-query crossing; F4 `ObservablePlan` observables and owned `StaticPercolationMC` with every PR #4 validation asset migrated, the zero-allocation adapter gate, and 16-seed z-scores; independent review passed. Production-ready once the branch merges into `dev`. |
-| Heterogeneous occupation probabilities | Not implemented | `ProbabilityField` and direct Bernoulli sampling form an Experimental F2 substrate only. N1 exact non-identically-distributed validation and any network/domain facade are absent, so this is not a supported family claim. |
+| Heterogeneous occupation probabilities | Validated | N1 promotes the F2 `ProbabilityField` substrate to the `StaticPercolationMC` adapter: `StaticLaw::site_heterogeneous`/`bond_heterogeneous`/`mixed_heterogeneous` own one validated `Probability` per vertex and/or per physical edge, with adapter-constructor domain validation and scheduler scheduling through `Run::from_parts()`. Gates passed: exact non-identically-distributed small-graph enumeration (independently reproduced), bitwise uniform and mixed-pure reductions, endpoint determinism, typed length/invalid-probability rejection, 16-seed scheduler z-scores for site/bond/mixed (enumeration and Poisson-binomial references), uniform-vs-heterogeneous Criterion comparison, and a 0-allocation heterogeneous adapter probe. Independent review passed; production on the `dev` merge. Network/domain facades over heterogeneous fields (random failure, degree observables) remain Not implemented (N2). |
 | Network random failure and degree-conditioned observables | Not implemented | No network facade, probability field, or original-degree profile. |
 | Targeted or adaptive attack and robustness curves | Not implemented | No removal process or vector-valued realization output. |
 | Directed static reachability, weak/strong components | Not implemented | `CsrLattice` is undirected; directedness is not a mode flag. |
@@ -44,8 +44,9 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Newman-Ziff parameter scans | Not implemented | No incremental activation curve or binomial reweighting. |
 
 At F0 no family was **Validated**. Since F4 passed independent review, the
-static family and boundary crossing are the first Validated rows; their
-production availability is conditioned on the branch merging into `dev`.
+static family and boundary crossing are the first Validated rows; N1 adds the
+heterogeneous-probability family on the same production-conditioned basis.
+Their production availability is conditioned on the branch merging into `dev`.
 
 ## Scientific definitions
 
@@ -147,7 +148,7 @@ F4 API (see the F4 section below).
 The former PR #4 limitations — public storage layout, fresh per-analysis
 allocations, no component identity, no giant fraction or finite-cluster
 susceptibility — are resolved by F3/F4. Still true for the whole platform:
-uniform probabilities only outside the Experimental heterogeneous substrate,
+a uniform-only `FromParams` parameter path (heterogeneous laws enter via direct construction, N1 Validated),
 owned `CsrLattice` coupling in the parameter path (borrowed graphs use the
 core APIs directly), scalar results, and no wrapping, directed, process,
 continuum, FK, attack, or Newman-Ziff implementation.
@@ -332,9 +333,10 @@ Uniform exact endpoint fields use logical all/none states and consume no RNG for
 site, bond, or any mixed endpoint combination. Heterogeneous fields are sampled
 through the dense element loop; exact endpoint elements skip RNG individually,
 but no O(1) or whole-field no-RNG contract is claimed for heterogeneous data.
-Heterogeneous direct sampling is an **Experimental substrate only**: N1 exact
-non-identically-distributed production validation, domain facades, and network
-claims remain Not implemented.
+N1 has since promoted heterogeneous sampling through the `StaticPercolationMC`
+adapter to the Validated heterogeneous family (see the N1 section); the law
+module itself remains the Experimental F2 substrate it always was, and
+network/domain facades over heterogeneous fields remain Not implemented (N2).
 
 The F2 statistical gate aggregates activity across every requested seed rather
 than taking a maximum over a growing set of per-seed scores. For each of six
@@ -370,8 +372,9 @@ cargo bench -p cmc-rs --bench percolation_allocations \
 ```
 
 Recorded 2026-09-03 on the same Xeon Gold 6148 and rustc 1.98.0 toolchain as F0.
-The target contains **14 Criterion IDs**: three site, three bond, seven mixed
-uniform, and one heterogeneous mixed. Throughput denominators are `V` for site,
+The 2026-09-03 target contained **14 Criterion IDs** (three site, three bond,
+seven mixed uniform, one heterogeneous mixed); N1 later added heterogeneous
+site/bond for 16 total — see the N1 section. Throughput denominators are `V` for site,
 `E` for bond, and `V + E = 12,160` for every mixed case.
 
 | Law | `p_vertex` | `p_edge` | Point time | Point throughput |
@@ -751,10 +754,133 @@ cargo bench -p cmc-rs --bench percolation_allocations \
 
 ### Remaining F4 limitations
 
-Uniform probabilities only (heterogeneous fields stay the Experimental F2
-substrate until N1); the parameter path owns its lattice (borrowed graphs use
+At F4 the adapter was uniform-only; N1 has since added the heterogeneous
+`StaticLaw` variants on the same adapter (see the N1 section below), so the
+uniform-only restriction no longer applies. The remaining limitations are
+unchanged: the parameter path owns its lattice (borrowed graphs use
 the core APIs); one boundary-query normalization per adapter plan; scalar
 results only (vector observables need C0); no wrapping/winding (W2), no
 parameter scans (Z1), no directed/process/continuum/FK/attack families; chi
 tie conventions other than single canonical-largest exclusion are separate
 named policies that do not exist.
+
+## N1 heterogeneous Bernoulli laws
+
+N1 promotes the F2 heterogeneous probability substrate to the production
+adapter boundary. The analyzer, workspace, and observable plan are untouched
+(the roadmap requires this); only the owned adapter surface grows.
+
+### API
+
+`StaticLaw` gains three owned heterogeneous variants:
+`SiteHeterogeneous { probabilities: Vec<Probability> }`,
+`BondHeterogeneous { probabilities: Vec<Probability> }`, and
+`MixedHeterogeneous { site_probabilities, bond_probabilities }`. The
+constructors `StaticLaw::site_heterogeneous` / `bond_heterogeneous` /
+`mixed_heterogeneous` take `impl Into<Vec<Probability>>` (owned vectors or
+borrowed slices) and cannot fail: every value is already a validated
+`Probability`. Field lengths are checked against the adapter topology in
+`StaticPercolationMC::new` — a mismatch returns the new typed
+`StaticPercolationError::LawDomain(SamplingError::ProbabilityFieldLength {..})`,
+reusing the F2 vocabulary — so a constructed adapter's `sweep()` can never hit
+a domain error. `sweep()` borrows the fields (`ProbabilityField::Borrowed`),
+so per-sweep sampling remains allocation-free. The `FromParams` schema stays
+uniform-only (roadmap §9 N1 adds no probability-list input format);
+heterogeneous adapters are scheduled through `Run::from_parts()` with a seeded
+`Context`, exactly like other non-`FromParams` models. `StaticLaw::law()` now
+returns a reference (the enum is no longer `Copy` because it owns vectors).
+
+### Validation gates (roadmap §9 N1)
+
+All gates live in `tests/physics/percolation_heterogeneous.rs` (7 tests) and
+`tests/physics/percolation_heterogeneous_zscore.rs` (7 z-score tests), plus
+3 adapter unit tests in `src/percolation/carlo.rs`:
+
+- **Exact non-identically-distributed enumeration.** The 2x2 open square is
+  enumerated with per-element weights `prod_i p_i^{x_i} (1-p_i)^{1-x_i}`
+  (four distinct values per domain); scheduler statistics for
+  `BoundaryCrossing0`, `LargestSize`, and `RawSecondMoment` match within
+  |z| < 4 for site, bond, and mixed, over 4 seeds each at 200k sweeps. The
+  weight products are checked to sum to one. Hand-derived heterogeneous chain
+  closed forms `P = prod p_i` (site), `prod q_j` (bond), and the product of
+  both (mixed) match through the full scheduler stack at L = 6 within |z| < 4.
+  The 3x3 mixed enumeration reference of the z-score tests was independently
+  reproduced during independent N1 review by a from-scratch Python
+  flood-fill enumeration (different code and summation order) agreeing to
+  ~1e-13-1e-14 relative difference.
+- **Uniform field reduction, bitwise.** A heterogeneous field of identical
+  `p` values consumes RNG in the same order as the uniform law (and consumes
+  none at exact endpoints), so identical seeds reproduce identical `Results`
+  means bit-for-bit across six observables — for site, bond, and mixed laws,
+  at `p in {0.0, 0.3, 0.5, 1.0}`.
+- **Mixed reduction identities, bitwise.** Heterogeneous mixed with an all-one
+  edge field equals the heterogeneous site law, and with an all-one site field
+  equals the heterogeneous bond law, bitwise at identical seeds.
+- **Endpoint exactness.** All-0/1 fields produce deterministic configurations;
+  hand-checked chain cases pin `ActiveVertexCount`, `ActiveEdgeCount`,
+  `ComponentCount`, `LargestSize`, `RawSecondMoment`, and crossing exactly.
+- **Length and invalid-probability rejection.** Wrong-length site/bond/mixed
+  fields are typed `LawDomain` rejections at the adapter constructor (unit
+  tests assert the exact payload); no unvalidated f64 can reach the
+  heterogeneous constructors (`Probability::new` is the only entry).
+- **Scheduler z-scores.** 16 default seeds (SCUTTLE_ZSCORE_SEEDS-scalable,
+  verified at 64): `BoundaryCrossing0` and `LargestSize` against full
+  heterogeneous enumeration on the 3x3 square for site (2^9), bond (2^12),
+  and mixed (2^21, shared across its two tests), with per-seed |z| < 4,
+  |z̄| < 1.5, and no one-sided bias; plus a Poisson-binomial activity gate
+  (site `ActiveVertexCount` mean `sum p_i`, bond `ActiveEdgeCount` mean
+  `sum q_j`, mixed `ActiveEdgeCount` mean `sum_j q_j p_u(j) p_v(j)`, |z| < 4
+  per seed). The heterogeneous scheduler runs use the labeled seed base
+  `0x4845_5445_0000` ("HETE").
+
+### Uniform versus heterogeneous sampling benchmark
+
+`percolation_laws` adds two Criterion IDs (heterogeneous site and bond next to
+the existing heterogeneous mixed), for **16 IDs** total. Recorded 2026-10-08
+on the same Xeon Gold 6148 / rustc 1.98.0 host family as the 2026-09-03 F2
+record, short-run configuration (10 samples, 100 ms warm-up, 250 ms
+measurement), open 64x64 square (`V=4,096`, `E=8,064`); heterogeneous fields
+alternate mid-range values (0.25/0.75 per vertex, 0.2/0.6 per edge — no
+endpoint skipping). Point estimates:
+
+| Family | Uniform `p = 0.5` | Heterogeneous | Heterogeneous time delta |
+|---|---:|---:|---:|
+| Site | 7.009 us / 584.4 M vertices/s | 10.324 us / 396.7 M vertices/s | +47.3% |
+| Bond | 13.543 us / 595.4 M edges/s | 20.453 us / 394.3 M edges/s | +51.0% |
+| Mixed | 20.571 us / 591.1 M entities/s | 30.952 us / 392.9 M entities/s | +50.5% |
+
+The ~50% cost is the per-element probability load and compare in the dense
+heterogeneous loop versus the hoisted uniform scalar; the F2 record measured
+the same effect (378.30 M entities/s for heterogeneous mixed on 2026-09-03).
+These are point estimates, not CI thresholds. Run with:
+
+```bash
+cargo bench -p cmc-rs --bench percolation_laws --no-default-features -- --test
+cargo bench -p cmc-rs --bench percolation_laws --no-default-features
+```
+
+### Heterogeneous adapter allocation gate
+
+`percolation_allocations` adds `report_heterogeneous_adapter_case`: after 8
+warmup `sweep()+measure()` cycles through `StaticPercolationMC` with
+heterogeneous fields, 128 measured cycles report **0.000 allocations/sample,
+0.000 allocated bytes/sample, and zero peak live allocations/bytes** for all
+**15 topology/law records** (chain, square, cubic, sparse ER, power law x
+heterogeneous site/bond/mixed; 9 observables each), exactly matching the
+uniform adapter gate:
+
+```text
+PERCOLATION_ADAPTER_ALLOC ... law=heterogeneous-site|bond|mixed
+allocations_per_sample=0.000 allocated_bytes_per_sample=0.000
+peak_live_allocations=0 peak_live_bytes=0
+```
+
+### Remaining N1 limitations
+
+The analyzer is untouched (heterogeneity enters only through activity
+sampling, as the roadmap requires). The `FromParams` schema is uniform-only;
+heterogeneous adapters are constructed directly and scheduled with
+`Run::from_parts()`. Per-element probabilities must be validated upstream
+(`Probability::new`); the adapter validates only field lengths. Network
+facades over heterogeneous site fields (random failure, original-degree
+observables — N2) and targeted attacks (N3) are Not implemented.
