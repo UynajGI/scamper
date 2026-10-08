@@ -40,7 +40,8 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | FK q=2 Edwards-Sokal/Swendsen-Wang | Not implemented | SW exists, but its sampled FK bonds are not exposed for this analysis. The worm high-temperature even subgraph is not FK. |
 | Generic real-q random-cluster model | Not implemented | No Sweeny or Chayes-Machta sampler. |
 | Boundary crossing between explicit vertex sets | Validated | F3 `BoundaryQuery` is validated for owned/borrowed generic undirected views, supports several queries in one component pass, and defines empty/overlap/dedup semantics; F4 migrates the full crossing test assets. The square left/right-column and chain endpoint defaults live in the `StaticPercolationMC` parameter schema; all other parameter-built topologies require explicit site sets. |
-| Periodic wrapping/winding | Not implemented | No incidence displacement/cocycle or winding analyzer. Crossing is not wrapping. |
+| Periodic embedding capability (W1) | Experimental | Directed-incidence integer cell displacements exist as explicit recorded data: the `PeriodicEmbedding` capability (`topology/embedding.rs`) and the `LatticeEmbedding` table serve the pbc chain/square/hypercubic builders and the triangular builder, which record each displacement at bond emission and never infer it from `BondType` or vertex IDs. Independently reviewed; see the W1 section below. |
+| Periodic wrapping/winding analysis (W2) | Not implemented | No winding analyzer, wrapping query, or winding-rank reporting over the W1 displacements. Crossing is not wrapping. |
 | Newman-Ziff parameter scans | Not implemented | No incremental activation curve or binomial reweighting. |
 
 At F0 no family was **Validated**. Since F4 passed independent review, the
@@ -884,3 +885,117 @@ heterogeneous adapters are constructed directly and scheduled with
 (`Probability::new`); the adapter validates only field lengths. Network
 facades over heterogeneous site fields (random failure, original-degree
 observables — N2) and targeted attacks (N3) are Not implemented.
+
+## W1 periodic embedding capability
+
+Status: **Experimental**, independently reviewed (roadmap §16 W1; engineering gates
+and tests below are green, independent review has not happened). W1 is the
+data layer only — the W2 winding analyzer is Not implemented.
+
+### API and semantics
+
+- `topology::PeriodicEmbedding` is a read-only capability next to
+  `GraphView`/`UndirectedGraphView`: `periodic_dimensions()` returns the
+  embedding dimension `D >= 1`, and
+  `edge_displacement(edge, from) -> Option<DirectedDisplacement>` returns the
+  integer fundamental-cell displacement of one **directed incidence** — the
+  pair (physical edge, endpoint) — or `None` when `from` is not an endpoint.
+  The key is never the endpoint pair or a bond label, so parallel edges
+  between the same pair keep independent displacements.
+- `DirectedDisplacement<'_>` is a lazy signed view over the stored
+  source-to-target vector; querying the same physical edge from the other
+  endpoint negates it exactly, so antisymmetry
+  (`d(v->u) = -d(u->v)`) is structural, not a validated copy. Accessors:
+  `iter()`, `axis(a)`, `dimensions()`, `is_zero()`.
+- `LatticeEmbedding` owns one vector per physical edge (flat, edge-major,
+  `D` `i32` components, `16 + 4D` bytes per edge) plus the endpoint pair it
+  was validated against. `try_from_edge_displacements` rejects, before
+  storing anything: zero periodic dimensions, wrong table length, self-loop
+  edges (the two directed incidences of a self-loop would need opposite
+  displacements but share one `(edge, endpoint)` key), `i32::MIN` components
+  (unnegatable), and unresolvable capacity. It does **not** re-verify cocycle
+  consistency: that is a producer property, pinned for the built-in builders
+  by the plaquette and winding tests below and exploited by the W2 analyzer
+  rather than re-validated per construction.
+- Open boundaries have no embedding at all: every `*_with_embedding` builder
+  rejects `pbc = false` with `EmbeddingError::OpenBoundaries`. A non-periodic
+  graph is represented by not having the capability, so a wrapping query on a
+  non-embedded graph is an explicit consumer-side error, never a vacuous
+  "no winding" answer.
+- No-inference principle (the roadmap W1 constraint): displacements are
+  recorded by the builder at the only stage where wrap information is
+  unambiguous — while bonds are emitted. `BondType` and vertex IDs are never
+  consulted for geometry: on a 2-wide torus the two parallel bonds between a
+  pair of sites carry different displacements (`0` and `-1`), so endpoint
+  geometry alone cannot identify them.
+- `BorrowedUndirectedCsr` intentionally does not implement the capability: a
+  CSR topology carries no displacement payload and post-hoc reconstruction
+  would be the forbidden inference. An embedding is separate data supplied by
+  whoever knows the geometry, beside the borrowed topology.
+
+### Builder coverage
+
+- `build_chain_with_embedding`, `build_square_with_embedding`,
+  `build_hypercubic_with_embedding` (all `pbc = true`), via a shared
+  `hypercubic_bonds` bond loop that tracks wraps; and
+  `build_triangular_with_embedding` via `triangular_bonds`, whose diagonal
+  bonds lift `(x, y)` to `(x + 1, y + 1)`. Each variant returns exactly the
+  same lattice as its plain builder (pinned by test) plus the embedding.
+- Honeycomb and kagome embeddings are **Not implemented**: those builders
+  assemble symmetric adjacency lists, and `CsrLattice::from_adjacency` drops
+  the per-bond construction direction while deduplicating physical edges. On
+  small cells (honeycomb `Lx = 2` double horizontal bonds; kagome `Lx = 2`
+  collapsed covering bonds) distinct displacements map to indistinguishable
+  physical bonds, and recovering them would be guessing. Attaching embeddings
+  requires restructuring those builders to emit bonds directly with recorded
+  displacements — deliberately not done in W1.
+
+### Validation gates
+
+All in `CMC.rs` unit tests (`lattice::graph::tests`, `topology::embedding::tests`):
+
+- **Hand-derived 2x2 torus:** every one of the 8 torus bonds is asserted in
+  both directions against a hand-written displacement table; each of the four
+  vertex pairs carries one in-cell and one wrapping bond.
+- **Independent geometry re-derivation (property test):** for 8 dimension
+  sets (1D L=2,3,5; 2x2, 3x3, 4x3; 3D 2x3x4 and 3x1x2), every bond's
+  advancing axis and wrap flag are recomputed from the builder's documented
+  mixed-radix coordinates and compared componentwise, including exact
+  negation from the other endpoint and `is_zero`.
+- **Parallel edges:** the L=2 ring's two parallel bonds carry `0` and `-1`;
+  the 2x2 square pair `{0,1}` carries `(0,0)` and `(-1,0)`; the 2x2
+  triangular double diagonals between sites 1 and 2 carry `(1,0)` and
+  `(0,-1)`.
+- **OBC semantics:** `pbc = false` is rejected with
+  `EmbeddingError::OpenBoundaries` by the chain, square, and hypercubic
+  embedding builders.
+- **Cocycle consistency (Z^D embedding):** on the 3x3 square torus, all 9
+  elementary plaquettes accumulate `(0,0)`; on the 3x3 triangular torus, all
+  18 elementary triangles (both orientations) accumulate `(0,0)`.
+- **Winding of fundamental cycles:** axis-ring walks on L=2/3/4 squares, a
+  5-ring, and the 2x3x2 cubic torus accumulate exactly `+1` on the walked
+  axis and `0` elsewhere, taking the bond emitted from each site (the L=2
+  parallel-bond direction).
+- **Table construction rejections:** zero dimensions, wrong length,
+  self-loops, `i32::MIN`, non-endpoint queries, and generic-code acceptance
+  of the `PeriodicEmbedding` trait; plus bit-identical lattice reproduction
+  by every embedding builder.
+
+### W2 preview (not implemented)
+
+The intended consumer is one pass over physical edges:
+`embedding.edge_displacement(edge, from)` next to
+`UndirectedGraphView::edge_endpoints`, running union-find with integer
+potentials; a closed component whose accumulated potential mismatches is a
+winding generator. The `(edge, endpoint)` lookup key exists precisely so
+that pass never needs `BondType` or endpoint-pair geometry. No part of W2 is
+implemented in this stage.
+
+### Limitations
+
+No benchmarks were added: lookups are O(1) table reads with no allocation
+(the storage note above is the capacity claim), and there is no analyzer to
+bench. The cocycle property is a builder contract verified by tests, not
+re-checked by `try_from_edge_displacements`. An embedding detached from its
+lattice has no provenance guard — the same caller contract as the F1 view
+IDs (both must stay unchanged together).

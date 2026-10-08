@@ -37,7 +37,7 @@ adapter modules:
 |-----------|---------|
 | `core/` | Move types, caches, `TrialEvaluator`, `Ensemble`, `AcceptanceRule`, visit schedules |
 | `lattice/` | `CsrLattice` graph, `System` state, `Hamiltonian` traits, built-in models, `ProposalStrategy` |
-| `topology/` | Dense IDs, capability-specific read-only graph views, validated zero-copy borrowed undirected CSR |
+| `topology/` | Dense IDs, capability-specific read-only graph views, validated zero-copy borrowed undirected CSR, Experimental W1 `PeriodicEmbedding` (explicit per-directed-incidence integer cell displacements for pbc hypercubic-family and triangular builders; no winding analyzer yet) |
 | `algorithms/` | `Algorithm<H>` trait, 6 kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
 | `observables/` | `Observable<H>`, `DefaultObservableSet`, energy, magnetisation, correlation |
 | `particle/` | Periodic cells, AoS coordinates, pair potentials, packed cell lists, translations and NVT/NPT/μVT adapters, rigid molecules with an optional dipolar external field |

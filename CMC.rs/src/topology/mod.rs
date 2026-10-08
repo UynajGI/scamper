@@ -25,11 +25,13 @@
 //! ```
 
 mod borrowed_csr;
+mod embedding;
 mod error;
 mod id;
 mod view;
 
 pub use borrowed_csr::BorrowedUndirectedCsr;
+pub use embedding::{DirectedDisplacement, EmbeddingError, LatticeEmbedding, PeriodicEmbedding};
 pub use error::TopologyError;
 pub use id::{EdgeId, VertexId};
 pub use view::{GraphView, Incidence, UndirectedGraphView};

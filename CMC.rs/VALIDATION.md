@@ -9,7 +9,7 @@
 |-------|-------|---------|
 | Default (`cargo test`) | 329 | ~60s |
 | Long stochastic (`--ignored`) | 17 | ~40s |
-| **Suite total** | **346** | (+107 lib unit tests) |
+| **Suite total** | **346** | (+123 lib unit tests) |
 
 ## Per-solver validated domain
 
@@ -199,6 +199,12 @@ mixed, heterogeneous mixed, and two-sample endpoint switching. Recorded measurem
 - **Unit coverage (`src/percolation/carlo.rs`, 3 heterogeneous tests):** owned/borrowed constructor round-trips for all three variants, exact typed payloads for site/bond/mixed length mismatches, and the `Probability::new` invalid-value gate.
 - **Performance:** `percolation_laws` grows to 16 Criterion IDs with heterogeneous site and bond rows next to heterogeneous mixed; on the recorded Xeon Gold 6148 host, heterogeneous sampling costs ~47-51% more time than uniform p = 0.5 (584-595 vs 393-397 M entities/s) from the per-element probability load in the dense loop — point estimates, not CI thresholds. The `percolation_allocations` probe adds 15 heterogeneous adapter records (5 topologies x site/bond/mixed): 0.000 allocations and 0.000 bytes per steady-state sweep+measure cycle, zero peak live allocations. Data and commands in [PERCOLATION.md](PERCOLATION.md).
 - **Limitations:** `FromParams` uniform-only (no probability-list input format — by roadmap design); per-element values must be validated upstream; no network facade, degree conditioning (N2), or attacks (N3); scalar observables only (C0 pending).
+
+### Periodic embedding capability (W1, `PeriodicEmbedding`/`LatticeEmbedding`, Experimental — independently reviewed, 2026-10-08)
+- **Semantics:** one explicit integer fundamental-cell displacement per directed incidence, keyed by the pair (physical edge, endpoint) and returned as a lazily negated `DirectedDisplacement` view, so `d(v->u) = -d(u->v)` is structural. Open boundaries are a typed `EmbeddingError::OpenBoundaries` rejection, not a vacuous zero-winding embedding; self-loops, zero dimensions, wrong table lengths, `i32::MIN` components, and capacity failures are typed construction rejections. Cocycle consistency is a producer contract verified by tests, not re-checked at construction.
+- **No inference:** displacements are recorded by the pbc chain/square/hypercubic builders (`hypercubic_bonds`) and the triangular builder (`triangular_bonds`) at bond emission; `BondType` and vertex IDs are never consulted. The embedding builders reproduce the plain builders' lattices bit-for-bit (tested). `BorrowedUndirectedCsr` intentionally does not implement the capability.
+- **Gates (unit tests, all green):** hand-derived 2x2 torus (all 8 bonds, both directions); independent mixed-radix geometry re-derivation over 8 dimension sets including 3D and a length-1 axis; parallel-edge distinctness (L=2 ring `0`/`-1`, 2x2 square, 2x2 triangular double diagonals `(1,0)`/`(0,-1)`); OBC rejection; cocycle sums zero around all 3x3 square plaquettes and all 18 elementary triangular triangles; fundamental axis rings wind exactly once (squares L=2/3/4, 5-ring, 2x3x2 cubic).
+- **Not implemented:** honeycomb/kagome embeddings (their `from_adjacency` construction drops per-bond direction; small-cell parallel bonds are unrecoverable without guessing); the W2 winding analyzer, wrapping queries, and winding-rank reporting. No benchmark added: O(1) no-allocation table lookup, storage `16 + 4D` bytes/edge. Evidence and commands in [PERCOLATION.md](PERCOLATION.md).
 
 ### Percolation, site / bond / mixed (`PercolationMC`, 2026-09-02 — superseded)
 - **Status:** Experimental PR #4 reference implementation, now **superseded**:

@@ -93,8 +93,9 @@ pub use generalized::{
     WangLandauRefinement, WangLandauRunControl, WangLandauState, WangLandauTermination,
 };
 pub use lattice::graph::{
-    build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
-    Bond, BondType, CsrLattice,
+    build_chain, build_chain_with_embedding, build_honeycomb, build_hypercubic,
+    build_hypercubic_with_embedding, build_kagome, build_square, build_square_with_embedding,
+    build_triangular, build_triangular_with_embedding, Bond, BondType, CsrLattice,
 };
 pub use lattice::interaction::{
     ClusterAuxiliary, ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable,
@@ -137,8 +138,8 @@ pub use postprocess::{
 };
 pub use statistics::{statistical_efficiency, StatisticalEfficiency};
 pub use topology::{
-    BorrowedUndirectedCsr, EdgeId, GraphView, Incidence, TopologyError, UndirectedGraphView,
-    VertexId,
+    BorrowedUndirectedCsr, DirectedDisplacement, EdgeId, EmbeddingError, GraphView, Incidence,
+    LatticeEmbedding, PeriodicEmbedding, TopologyError, UndirectedGraphView, VertexId,
 };
 pub use worm::{
     enumerate_ising_graph_expansion, EndpointPairHistogram, ExactIsingGraphExpansion,
