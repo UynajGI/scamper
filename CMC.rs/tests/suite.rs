@@ -98,12 +98,26 @@ mod p2_validation;
 mod particle_zscore;
 #[path = "physics/particles_exact.rs"]
 mod particles_exact;
+#[path = "physics/percolation.rs"]
+mod percolation;
+#[path = "physics/percolation_components.rs"]
+mod percolation_components;
+#[path = "physics/percolation_heterogeneous.rs"]
+mod percolation_heterogeneous;
+#[path = "physics/percolation_heterogeneous_zscore.rs"]
+mod percolation_heterogeneous_zscore;
+#[path = "physics/percolation_law_zscore.rs"]
+mod percolation_law_zscore;
+#[path = "physics/percolation_zscore.rs"]
+mod percolation_zscore;
 #[path = "physics/potts_exact.rs"]
 mod potts_exact;
 #[path = "physics/statistical_regression.rs"]
 mod statistical_regression;
 #[path = "physics/sw_continuous.rs"]
 mod sw_continuous;
+#[path = "physics/topology_view.rs"]
+mod topology_view;
 #[path = "physics/transition_balance.rs"]
 mod transition_balance;
 #[path = "physics/usage_exact.rs"]

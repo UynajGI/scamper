@@ -45,6 +45,7 @@ pub mod classical_mc;
 pub mod multi_spin;
 pub mod postprocess;
 pub mod statistics;
+pub mod topology;
 pub mod worm;
 
 // Hierarchical modules
@@ -57,6 +58,7 @@ pub mod generalized;
 pub mod lattice;
 pub mod observables;
 pub mod particle;
+pub mod percolation;
 
 // ── Flat public re-exports (backward-compatible) ─────────────
 
@@ -91,8 +93,9 @@ pub use generalized::{
     WangLandauRefinement, WangLandauRunControl, WangLandauState, WangLandauTermination,
 };
 pub use lattice::graph::{
-    build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
-    Bond, BondType, CsrLattice,
+    build_chain, build_chain_with_embedding, build_honeycomb, build_hypercubic,
+    build_hypercubic_with_embedding, build_kagome, build_square, build_square_with_embedding,
+    build_triangular, build_triangular_with_embedding, Bond, BondType, CsrLattice,
 };
 pub use lattice::interaction::{
     ClusterAuxiliary, ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable,
@@ -119,11 +122,25 @@ pub use particle::{
     SimulationCell, TorsionDefinition, TorsionRotation, TranslateParticle, VolumeChangePatch,
     WeightedMove,
 };
+#[cfg(feature = "allocation-probe")]
+#[doc(hidden)]
+pub use percolation::WorkspaceCapacityAudit;
+pub use percolation::{
+    analyze, analyze_with_labels, AnalysisError, AnalysisResult, BondBernoulli, BoundaryQuery,
+    BoundaryQueryError, ComponentLabel, ComponentSummary, ComponentWorkspace, EdgeActivity,
+    MixedBernoulli, ObservablePlan, ObservablePlanError, Probability, ProbabilityField,
+    SiteBernoulli, StaticConfiguration, StaticLaw, StaticObservable, StaticPercolationError,
+    StaticPercolationMC, VertexActivity,
+};
 pub use postprocess::{
     binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,
     zero_field_ising_susceptibility,
 };
 pub use statistics::{statistical_efficiency, StatisticalEfficiency};
+pub use topology::{
+    BorrowedUndirectedCsr, DirectedDisplacement, EdgeId, EmbeddingError, GraphView, Incidence,
+    LatticeEmbedding, PeriodicEmbedding, TopologyError, UndirectedGraphView, VertexId,
+};
 pub use worm::{
     enumerate_ising_graph_expansion, EndpointPairHistogram, ExactIsingGraphExpansion,
     IsingComponentWorm, IsingGraphConfiguration, IsingGraphPatch, IsingGraphWormEnsemble,

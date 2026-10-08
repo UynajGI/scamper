@@ -8,6 +8,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::topology::{EmbeddingError, LatticeEmbedding};
+
 /// Construction-time bond labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BondType {
@@ -386,6 +388,45 @@ impl CsrLattice {
     }
 }
 
+impl crate::topology::GraphView for CsrLattice {
+    #[inline(always)]
+    fn vertex_count(&self) -> usize {
+        self.n_sites
+    }
+}
+
+impl crate::topology::UndirectedGraphView for CsrLattice {
+    #[inline(always)]
+    fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    #[inline(always)]
+    fn edge_endpoints(&self, edge: crate::topology::EdgeId) -> [crate::topology::VertexId; 2] {
+        let edge = self.edges[edge.index()];
+        [
+            crate::topology::VertexId::from_valid_index(edge.source),
+            crate::topology::VertexId::from_valid_index(edge.target),
+        ]
+    }
+
+    #[inline(always)]
+    fn incidences(
+        &self,
+        vertex: crate::topology::VertexId,
+    ) -> impl Iterator<Item = crate::topology::Incidence> + '_ {
+        let range = self.offsets[vertex.index()]..self.offsets[vertex.index() + 1];
+        self.neighbors[range.clone()]
+            .iter()
+            .copied()
+            .zip(self.edge_ids[range].iter().copied())
+            .map(|(neighbor, edge)| crate::topology::Incidence {
+                neighbor: crate::topology::VertexId::from_valid_index(neighbor),
+                edge: crate::topology::EdgeId::from_valid_index(edge),
+            })
+    }
+}
+
 fn validate_dims(dims: &[usize], bond_types: &[BondType]) {
     assert!(
         !dims.is_empty(),
@@ -404,6 +445,16 @@ pub fn build_chain(n: usize, pbc: bool) -> CsrLattice {
     build_hypercubic(&[n], &[BondType::ChainX], pbc)
 }
 
+/// 1D ring plus its periodic embedding; see
+/// [`build_hypercubic_with_embedding`] for the boundary semantics.
+pub fn build_chain_with_embedding(
+    n: usize,
+    pbc: bool,
+) -> Result<(CsrLattice, LatticeEmbedding), EmbeddingError> {
+    assert!(n > 0, "chain length must be positive");
+    build_hypercubic_with_embedding(&[n], &[BondType::ChainX], pbc)
+}
+
 /// 2D square lattice (`width × height`).
 pub fn build_square(width: usize, height: usize, pbc: bool) -> CsrLattice {
     build_hypercubic(
@@ -413,8 +464,67 @@ pub fn build_square(width: usize, height: usize, pbc: bool) -> CsrLattice {
     )
 }
 
+/// 2D torus plus its periodic embedding; see
+/// [`build_hypercubic_with_embedding`] for the boundary semantics.
+pub fn build_square_with_embedding(
+    width: usize,
+    height: usize,
+    pbc: bool,
+) -> Result<(CsrLattice, LatticeEmbedding), EmbeddingError> {
+    build_hypercubic_with_embedding(
+        &[width, height],
+        &[BondType::SquareX, BondType::SquareY],
+        pbc,
+    )
+}
+
 /// N-dimensional hypercubic lattice represented as an arbitrary graph.
 pub fn build_hypercubic(dims: &[usize], bond_types: &[BondType], pbc: bool) -> CsrLattice {
+    let (n_sites, edges, _) = hypercubic_bonds(dims, bond_types, pbc, false);
+    CsrLattice::from_edges(n_sites, edges)
+}
+
+/// Hypercubic lattice plus its periodic embedding (W1).
+///
+/// With `pbc = true` this returns the same lattice as [`build_hypercubic`]
+/// together with a [`LatticeEmbedding`] whose per-edge cell displacements were
+/// recorded while the bonds were generated — the only stage where the wrap
+/// information exists unambiguously. Displacements are never reconstructed
+/// afterwards from `BondType` or vertex IDs: on small periodic cells the same
+/// endpoint pair is joined by parallel edges with different displacements, so
+/// endpoint geometry alone cannot identify them.
+///
+/// `pbc = false` is rejected with [`EmbeddingError::OpenBoundaries`]: an
+/// open-boundary graph is legitimately non-periodic and has no wrapping
+/// queries, so it has no embedding at all rather than a vacuous one.
+pub fn build_hypercubic_with_embedding(
+    dims: &[usize],
+    bond_types: &[BondType],
+    pbc: bool,
+) -> Result<(CsrLattice, LatticeEmbedding), EmbeddingError> {
+    if !pbc {
+        return Err(EmbeddingError::OpenBoundaries);
+    }
+    let (n_sites, edges, displacements) = hypercubic_bonds(dims, bond_types, true, true);
+    let lattice = CsrLattice::from_edges(n_sites, edges);
+    let embedding =
+        LatticeEmbedding::try_from_edge_displacements(&lattice, dims.len(), &displacements)?;
+    Ok((lattice, embedding))
+}
+
+/// Shared hypercubic bond loop.
+///
+/// Every bond moves one fundamental cell forward along one axis from source to
+/// target. When `track_displacements` is set, the source-to-target cell
+/// displacement is appended per bond (flat, edge-major): `+1` on the bond's
+/// axis exactly when the bond wraps the periodic boundary, `0` otherwise.
+/// [`BondType`] is carried through untouched and never consulted for geometry.
+fn hypercubic_bonds(
+    dims: &[usize],
+    bond_types: &[BondType],
+    pbc: bool,
+    track_displacements: bool,
+) -> (usize, Vec<Bond>, Vec<i32>) {
     validate_dims(dims, bond_types);
     let n_dims = dims.len();
     let n_sites: usize = dims.iter().product();
@@ -424,6 +534,7 @@ pub fn build_hypercubic(dims: &[usize], bond_types: &[BondType], pbc: bool) -> C
     }
 
     let mut edges = Vec::new();
+    let mut displacements = Vec::new();
     for site in 0..n_sites {
         let mut coords = vec![0usize; n_dims];
         let mut remaining = site;
@@ -434,44 +545,95 @@ pub fn build_hypercubic(dims: &[usize], bond_types: &[BondType], pbc: bool) -> C
 
         for axis in 0..n_dims {
             let coordinate = coords[axis];
-            let next = if coordinate + 1 < dims[axis] {
-                coordinate + 1
+            let (next, wraps) = if coordinate + 1 < dims[axis] {
+                (coordinate + 1, false)
             } else if pbc && dims[axis] > 1 {
-                0
+                (0, true)
             } else {
                 continue;
             };
 
             let target = site - coordinate * strides[axis] + next * strides[axis];
             edges.push(Bond::new(site, target, bond_types[axis], 1.0));
+            if track_displacements {
+                displacements.extend((0..n_dims).map(|a| i32::from(a == axis && wraps)));
+            }
         }
     }
 
-    CsrLattice::from_edges(n_sites, edges)
+    (n_sites, edges, displacements)
 }
 
 /// 2D triangular lattice with periodic boundaries.
 pub fn build_triangular(lx: usize, ly: usize) -> CsrLattice {
+    let (n_sites, edges, _) = triangular_bonds(lx, ly, false);
+    CsrLattice::from_edges(n_sites, edges)
+}
+
+/// 2D triangular torus plus its periodic embedding; see
+/// [`build_hypercubic_with_embedding`] for the boundary semantics.
+///
+/// Diagonal bonds lift `(x, y)` to `(x + 1, y + 1)` in the covering lattice,
+/// so they wrap each axis independently exactly when the emitting site sits
+/// on the last coordinate of that axis.
+pub fn build_triangular_with_embedding(
+    lx: usize,
+    ly: usize,
+) -> Result<(CsrLattice, LatticeEmbedding), EmbeddingError> {
+    let (n_sites, edges, displacements) = triangular_bonds(lx, ly, true);
+    let lattice = CsrLattice::from_edges(n_sites, edges);
+    let embedding = LatticeEmbedding::try_from_edge_displacements(&lattice, 2, &displacements)?;
+    Ok((lattice, embedding))
+}
+
+/// Shared triangular bond loop; see [`hypercubic_bonds`] for the
+/// displacement-tracking convention.
+fn triangular_bonds(
+    lx: usize,
+    ly: usize,
+    track_displacements: bool,
+) -> (usize, Vec<Bond>, Vec<i32>) {
     assert!(lx >= 2 && ly >= 2, "triangular lattice needs Lx,Ly >= 2");
     let index = |x: usize, y: usize| y * lx + x;
     let mut edges = Vec::with_capacity(3 * lx * ly);
+    let mut displacements = Vec::new();
     for y in 0..ly {
         for x in 0..lx {
             let site = index(x, y);
-            edges.push(Bond::new(site, index((x + 1) % lx, y), BondType::TriX, 1.0));
-            edges.push(Bond::new(site, index(x, (y + 1) % ly), BondType::TriY, 1.0));
+            let (x_next, x_wraps) = ((x + 1) % lx, x + 1 == lx);
+            let (y_next, y_wraps) = ((y + 1) % ly, y + 1 == ly);
+            edges.push(Bond::new(site, index(x_next, y), BondType::TriX, 1.0));
+            edges.push(Bond::new(site, index(x, y_next), BondType::TriY, 1.0));
             edges.push(Bond::new(
                 site,
-                index((x + 1) % lx, (y + 1) % ly),
+                index(x_next, y_next),
                 BondType::TriDiag,
                 1.0,
             ));
+            if track_displacements {
+                displacements.extend([
+                    i32::from(x_wraps),
+                    0,
+                    0,
+                    i32::from(y_wraps),
+                    i32::from(x_wraps),
+                    i32::from(y_wraps),
+                ]);
+            }
         }
     }
-    CsrLattice::from_edges(lx * ly, edges)
+    (lx * ly, edges, displacements)
 }
 
 /// 2D honeycomb lattice in brick-wall representation with periodic boundaries.
+///
+/// No `_with_embedding` variant exists: this builder assembles a symmetric
+/// adjacency list, and `CsrLattice::from_adjacency` drops the per-bond
+/// construction direction while deduplicating to physical edges. On `lx = 2`
+/// the two horizontal bonds between a site pair carry different cell
+/// displacements that the emitted bond list can no longer distinguish, so
+/// recovering them would be guessing (W1 forbids that). A honeycomb embedding
+/// requires a builder that records displacements while emitting bonds.
 pub fn build_honeycomb(lx: usize, ly: usize) -> CsrLattice {
     assert!(lx >= 2, "honeycomb lattice needs Lx >= 2");
     assert!(ly >= 2, "honeycomb lattice needs Ly >= 2");
@@ -506,6 +668,12 @@ pub fn build_honeycomb(lx: usize, ly: usize) -> CsrLattice {
 }
 
 /// 2D kagome lattice (`3 × Lx × Ly` sites) with periodic boundaries.
+///
+/// No `_with_embedding` variant exists, for the same reason as
+/// [`build_honeycomb`]: the symmetric-adjacency construction loses the
+/// per-bond direction, and on small cells distinct covering bonds collapse
+/// onto the same endpoint pair, so per-edge cell displacements cannot be
+/// attached without guessing.
 pub fn build_kagome(lx: usize, ly: usize) -> CsrLattice {
     assert!(lx >= 2 && ly >= 2, "kagome lattice needs Lx,Ly >= 2");
     let n_sites = 3 * lx * ly;
@@ -545,6 +713,7 @@ pub fn build_kagome(lx: usize, ly: usize) -> CsrLattice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::topology::{GraphView, PeriodicEmbedding, UndirectedGraphView};
 
     #[test]
     fn chain_counts() {
@@ -623,5 +792,375 @@ mod tests {
             build_square(3, 3, true).connected_components(),
             vec![(0..9).collect::<Vec<_>>()]
         );
+    }
+
+    // ---- W1 periodic embedding ----
+
+    /// Displacement of one directed incidence, as an owned vector.
+    fn displacement(
+        lattice: &CsrLattice,
+        embedding: &LatticeEmbedding,
+        edge_index: usize,
+        from_index: usize,
+    ) -> Vec<i32> {
+        let edge = lattice.edge_id(edge_index).expect("dense edge index");
+        let from = lattice.vertex_id(from_index).expect("dense vertex index");
+        embedding
+            .edge_displacement(edge, from)
+            .expect("endpoint query")
+            .iter()
+            .collect()
+    }
+
+    /// Physical bond index joining two sites, if any (unique at L >= 3).
+    fn bond_between(lattice: &CsrLattice, a: usize, b: usize) -> Option<usize> {
+        lattice
+            .incidences(a)
+            .find_map(|(neighbor, edge)| (neighbor == b).then_some(edge))
+    }
+
+    /// Accumulated displacement around a closed site walk.
+    fn cycle_sum(lattice: &CsrLattice, embedding: &LatticeEmbedding, walk: &[usize]) -> Vec<i32> {
+        let mut sum = vec![0i32; embedding.periodic_dimensions()];
+        for index in 0..walk.len() {
+            let (from, to) = (walk[index], walk[(index + 1) % walk.len()]);
+            let edge_index = bond_between(lattice, from, to).expect("cycle bond");
+            let edge = lattice.edge_id(edge_index).expect("dense edge index");
+            let from_id = lattice.vertex_id(from).expect("dense vertex index");
+            let displacement = embedding
+                .edge_displacement(edge, from_id)
+                .expect("endpoint query");
+            for (axis, total) in sum.iter_mut().enumerate() {
+                *total += displacement.axis(axis).expect("periodic axis");
+            }
+        }
+        sum
+    }
+
+    /// Hypercubic strides: `strides[0] = 1`, `strides[a] = strides[a-1] * dims[a-1]`.
+    fn hypercubic_strides(dims: &[usize]) -> Vec<usize> {
+        let mut strides = vec![1usize; dims.len()];
+        for axis in 1..dims.len() {
+            strides[axis] = strides[axis - 1] * dims[axis - 1];
+        }
+        strides
+    }
+
+    /// Bond-type labels matching a hypercubic dimension count.
+    fn bond_types_for(n_dims: usize) -> Vec<BondType> {
+        match n_dims {
+            1 => vec![BondType::ChainX],
+            2 => vec![BondType::SquareX, BondType::SquareY],
+            _ => vec![BondType::CubicX, BondType::CubicY, BondType::CubicZ],
+        }
+    }
+
+    /// Mixed-radix coordinates under the hypercubic site convention.
+    fn site_coords(dims: &[usize], site: usize) -> Vec<usize> {
+        let strides = hypercubic_strides(dims);
+        let mut coords = vec![0usize; dims.len()];
+        let mut remaining = site;
+        for axis in (0..dims.len()).rev() {
+            coords[axis] = remaining / strides[axis];
+            remaining %= strides[axis];
+        }
+        coords
+    }
+
+    #[test]
+    fn square_2x2_torus_displacements_match_hand_derivation() {
+        let (lattice, embedding) =
+            build_square_with_embedding(2, 2, true).expect("torus embedding");
+        assert_eq!(embedding.periodic_dimensions(), 2);
+        // Sites are indexed y*2+x. Each of the four vertex pairs carries two
+        // parallel bonds: an in-cell one and a wrapping one, in emission order.
+        let expected: [(usize, usize, [i32; 2]); 8] = [
+            (0, 0, [0, 0]), // 0 -> 1, in-cell x
+            (1, 0, [0, 0]), // 0 -> 2, in-cell y
+            (2, 1, [1, 0]), // 1 -> 0, wraps +x
+            (3, 1, [0, 0]), // 1 -> 3, in-cell y
+            (4, 2, [0, 0]), // 2 -> 3, in-cell x
+            (5, 2, [0, 1]), // 2 -> 0, wraps +y
+            (6, 3, [1, 0]), // 3 -> 2, wraps +x
+            (7, 3, [0, 1]), // 3 -> 1, wraps +y
+        ];
+        for (edge_index, from, vector) in expected {
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, from),
+                vector.to_vec(),
+                "edge {edge_index} from site {from}"
+            );
+            let [source, target] =
+                lattice.edge_endpoints(lattice.edge_id(edge_index).expect("dense edge index"));
+            let other = if from == source.index() {
+                target.index()
+            } else {
+                source.index()
+            };
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, other),
+                vector.map(|component| -component).to_vec(),
+                "edge {edge_index} from the other endpoint must negate exactly"
+            );
+        }
+    }
+
+    #[test]
+    fn parallel_edges_carry_distinct_displacements() {
+        // L = 2 ring: both physical bonds join sites 0 and 1, but one stays
+        // in-cell while the other wraps. Endpoint geometry cannot tell them
+        // apart; only the per-edge table can.
+        let (lattice, embedding) = build_chain_with_embedding(2, true).expect("ring embedding");
+        assert_eq!(lattice.n_edges(), 2);
+        assert_eq!(displacement(&lattice, &embedding, 0, 0), vec![0]);
+        assert_eq!(displacement(&lattice, &embedding, 1, 1), vec![1]);
+        assert_eq!(displacement(&lattice, &embedding, 0, 1), vec![0]);
+        assert_eq!(displacement(&lattice, &embedding, 1, 0), vec![-1]);
+
+        // 2x2 square: pair {0, 1} carries d(0->1) = (0,0) and (-1,0).
+        let (lattice, embedding) =
+            build_square_with_embedding(2, 2, true).expect("torus embedding");
+        assert_eq!(displacement(&lattice, &embedding, 0, 0), vec![0, 0]);
+        assert_eq!(displacement(&lattice, &embedding, 2, 0), vec![-1, 0]);
+
+        // 2x2 triangular: the two diagonals between sites 1 and 2 wrap
+        // different axes — (1,0) versus (0,-1) from site 1.
+        let (lattice, embedding) = build_triangular_with_embedding(2, 2).expect("torus embedding");
+        assert_eq!(displacement(&lattice, &embedding, 5, 1), vec![1, 0]);
+        assert_eq!(displacement(&lattice, &embedding, 8, 2), vec![0, 1]);
+        assert_eq!(displacement(&lattice, &embedding, 8, 1), vec![0, -1]);
+    }
+
+    #[test]
+    fn torus_displacements_follow_builder_geometry() {
+        let cases: [Vec<usize>; 8] = [
+            vec![2],
+            vec![3],
+            vec![5],
+            vec![2, 2],
+            vec![3, 3],
+            vec![4, 3],
+            vec![2, 3, 4],
+            vec![3, 1, 2],
+        ];
+        for dims in cases {
+            let n_dims = dims.len();
+            let bond_types = bond_types_for(n_dims);
+            let (lattice, embedding) =
+                build_hypercubic_with_embedding(&dims, &bond_types, true).expect("torus embedding");
+            assert_eq!(embedding.periodic_dimensions(), n_dims);
+            let strides = hypercubic_strides(&dims);
+            for (edge_index, bond) in lattice.edges.iter().enumerate() {
+                let coords = site_coords(&dims, bond.source);
+                // Independently reconstruct which axis this bond advances and
+                // whether it wraps, from the builder's coordinate convention.
+                let mut matches = Vec::new();
+                for axis in 0..n_dims {
+                    if dims[axis] == 1 {
+                        continue; // no bonds along a length-1 axis
+                    }
+                    let next = (coords[axis] + 1) % dims[axis];
+                    let target = bond.source - coords[axis] * strides[axis] + next * strides[axis];
+                    if target == bond.target {
+                        matches.push(axis);
+                    }
+                }
+                assert_eq!(matches.len(), 1, "one advancing axis per hypercubic bond");
+                let axis = matches[0];
+                let mut expected = vec![0i32; n_dims];
+                expected[axis] = i32::from(coords[axis] + 1 == dims[axis]);
+
+                let edge = lattice.edge_id(edge_index).expect("dense edge index");
+                let source = lattice.vertex_id(bond.source).expect("dense vertex index");
+                let target = lattice.vertex_id(bond.target).expect("dense vertex index");
+                let forward = embedding
+                    .edge_displacement(edge, source)
+                    .expect("source endpoint");
+                let backward = embedding
+                    .edge_displacement(edge, target)
+                    .expect("target endpoint");
+                for (periodic_axis, &component) in expected.iter().enumerate() {
+                    assert_eq!(
+                        forward.axis(periodic_axis).expect("axis"),
+                        component,
+                        "dims {dims:?} edge {edge_index}"
+                    );
+                    assert_eq!(
+                        backward.axis(periodic_axis).expect("axis"),
+                        -component,
+                        "reverse direction negates, dims {dims:?} edge {edge_index}"
+                    );
+                }
+                assert_eq!(
+                    forward.is_zero(),
+                    expected.iter().all(|&component| component == 0)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn open_boundaries_have_no_embedding() {
+        assert_eq!(
+            build_chain_with_embedding(4, false).unwrap_err(),
+            EmbeddingError::OpenBoundaries
+        );
+        assert_eq!(
+            build_square_with_embedding(2, 3, false).unwrap_err(),
+            EmbeddingError::OpenBoundaries
+        );
+        assert_eq!(
+            build_hypercubic_with_embedding(&[2, 2, 2], &bond_types_for(3), false).unwrap_err(),
+            EmbeddingError::OpenBoundaries
+        );
+    }
+
+    #[test]
+    fn square_plaquette_displacements_sum_to_zero_on_3x3() {
+        let (lattice, embedding) =
+            build_square_with_embedding(3, 3, true).expect("torus embedding");
+        let index = |x: usize, y: usize| 3 * y + x;
+        for y in 0..3 {
+            for x in 0..3 {
+                let plaquette = [
+                    index(x, y),
+                    index((x + 1) % 3, y),
+                    index((x + 1) % 3, (y + 1) % 3),
+                    index(x, (y + 1) % 3),
+                ];
+                assert_eq!(
+                    cycle_sum(&lattice, &embedding, &plaquette),
+                    vec![0, 0],
+                    "plaquette at ({x},{y}) is contractible"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn triangular_elementary_triangles_sum_to_zero_on_3x3() {
+        let (lattice, embedding) = build_triangular_with_embedding(3, 3).expect("torus embedding");
+        let index = |x: usize, y: usize| 3 * y + x;
+        for y in 0..3 {
+            for x in 0..3 {
+                let a = index(x, y);
+                let b = index((x + 1) % 3, y);
+                let c = index((x + 1) % 3, (y + 1) % 3);
+                let d = index(x, (y + 1) % 3);
+                let up = [a, b, c]; // TriX forward, TriY forward, TriDiag reversed
+                let down = [a, d, c]; // TriY forward, TriDiag forward, TriX reversed
+                assert_eq!(
+                    cycle_sum(&lattice, &embedding, &up),
+                    vec![0, 0],
+                    "up triangle at ({x},{y})"
+                );
+                assert_eq!(
+                    cycle_sum(&lattice, &embedding, &down),
+                    vec![0, 0],
+                    "down triangle at ({x},{y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn axis_rings_wind_exactly_once() {
+        // Walking one full ring along each axis of a torus must accumulate
+        // exactly one fundamental-cell crossing on that axis and none on the
+        // others: the winding number of the fundamental cycle is one.
+        fn walk_axis(
+            lattice: &CsrLattice,
+            embedding: &LatticeEmbedding,
+            dims: &[usize],
+            axis: usize,
+        ) -> Vec<i32> {
+            let strides = hypercubic_strides(dims);
+            let mut total = vec![0i32; dims.len()];
+            let mut site = 0usize;
+            for _ in 0..dims[axis] {
+                let coords = site_coords(dims, site);
+                let next = (coords[axis] + 1) % dims[axis];
+                let target = site - coords[axis] * strides[axis] + next * strides[axis];
+                // The ring bond emitted FROM this site; at L = 2 a parallel
+                // bond joins the same pair in the opposite direction.
+                let edge_index = lattice
+                    .edges
+                    .iter()
+                    .position(|bond| bond.source == site && bond.target == target)
+                    .expect("ring bond emitted from this site");
+                for (sum, component) in total
+                    .iter_mut()
+                    .zip(displacement(lattice, embedding, edge_index, site))
+                {
+                    *sum += component;
+                }
+                site = target;
+            }
+            assert_eq!(site, 0, "ring walk returns to the origin");
+            total
+        }
+
+        let (chain, chain_embedding) = build_chain_with_embedding(5, true).expect("ring embedding");
+        assert_eq!(walk_axis(&chain, &chain_embedding, &[5], 0), vec![1]);
+
+        for n in [2usize, 3, 4] {
+            let (square, square_embedding) =
+                build_square_with_embedding(n, n, true).expect("torus embedding");
+            assert_eq!(
+                walk_axis(&square, &square_embedding, &[n, n], 0),
+                vec![1, 0]
+            );
+            assert_eq!(
+                walk_axis(&square, &square_embedding, &[n, n], 1),
+                vec![0, 1]
+            );
+        }
+
+        let dims = [2usize, 3, 2];
+        let (cube, cube_embedding) =
+            build_hypercubic_with_embedding(&dims, &bond_types_for(3), true)
+                .expect("torus embedding");
+        assert_eq!(walk_axis(&cube, &cube_embedding, &dims, 0), vec![1, 0, 0]);
+        assert_eq!(walk_axis(&cube, &cube_embedding, &dims, 1), vec![0, 1, 0]);
+        assert_eq!(walk_axis(&cube, &cube_embedding, &dims, 2), vec![0, 0, 1]);
+    }
+
+    #[test]
+    fn embedding_builders_reproduce_the_plain_lattices_full_structure() {
+        let (chain, _) = build_chain_with_embedding(4, true).expect("ring embedding");
+        let plain_chain = build_chain(4, true);
+        assert_eq!(chain.edges, plain_chain.edges);
+        assert_eq!(chain.n_sites, plain_chain.n_sites);
+        assert_eq!(chain.n_bonds, plain_chain.n_bonds);
+        assert_eq!(chain.offsets, plain_chain.offsets);
+        assert_eq!(chain.neighbors, plain_chain.neighbors);
+        assert_eq!(chain.edge_ids, plain_chain.edge_ids);
+
+        let (square, _) = build_square_with_embedding(3, 4, true).expect("torus embedding");
+        let plain_square = build_square(3, 4, true);
+        assert_eq!(square.edges, plain_square.edges);
+        assert_eq!(square.n_sites, plain_square.n_sites);
+        assert_eq!(square.offsets, plain_square.offsets);
+        assert_eq!(square.neighbors, plain_square.neighbors);
+        assert_eq!(square.edge_ids, plain_square.edge_ids);
+
+        let (triangular, _) = build_triangular_with_embedding(3, 3).expect("torus embedding");
+        let plain_triangular = build_triangular(3, 3);
+        assert_eq!(triangular.edges, plain_triangular.edges);
+        assert_eq!(triangular.n_sites, plain_triangular.n_sites);
+        assert_eq!(triangular.offsets, plain_triangular.offsets);
+        assert_eq!(triangular.neighbors, plain_triangular.neighbors);
+        assert_eq!(triangular.edge_ids, plain_triangular.edge_ids);
+
+        let dims = [2usize, 3, 2];
+        let bond_types = bond_types_for(3);
+        let (cube, _) =
+            build_hypercubic_with_embedding(&dims, &bond_types, true).expect("torus embedding");
+        let plain_cube = build_hypercubic(&dims, &bond_types, true);
+        assert_eq!(cube.edges, plain_cube.edges);
+        assert_eq!(cube.n_sites, plain_cube.n_sites);
+        assert_eq!(cube.offsets, plain_cube.offsets);
+        assert_eq!(cube.neighbors, plain_cube.neighbors);
+        assert_eq!(cube.edge_ids, plain_cube.edge_ids);
     }
 }

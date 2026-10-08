@@ -30,21 +30,31 @@ The same wrapper continues to support `WolffCore`, `SWCore`, `HeatBathCore`, `Co
 
 ## Module organisation (Phases 1–2)
 
-Source code is organised into five subdirectories plus three top-level adapter modules:
+Source code is organised into capability-focused subdirectories and top-level
+adapter modules:
 
 | Directory | Purpose |
 |-----------|---------|
 | `core/` | Move types, caches, `TrialEvaluator`, `Ensemble`, `AcceptanceRule`, visit schedules |
 | `lattice/` | `CsrLattice` graph, `System` state, `Hamiltonian` traits, built-in models, `ProposalStrategy` |
+| `topology/` | Dense IDs, capability-specific read-only graph views, validated zero-copy borrowed undirected CSR, Experimental W1 `PeriodicEmbedding` (explicit per-directed-incidence integer cell displacements for pbc hypercubic-family and triangular builders; no winding analyzer yet) |
 | `algorithms/` | `Algorithm<H>` trait, 6 kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
 | `observables/` | `Observable<H>`, `DefaultObservableSet`, energy, magnetisation, correlation |
 | `particle/` | Periodic cells, AoS coordinates, pair potentials, packed cell lists, translations and NVT/NPT/μVT adapters, rigid molecules with an optional dipolar external field |
 | `generalized/` | Wang-Landau, frozen biases, DOS/histograms, exact enumeration and reweighting |
 | `worm/` | Persistent physical/worm sectors, generic local driver and Ising graph representation |
 | `dynamics/` | Kawasaki exchange, direct Gillespie, Fenwick BKL/n-fold way and hard-sphere event chains |
+| `percolation/` | F1-F4 foundation — substrate layers Experimental, static family Validated — (topology/activity capabilities, Bernoulli laws, generic component analyzer, reusable workspace, explicit observable plan and owned `StaticPercolationMC` adapter) plus Validated N1 heterogeneous per-vertex/per-edge `StaticLaw` variants |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
-The public API is re-exported flat from `lib.rs` — user code sees no change.
+The established lattice/particle API remains re-exported flat from `lib.rs`.
+The Experimental F1 topology API exposes `GraphView` and `UndirectedGraphView`
+for owned `CsrLattice` and zero-copy `BorrowedUndirectedCsr`; it was
+independently reviewed but remains provisional until the foundation milestone. Complete borrowed undirected CSR input must include
+physical edge IDs and endpoints. Offsets/neighbors alone are not promoted to an
+undirected physical-edge view. Directed capability sketches stay crate-private
+until D1 defines stable arc identity. The Experimental percolation API is also
+provisional and may change during the staged platform refactor.
 
 ## Sampling foundation
 
@@ -216,6 +226,133 @@ Stage 6 adds three distinct dynamic paths:
 
 Carlo.rs now records sweeps, attempts, accepted/executed moves and event time as separate clocks. `KineticIsingBklMC` advances fixed event-time observation windows, while event-chain lifted distance remains a separate geometric quantity.
 
+## Site, bond and mixed percolation
+
+`percolation/` samples ordinary percolation on any `CsrLattice` as i.i.d.
+configurations rather than a Markov chain: every sweep redraws occupancy,
+every measurement runs union-find over the occupied subgraph. Set
+`thermalization_sweeps = 0`; there is nothing to equilibrate. The support
+matrix, frozen scientific definitions, observable semantics, limitations, and
+reproducible performance records live in [PERCOLATION.md](PERCOLATION.md). F2
+provides the activity, configuration, and Bernoulli-law substrate. F3 adds a
+topology-generic static undirected component analyzer, validated boundary
+queries, optional canonical labels, and a reusable zero-allocation workspace.
+F4 composes them into the production `StaticPercolationMC` adapter with an
+explicit `ObservablePlan`. The foundation passed its engineering gates and
+independent review; the static family is Validated and becomes production-ready
+when the branch merges into `dev`.
+
+### `StaticPercolationMC` (owned Carlo.rs adapter)
+
+Three modes (`mode` parameter): `"site"` (default) opens sites with
+probability `p`; `"bond"` opens bonds with probability `p`; `"site-bond"`
+opens sites with `p_site` and bonds with `p_bond`, where a bond connects
+only when it is open **and** both endpoint sites are open. Giving `p` in
+mixed mode, or `p_site`/`p_bond` in a pure mode, is a typed error; so are
+probabilities outside `[0, 1]` and unknown modes. `pbc` defaults to `false`
+and lattice parameters reuse the standard builders (`chain`, `square`,
+`cubic`/`hypercubic`).
+
+```rust
+use carlo_rs::{Params, RayonBackend, RunConfig, Scheduler};
+use cmc_rs::StaticPercolationMC;
+
+let mut params = Params::new();
+params.set("lattice_type", "square");
+params.set("Lx", 32);
+params.set("Ly", 32);
+params.set("mode", "bond");        // "site" (default) | "bond" | "site-bond"
+params.set("p", 0.5);              // pure modes; mixed uses p_site/p_bond
+let config = RunConfig {
+    thermalization_sweeps: 0,      // i.i.d. samples; nothing to equilibrate
+    measurement_sweeps: 100_000,
+    binsize: 100,
+    ..Default::default()
+};
+let results = Scheduler::new(RayonBackend::new(1), config)
+    .run_one::<StaticPercolationMC>(&params);
+```
+
+Crossing is tested between `spanning_from`/`spanning_to` site sets, given as
+comma-separated site lists and always supplied together. Defaults: square
+lattices use the left vs. right column, chains the two end sites; every other
+parameter-built topology is rejected loudly and needs explicit sets (or build
+the adapter directly with a `BoundaryQuery`).
+
+Observables are chosen with the `observables` parameter as a comma-separated
+list (`active-vertices,active-edges,components,largest-size,giant-fraction,
+raw-second-moment,finite-cluster-susceptibility`); the default records all of
+them under the names `ActiveVertexCount`, `ActiveEdgeCount`, `ComponentCount`,
+`LargestSize`, `GiantFraction` (`S_max / V`, total topology vertices),
+`RawSecondMoment` (`M2 = sum s_i^2`, construction rejected beyond the exact
+f64 integer range), and `FiniteClusterSusceptibility`. The susceptibility
+removes one largest component per sample (equal sizes: the canonical lowest-ID
+one) before averaging: `chi = (M2 - S_max^2) / (V_active - S_max)`. Samples
+where the denominator is zero are undefined: the chi scalar is not written for
+them, and the always-recorded `FiniteClusterSusceptibilityDefined` indicator
+(0/1 per sample) makes the defined count explicit in `results.json`. Each
+boundary query records `BoundaryCrossing0`, `BoundaryCrossing1`, ... in plan
+order. Labels are intentionally not part of the plan; `analyze_with_labels`
+serves direct label consumers.
+
+Borrowed graphs and custom laws bypass the owned adapter: call `analyze`
+directly, or compose a runtime with `Run::from_parts()`. Arbitrary graphs can
+also construct `StaticPercolationMC::new(lattice, law, plan)` with an explicit
+`BoundaryQuery` instead of going through `FromParams`.
+
+### Heterogeneous per-vertex / per-edge probabilities
+
+`StaticLaw` also carries one validated `Probability` per vertex and/or per
+physical edge (N1). The constructors take pre-validated values and cannot
+fail; the adapter constructor checks field lengths against the topology and
+returns a typed `StaticPercolationError::LawDomain` on mismatch. The
+`FromParams` schema stays uniform-only, so heterogeneous adapters are
+scheduled with `Run::from_parts()`:
+
+```rust
+use carlo_rs::{Context, Run, RunConfig, RunId, TaskId};
+use cmc_rs::{
+    build_square, BoundaryQuery, GraphView, ObservablePlan, Probability, StaticLaw,
+    StaticPercolationMC,
+};
+use rand::SeedableRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
+
+let lattice = build_square(32, 32, false);
+let site_p: Vec<Probability> = (0..lattice.vertex_count())
+    .map(|i| Probability::new(0.4 + 0.3 * ((i % 7) as f64) / 6.0).unwrap())
+    .collect();
+let plan = ObservablePlan::all(vec![BoundaryQuery::new(
+    &lattice,
+    &(0..32).map(|r| r * 32).collect::<Vec<_>>(),
+    &(0..32).map(|r| r * 32 + 31).collect::<Vec<_>>(),
+)
+.unwrap()]);
+let adapter = StaticPercolationMC::new(
+    lattice,
+    StaticLaw::site_heterogeneous(site_p),
+    plan,
+)
+.unwrap();
+let mut run = Run::from_parts(
+    Context::new_with_binsize(Xoshiro256PlusPlus::seed_from_u64(42), 0, 100),
+    adapter,
+    TaskId::new(0),
+    RunId::new(0),
+    RunConfig { thermalization_sweeps: 0, measurement_sweeps: 100_000,
+               binsize: 100, ..Default::default() },
+);
+run.run(100_000);
+let results = run.finalize(42);
+```
+
+`StaticLaw::bond_heterogeneous(probabilities)` and
+`StaticLaw::mixed_heterogeneous(site_probabilities, bond_probabilities)`
+follow the same pattern; a mixed bond connects only when it is open and both
+endpoint sites are open. Validation evidence, the uniform-vs-heterogeneous
+benchmark, and the zero-allocation adapter gate are recorded in
+[PERCOLATION.md](PERCOLATION.md).
+
 ## Arbitrary weighted graph
 
 `CsrLattice` stores each physical undirected edge exactly once and keeps CSR incidences for local access:
@@ -277,8 +414,7 @@ input is rejected with errors across all solvers — never silently accepted
 
 ## Roadmap — algorithms and models not yet included
 
-Everything below is **not implemented and not validated** today; it is
-recorded here so the validated domain stays unambiguous (see VALIDATION.md
+Everything below is **not implemented and not validated**; it is recorded here so the validated domain stays unambiguous (see VALIDATION.md
 for what *is* covered). None of these block the production status of the
 existing solvers — they are the next application frontiers.
 
@@ -303,8 +439,8 @@ existing solvers — they are the next application frontiers.
 ### Dynamics and irreversible methods
 
 - **Momentum HMC / Langevin / Brownian-dynamics integrators** — molecular
-  systems are pure MC moves today; the HMC in MCMC.rs is statistical-posterior
-  HMC, not a physical momentum coupling.
+  systems currently provide pure MC moves; the HMC in MCMC.rs is
+  statistical-posterior HMC, not a physical momentum coupling.
 - **Geometric cluster algorithm (Dress–Krauth)** — global reflection moves
   for hard disks/polygons; complements event chain, which covers hard
   spheres only.

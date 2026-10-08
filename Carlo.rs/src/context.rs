@@ -18,6 +18,7 @@
 use rand_core::Rng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::{ComplexEstimate, Estimate, Measurements, RunPhase, SimulationClock};
@@ -122,10 +123,10 @@ impl<R: Rng + SeedableRng> Context<R> {
         self.measurements.finalize_complex()
     }
 
-    fn qualified_measurement_name(&self, name: &str) -> String {
+    fn qualified_measurement_name<'a>(&self, name: &'a str) -> Cow<'a, str> {
         match &self.measurement_namespace {
-            Some(namespace) if !namespace.is_empty() => format!("{namespace}/{name}"),
-            _ => name.to_string(),
+            Some(namespace) if !namespace.is_empty() => Cow::Owned(format!("{namespace}/{name}")),
+            _ => Cow::Borrowed(name),
         }
     }
 
@@ -145,33 +146,34 @@ impl<R: Rng + SeedableRng> Context<R> {
     /// Record an observable sample (scalar).
     pub fn measure(&mut self, name: &str, value: f64) {
         let name = self.qualified_measurement_name(name);
-        self.measurements.add_sample(&name, value);
+        self.measurements.add_sample(name.as_ref(), value);
     }
 
     /// Record an array observable sample.
     /// The shape is determined by the first call for each observable name.
     pub fn measure_array(&mut self, name: &str, values: &[f64]) {
         let name = self.qualified_measurement_name(name);
-        self.measurements.add_sample_array(&name, values);
+        self.measurements.add_sample_array(name.as_ref(), values);
     }
 
     /// Record a complex observable sample.
     /// Real and imaginary parts are accumulated separately.
     pub fn measure_complex(&mut self, name: &str, re: f64, im: f64) {
         let name = self.qualified_measurement_name(name);
-        self.measurements.add_sample_complex(&name, re, im);
+        self.measurements.add_sample_complex(name.as_ref(), re, im);
     }
 
     /// Register a scalar observable with custom binsize.
     pub fn register_observable(&mut self, name: &str, binsize: usize) {
         let name = self.qualified_measurement_name(name);
-        self.measurements.register(&name, binsize);
+        self.measurements.register(name.as_ref(), binsize);
     }
 
     /// Register an array observable with custom binsize and shape.
     pub fn register_observable_with_shape(&mut self, name: &str, binsize: usize, shape: &[usize]) {
         let name = self.qualified_measurement_name(name);
-        self.measurements.register_array(&name, binsize, shape);
+        self.measurements
+            .register_array(name.as_ref(), binsize, shape);
     }
 
     /// Check if thermalized.

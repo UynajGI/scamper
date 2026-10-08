@@ -1,0 +1,459 @@
+mod percolation_support;
+
+use std::mem::size_of;
+
+use allocation_counter::measure;
+use carlo_rs::{Context, MonteCarlo};
+use cmc_rs::{
+    analyze, Bond, BondBernoulli, BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace,
+    GraphView, MixedBernoulli, ObservablePlan, Probability, ProbabilityField, SiteBernoulli,
+    StaticConfiguration, StaticLaw, StaticPercolationMC, UndirectedGraphView,
+};
+use percolation_support::{
+    cases, sample_and_analyze, Case, ReferenceConfiguration, ReferenceMode, P_BOND, P_SITE,
+};
+use rand::SeedableRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
+
+const ALLOCATION_SAMPLES: usize = 128;
+const ADAPTER_WARMUP: usize = 8;
+
+fn estimated_owned_storage_bytes(case: &Case, occupancy: &ReferenceConfiguration) -> usize {
+    case.lattice.offsets.capacity() * size_of::<usize>()
+        + case.lattice.neighbors.capacity() * size_of::<usize>()
+        + case.lattice.edge_ids.capacity() * size_of::<usize>()
+        + case.lattice.edges.capacity() * size_of::<Bond>()
+        + occupancy.storage_bytes()
+}
+
+fn report_vec_bool_probe() {
+    for logical_len in [1usize, 63, 64, 65, 4096, 8064, 11_520, 16_384] {
+        let mut retained = None;
+        let info = measure(|| {
+            let bits = vec![false; logical_len];
+            retained = Some((bits.len(), bits.capacity()));
+            std::hint::black_box(&bits);
+        });
+        let (len, logical_capacity) = retained.expect("probe must construct Vec<bool>");
+        eprintln!(
+            "VEC_BOOL_PROBE len={} logical_capacity={} byte_backed_estimate={} \
+             allocator_count={} allocator_bytes={} live_count={} live_bytes={}",
+            len,
+            logical_capacity,
+            logical_capacity,
+            info.count_total,
+            info.bytes_total,
+            info.count_current,
+            info.bytes_current,
+        );
+    }
+}
+
+fn report_case(case: &Case, mode: ReferenceMode) {
+    let mut occupancy = ReferenceConfiguration::new(case, mode);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x0041_4c4c_4f43);
+    for _ in 0..8 {
+        std::hint::black_box(sample_and_analyze(case, &mut occupancy, &mut rng));
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            std::hint::black_box(sample_and_analyze(case, &mut occupancy, &mut rng));
+        }
+    });
+    let storage_bytes = estimated_owned_storage_bytes(case, &occupancy);
+    eprintln!(
+        "PERCOLATION_ALLOC topology={} mode={} V={} E={} p_site={} p_bond={} \
+         estimated_owned_storage_bytes={} estimated_bytes_per_vertex={:.3} \
+         estimated_bytes_per_edge={:.3} measured_samples={} allocations_per_sample={:.3} \
+         allocated_bytes_per_sample={:.3} peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        mode.label(),
+        case.lattice.n_sites,
+        case.lattice.n_edges(),
+        P_SITE,
+        P_BOND,
+        storage_bytes,
+        storage_bytes as f64 / case.lattice.n_sites as f64,
+        storage_bytes as f64 / case.lattice.n_edges() as f64,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
+/// Adapter probe: `StaticPercolationMC::sweep` + `measure` must be
+/// allocation-free in steady state. The first `measure` of each observable
+/// name allocates inside `Measurements` (HashMap insert, first bin), and every
+/// `bin_capacity`-th sample allocates one completed bin, so the context uses a
+/// binsize strictly larger than warmup plus measured samples and both are
+/// exhausted before the measured window.
+fn report_adapter_case(case: &Case, mode: ReferenceMode) {
+    let law = match mode {
+        ReferenceMode::Site => StaticLaw::site(P_SITE),
+        ReferenceMode::Bond => StaticLaw::bond(P_BOND),
+        ReferenceMode::Mixed => StaticLaw::mixed(P_SITE, P_BOND),
+    }
+    .expect("probe probability");
+    let plan = ObservablePlan::all(vec![BoundaryQuery::new(
+        &case.lattice,
+        &case.from,
+        &case.to,
+    )
+    .expect("probe boundary query must be valid")]);
+    let mut adapter = StaticPercolationMC::new(case.lattice.clone(), law, plan)
+        .expect("probe adapter must construct");
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0x4633_4144_4150),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        adapter.sweep(&mut context);
+        adapter.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    let observable_count = 7 + 1 + 1; // plan scalars + defined indicator + one query
+    eprintln!(
+        "PERCOLATION_ADAPTER_ALLOC topology={} law={} V={} E={} observables={} \
+         measured_samples={} allocations_per_sample={:.3} allocated_bytes_per_sample={:.3} \
+         peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        mode.label(),
+        case.lattice.vertex_count(),
+        case.lattice.edge_count(),
+        observable_count,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
+fn report_topology_view_probe() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "square")
+        .expect("benchmark cases must include square");
+    let endpoints: Vec<_> = case
+        .lattice
+        .edges
+        .iter()
+        .map(|edge| [edge.source, edge.target])
+        .collect();
+    let mut constructed = None;
+    let construction_info = measure(|| {
+        constructed = Some(BorrowedUndirectedCsr::new(
+            &case.lattice.offsets,
+            &case.lattice.neighbors,
+            &case.lattice.edge_ids,
+            &endpoints,
+        ));
+    });
+    let view = constructed
+        .expect("measurement must run constructor")
+        .expect("owned lattice must form a valid borrowed view");
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            let edge_sum = (0..view.edge_count()).fold(0usize, |sum, edge| {
+                let [left, right] = view.edge_endpoints(view.edge_id(edge).unwrap());
+                sum.wrapping_add(left.index()).wrapping_add(right.index())
+            });
+            let incidence_sum = view.vertex_ids().fold(0usize, |sum, vertex| {
+                view.incidences(vertex).fold(sum, |sum, incidence| {
+                    sum.wrapping_add(incidence.neighbor.index())
+                        .wrapping_add(incidence.edge.index())
+                })
+            });
+            std::hint::black_box((edge_sum, incidence_sum));
+        }
+    });
+    let input_bytes = case.lattice.offsets.len() * size_of::<usize>()
+        + case.lattice.neighbors.len() * size_of::<usize>()
+        + case.lattice.edge_ids.len() * size_of::<usize>()
+        + endpoints.len() * size_of::<[usize; 2]>();
+    eprintln!(
+        "TOPOLOGY_VIEW_ALLOC topology={} V={} E={} I={} view_header_bytes={} \
+         borrowed_payload_bytes=0 validation_scratch_bytes={} validation_allocations={} \
+         input_bytes={} input_bytes_per_vertex={:.3} input_bytes_per_edge={:.3} \
+         measured_scans={} allocations_per_scan={:.3} allocated_bytes_per_scan={:.3} \
+         peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        view.vertex_count(),
+        view.edge_count(),
+        case.lattice.n_bonds,
+        size_of::<BorrowedUndirectedCsr<'_>>(),
+        construction_info.bytes_total,
+        construction_info.count_total,
+        input_bytes,
+        input_bytes as f64 / view.vertex_count() as f64,
+        input_bytes as f64 / view.edge_count() as f64,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
+fn probability(value: f64) -> Probability {
+    Probability::new(value).expect("probe probability")
+}
+
+fn report_law_case(case: &Case) {
+    let vertex_count = case.lattice.vertex_count();
+    let edge_count = case.lattice.edge_count();
+    let vertex_probabilities = (0..vertex_count)
+        .map(|index| probability(if index % 2 == 0 { 0.25 } else { 0.75 }))
+        .collect::<Vec<_>>();
+    let edge_probabilities = (0..edge_count)
+        .map(|index| probability(if index % 3 == 0 { 0.2 } else { 0.6 }))
+        .collect::<Vec<_>>();
+
+    let site = SiteBernoulli::new(probability(0.5).into());
+    let bond = BondBernoulli::new(probability(0.5).into());
+    let mixed = MixedBernoulli::new(probability(0.5).into(), probability(0.5).into());
+    let heterogeneous = MixedBernoulli::new(
+        ProbabilityField::Borrowed(&vertex_probabilities),
+        ProbabilityField::Borrowed(&edge_probabilities),
+    );
+    let endpoint = MixedBernoulli::new(probability(0.0).into(), probability(1.0).into());
+    let endpoint_reverse = MixedBernoulli::new(probability(1.0).into(), probability(0.0).into());
+    let mut configuration = StaticConfiguration::new(vertex_count, edge_count);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x0046_325f_414c_4c4f);
+
+    mixed
+        .sample(&case.lattice, &mut configuration, &mut rng)
+        .expect("probe domains match");
+    endpoint
+        .sample(&case.lattice, &mut configuration, &mut rng)
+        .expect("probe domains match");
+
+    for (name, samples) in [
+        ("site-uniform", ALLOCATION_SAMPLES),
+        ("bond-uniform", ALLOCATION_SAMPLES),
+        ("mixed-uniform", ALLOCATION_SAMPLES),
+        ("mixed-heterogeneous", ALLOCATION_SAMPLES),
+        ("mixed-endpoint-switch", ALLOCATION_SAMPLES),
+    ] {
+        let info = measure(|| {
+            for _ in 0..samples {
+                let result = match name {
+                    "site-uniform" => site.sample(&case.lattice, &mut configuration, &mut rng),
+                    "bond-uniform" => bond.sample(&case.lattice, &mut configuration, &mut rng),
+                    "mixed-uniform" => mixed.sample(&case.lattice, &mut configuration, &mut rng),
+                    "mixed-heterogeneous" => {
+                        heterogeneous.sample(&case.lattice, &mut configuration, &mut rng)
+                    }
+                    "mixed-endpoint-switch" => endpoint
+                        .sample(&case.lattice, &mut configuration, &mut rng)
+                        .and_then(|()| {
+                            endpoint_reverse.sample(&case.lattice, &mut configuration, &mut rng)
+                        }),
+                    _ => unreachable!("fixed probe case"),
+                };
+                result.expect("probe domains match");
+            }
+        });
+        let owned_mask_bytes = vertex_count + edge_count;
+        eprintln!(
+            "PERCOLATION_LAW_ALLOC topology={} law={} V={} E={} measured_iterations={} \
+             owned_mask_bytes={} bytes_per_vertex={:.3} bytes_per_edge={:.3} \
+             allocations_per_iteration={:.3} allocated_bytes_per_iteration={:.3} \
+             peak_live_allocations={} peak_live_bytes={}",
+            case.name,
+            name,
+            vertex_count,
+            edge_count,
+            samples,
+            owned_mask_bytes,
+            owned_mask_bytes as f64 / vertex_count.max(1) as f64,
+            owned_mask_bytes as f64 / edge_count.max(1) as f64,
+            info.count_total as f64 / samples as f64,
+            info.bytes_total as f64 / samples as f64,
+            info.count_max,
+            info.bytes_max,
+        );
+    }
+}
+
+fn report_component_case(case: &Case, mode: ReferenceMode) {
+    let vertex_count = case.lattice.vertex_count();
+    let edge_count = case.lattice.edge_count();
+    let query = BoundaryQuery::new(&case.lattice, &case.from, &case.to)
+        .expect("probe boundary query must be valid");
+    let queries = [query];
+    let mut configuration = StaticConfiguration::new(vertex_count, edge_count);
+    let mut prepared_workspace = None;
+    let workspace_prepare_info = measure(|| {
+        let mut workspace = ComponentWorkspace::new();
+        workspace
+            .prepare(vertex_count, queries.len(), true)
+            .expect("probe workspace reservation");
+        prepared_workspace = Some(workspace);
+    });
+    let mut workspace = prepared_workspace.expect("probe must retain prepared workspace");
+    let workspace_capacity = workspace.capacity_audit();
+    let site = SiteBernoulli::new(probability(P_SITE).into());
+    let bond = BondBernoulli::new(probability(P_BOND).into());
+    let mixed = MixedBernoulli::new(probability(P_SITE).into(), probability(P_BOND).into());
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4633_414c_4c4f);
+    let sample = |configuration: &mut StaticConfiguration, rng: &mut Xoshiro256PlusPlus| {
+        match mode {
+            ReferenceMode::Site => site.sample(&case.lattice, configuration, rng),
+            ReferenceMode::Bond => bond.sample(&case.lattice, configuration, rng),
+            ReferenceMode::Mixed => mixed.sample(&case.lattice, configuration, rng),
+        }
+        .expect("probe dimensions match");
+    };
+    for _ in 0..8 {
+        sample(&mut configuration, &mut rng);
+        std::hint::black_box(
+            analyze(
+                &case.lattice,
+                &configuration,
+                &configuration,
+                &queries,
+                &mut workspace,
+            )
+            .expect("probe analysis dimensions match"),
+        );
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            sample(&mut configuration, &mut rng);
+            std::hint::black_box(
+                analyze(
+                    &case.lattice,
+                    &configuration,
+                    &configuration,
+                    &queries,
+                    &mut workspace,
+                )
+                .expect("probe analysis dimensions match"),
+            );
+        }
+    });
+    eprintln!(
+        "PERCOLATION_COMPONENT_ALLOC topology={} law={} V={} E={} measured_samples={} \
+         workspace_parent_bytes={} workspace_size_bytes={} workspace_canonical_bytes={} \
+         workspace_stamp_bytes={} workspace_query_output_bytes={} workspace_label_bytes={} \
+         workspace_total_capacity_bytes={} workspace_bytes_per_vertex={:.3} \
+         workspace_bytes_per_query={:.3} workspace_prepare_allocations={} \
+         workspace_prepare_allocator_bytes={} allocations_per_sample={:.3} \
+         allocated_bytes_per_sample={:.3} peak_live_allocations={} peak_live_bytes={} \
+         f0_reference_allocations_per_sample=7 f0_reference_bytes_per_sample=86016",
+        case.name,
+        mode.label(),
+        vertex_count,
+        edge_count,
+        ALLOCATION_SAMPLES,
+        workspace_capacity.parent,
+        workspace_capacity.size,
+        workspace_capacity.canonical,
+        workspace_capacity.query_root_stamps,
+        workspace_capacity.query_outcomes,
+        workspace_capacity.labels,
+        workspace_capacity.total_bytes(),
+        workspace_capacity.total_bytes() as f64 / vertex_count.max(1) as f64,
+        workspace_capacity.total_bytes() as f64 / queries.len().max(1) as f64,
+        workspace_prepare_info.count_total,
+        workspace_prepare_info.bytes_total,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
+/// Heterogeneous (N1) adapter probe: `StaticPercolationMC` sweep+measure with
+/// per-vertex and per-edge probability fields must be allocation-free in
+/// steady state, exactly like the uniform adapter above.
+fn report_heterogeneous_adapter_case(case: &Case, mode: ReferenceMode) {
+    let vertex_count = case.lattice.vertex_count();
+    let edge_count = case.lattice.edge_count();
+    let vertex_probabilities = (0..vertex_count)
+        .map(|index| probability(if index % 2 == 0 { 0.25 } else { 0.75 }))
+        .collect::<Vec<_>>();
+    let edge_probabilities = (0..edge_count)
+        .map(|index| probability(if index % 3 == 0 { 0.2 } else { 0.6 }))
+        .collect::<Vec<_>>();
+    let law = match mode {
+        ReferenceMode::Site => StaticLaw::site_heterogeneous(vertex_probabilities),
+        ReferenceMode::Bond => StaticLaw::bond_heterogeneous(edge_probabilities),
+        ReferenceMode::Mixed => {
+            StaticLaw::mixed_heterogeneous(vertex_probabilities, edge_probabilities)
+        }
+    };
+    let plan = ObservablePlan::all(vec![BoundaryQuery::new(
+        &case.lattice,
+        &case.from,
+        &case.to,
+    )
+    .expect("probe boundary query must be valid")]);
+    let mut adapter = StaticPercolationMC::new(case.lattice.clone(), law, plan)
+        .expect("probe adapter must construct");
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0x4845_5445_4150),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        adapter.sweep(&mut context);
+        adapter.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    let observable_count = 7 + 1 + 1; // plan scalars + defined indicator + one query
+    eprintln!(
+        "PERCOLATION_ADAPTER_ALLOC topology={} law=heterogeneous-{} V={} E={} observables={} \
+         measured_samples={} allocations_per_sample={:.3} allocated_bytes_per_sample={:.3} \
+         peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        mode.label(),
+        vertex_count,
+        edge_count,
+        observable_count,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
+fn main() {
+    report_vec_bool_probe();
+    report_topology_view_probe();
+    let benchmark_cases = cases();
+    for case in &benchmark_cases {
+        report_law_case(case);
+        for mode in ReferenceMode::ALL {
+            report_component_case(case, mode);
+        }
+        for mode in ReferenceMode::ALL {
+            report_adapter_case(case, mode);
+        }
+        for mode in ReferenceMode::ALL {
+            report_heterogeneous_adapter_case(case, mode);
+        }
+    }
+    for case in benchmark_cases {
+        for mode in ReferenceMode::ALL {
+            report_case(&case, mode);
+        }
+    }
+}

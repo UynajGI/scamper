@@ -11,6 +11,7 @@ keywords = ["monte-carlo", "classical", "lattice", "simulation", "physics"]
 categories = ["science", "simulation"]
 
 [dependencies]
+allocation-counter = { version = "0.8", optional = true }
 carlo-rs = { workspace = true }
 rand = "0.10.0"
 rand_xoshiro = "0.8"
@@ -41,8 +42,34 @@ harness = false
 name = "dynamics_bench"
 harness = false
 
+[[bench]]
+name = "percolation_baseline"
+harness = false
+
+[[bench]]
+name = "topology_view"
+harness = false
+
+[[bench]]
+name = "percolation_laws"
+harness = false
+
+[[bench]]
+name = "percolation_components"
+harness = false
+
+[[bench]]
+name = "percolation_components_rss"
+harness = false
+
+[[bench]]
+name = "percolation_allocations"
+harness = false
+required-features = ["allocation-probe"]
+
 [features]
 default = []
+allocation-probe = ["dep:allocation-counter"]
 cache-audit = []
 hdf5 = ["carlo-rs/hdf5"]
 mpi = ["carlo-rs/mpi"]
