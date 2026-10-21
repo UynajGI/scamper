@@ -67,6 +67,10 @@ name = "percolation_allocations"
 harness = false
 required-features = ["allocation-probe"]
 
+[[bench]]
+name = "percolation_winding"
+harness = false
+
 [features]
 default = []
 allocation-probe = ["dep:allocation-counter"]

@@ -3,7 +3,7 @@ use core::fmt;
 use carlo_rs::Context;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-use super::{BoundaryQuery, ComponentSummary};
+use super::{BoundaryQuery, ComponentSummary, WindingSummary};
 
 /// Scalar observables recorded for each independent static realization.
 ///
@@ -29,6 +29,13 @@ use super::{BoundaryQuery, ComponentSummary};
 ///   therefore has `n_bins` below the sweep count), while the
 ///   `FiniteClusterSusceptibilityDefined` indicator records `0`/`1` for every
 ///   sample.
+/// - `Wrapping`: `1` when at least one tracked component has winding rank
+///   greater than zero, `0` otherwise (W2). Requires an embedded (periodic)
+///   topology; the adapter rejects winding observables without one.
+/// - `WindingRank`: winding rank of the canonical largest component, an
+///   integer in `0..=D` (W2). The mean is the ensemble-averaged rank, not a
+///   probability; per-axis generator vectors remain analyzer-level output
+///   until Carlo.rs grows vector estimates (C0).
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum StaticObservable {
     ActiveVertexCount,
@@ -38,6 +45,8 @@ pub enum StaticObservable {
     GiantFraction,
     RawSecondMoment,
     FiniteClusterSusceptibility,
+    Wrapping,
+    WindingRank,
 }
 
 impl StaticObservable {
@@ -50,7 +59,14 @@ impl StaticObservable {
             Self::GiantFraction => "GiantFraction",
             Self::RawSecondMoment => "RawSecondMoment",
             Self::FiniteClusterSusceptibility => "FiniteClusterSusceptibility",
+            Self::Wrapping => "Wrapping",
+            Self::WindingRank => "WindingRank",
         }
+    }
+
+    /// Whether recording this observable requires a periodic embedding (W2).
+    pub(crate) const fn needs_embedding(self) -> bool {
+        matches!(self, Self::Wrapping | Self::WindingRank)
     }
 }
 
@@ -117,6 +133,14 @@ impl ObservablePlan {
         &self.boundary_queries
     }
 
+    /// Whether any planned observable requires a periodic embedding (W2):
+    /// the caller must supply one or reject the plan loudly.
+    pub fn requests_winding(&self) -> bool {
+        self.observables
+            .iter()
+            .any(|observable| observable.needs_embedding())
+    }
+
     /// Reject moment observables whose worst-case `u128 -> f64` conversion
     /// could silently round, i.e. topologies with `V^2 > 2^53`.
     pub fn validate(&self, total_vertices: usize) -> Result<(), ObservablePlanError> {
@@ -143,6 +167,7 @@ impl ObservablePlan {
         total_vertices: usize,
         summary: ComponentSummary,
         boundary_outcomes: &[bool],
+        winding: Option<WindingSummary>,
         ctx: &mut Context<Xoshiro256PlusPlus>,
     ) {
         for observable in &self.observables {
@@ -185,6 +210,27 @@ impl ObservablePlan {
                             observable.name(),
                             finite_second_moment as f64 / finite_vertices as f64,
                         );
+                    }
+                }
+                StaticObservable::Wrapping => {
+                    debug_assert!(
+                        winding.is_some(),
+                        "constructor pairs winding observables with an embedding"
+                    );
+                    if let Some(winding) = winding {
+                        ctx.measure(
+                            observable.name(),
+                            f64::from(u8::from(winding.wrapping_component_count > 0)),
+                        );
+                    }
+                }
+                StaticObservable::WindingRank => {
+                    debug_assert!(
+                        winding.is_some(),
+                        "constructor pairs winding observables with an embedding"
+                    );
+                    if let Some(winding) = winding {
+                        ctx.measure(observable.name(), winding.largest_winding_rank as f64);
                     }
                 }
             }
@@ -244,7 +290,7 @@ mod tests {
             BoundaryQuery::new(&graph, &[1], &[8]).unwrap(),
         ]);
         let mut ctx = context();
-        plan.record(10, summary(6, 3, 14), &[true, false], &mut ctx);
+        plan.record(10, summary(6, 3, 14), &[true, false], None, &mut ctx);
         let values = ctx.finalize_measurements();
         assert_eq!(values["ActiveVertexCount"].mean, 6.0);
         assert_eq!(values["ActiveEdgeCount"].mean, 5.0);
@@ -267,14 +313,14 @@ mod tests {
             Vec::new(),
         );
         let mut empty = context();
-        plan.record(0, summary(0, 0, 0), &[], &mut empty);
+        plan.record(0, summary(0, 0, 0), &[], None, &mut empty);
         let values = empty.finalize_measurements();
         assert!(!values.contains_key("GiantFraction"));
         assert!(!values.contains_key("FiniteClusterSusceptibility"));
         assert_eq!(values["FiniteClusterSusceptibilityDefined"].mean, 0.0);
 
         let mut giant = context();
-        plan.record(4, summary(4, 4, 16), &[], &mut giant);
+        plan.record(4, summary(4, 4, 16), &[], None, &mut giant);
         let values = giant.finalize_measurements();
         assert_eq!(values["GiantFraction"].mean, 1.0);
         assert!(!values.contains_key("FiniteClusterSusceptibility"));
@@ -286,7 +332,7 @@ mod tests {
         let plan = ObservablePlan::new([StaticObservable::FiniteClusterSusceptibility], Vec::new());
         let mut ctx = context();
         // Components [3, 3, 1]: canonical tie policy removes one size-3 cluster.
-        plan.record(7, summary(7, 3, 19), &[], &mut ctx);
+        plan.record(7, summary(7, 3, 19), &[], None, &mut ctx);
         assert_eq!(
             ctx.finalize_measurements()["FiniteClusterSusceptibility"].mean,
             2.5
@@ -298,11 +344,46 @@ mod tests {
         let plan = ObservablePlan::new([StaticObservable::FiniteClusterSusceptibility], Vec::new());
         let mut ctx = context();
         // Remaining clusters are [1] and [2, 2], giving chi 1 and 2.
-        plan.record(4, summary(4, 3, 10), &[], &mut ctx);
-        plan.record(7, summary(7, 3, 17), &[], &mut ctx);
+        plan.record(4, summary(4, 3, 10), &[], None, &mut ctx);
+        plan.record(7, summary(7, 3, 17), &[], None, &mut ctx);
         let per_sample_mean = ctx.finalize_measurements()["FiniteClusterSusceptibility"].mean;
         assert_eq!(per_sample_mean, 1.5);
         assert_ne!(per_sample_mean, (1.0 + 8.0) / (1.0 + 4.0));
+    }
+
+    #[test]
+    fn winding_scalars_record_from_the_winding_summary() {
+        let plan = ObservablePlan::new(
+            [StaticObservable::Wrapping, StaticObservable::WindingRank],
+            Vec::new(),
+        );
+        assert!(plan.requests_winding());
+        let winding = WindingSummary {
+            active_vertex_count: 4,
+            active_edge_count: 8,
+            component_count: 1,
+            wrapping_component_count: 1,
+            largest_component: None,
+            largest_component_size: 4,
+            largest_winding_rank: 2,
+        };
+        let contractible = WindingSummary {
+            wrapping_component_count: 0,
+            largest_winding_rank: 0,
+            ..winding
+        };
+        let mut ctx = context();
+        plan.record(4, summary(4, 4, 16), &[], Some(winding), &mut ctx);
+        plan.record(4, summary(4, 4, 16), &[], Some(contractible), &mut ctx);
+        let values = ctx.finalize_measurements();
+        assert_eq!(values["Wrapping"].mean, 0.5);
+        assert_eq!(values["WindingRank"].mean, 1.0);
+    }
+
+    #[test]
+    fn plain_plans_do_not_request_winding() {
+        let plan = ObservablePlan::all(Vec::new());
+        assert!(!plan.requests_winding());
     }
 
     #[test]
@@ -323,7 +404,7 @@ mod tests {
             ]
         );
         let mut ctx = context();
-        plan.record(4, summary(4, 3, 11), &[], &mut ctx);
+        plan.record(4, summary(4, 3, 11), &[], None, &mut ctx);
         let values = ctx.finalize_measurements();
         // One sample per sweep, not two: the mean is unchanged by duplicates
         // but n_bins and stderr would silently double without collapsing.

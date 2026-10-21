@@ -113,7 +113,7 @@ impl ComponentWorkspace {
     }
 }
 
-fn reserve_len<T>(storage: &mut Vec<T>, len: usize) -> Result<(), TryReserveError> {
+pub(crate) fn reserve_len<T>(storage: &mut Vec<T>, len: usize) -> Result<(), TryReserveError> {
     if storage.capacity() < len {
         storage.try_reserve_exact(len - storage.len())?;
     }

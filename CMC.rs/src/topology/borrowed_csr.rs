@@ -33,107 +33,24 @@ impl<'a> BorrowedUndirectedCsr<'a> {
         edge_ids: &'a [usize],
         edge_endpoints: &'a [[usize; 2]],
     ) -> Result<Self, TopologyError> {
-        let vertex_count = offsets
-            .len()
-            .checked_sub(1)
-            .ok_or(TopologyError::OffsetLength {
-                expected: 1,
-                actual: 0,
-            })?;
-        if offsets[0] != 0 {
-            return Err(TopologyError::OffsetStart { actual: offsets[0] });
-        }
-        if let Some(index) = offsets.windows(2).position(|window| window[0] > window[1]) {
-            return Err(TopologyError::OffsetsNotMonotone { index });
-        }
         if neighbors.len() != edge_ids.len() {
             return Err(TopologyError::IncidenceLength {
                 neighbors: neighbors.len(),
                 edge_ids: edge_ids.len(),
             });
         }
-        let end = offsets[vertex_count];
-        if end != neighbors.len() {
-            return Err(TopologyError::OffsetEnd {
-                expected: neighbors.len(),
-                actual: end,
-            });
-        }
-
-        for (edge, endpoints) in edge_endpoints.iter().enumerate() {
-            for &endpoint in endpoints {
-                if endpoint >= vertex_count {
-                    return Err(TopologyError::EndpointOutOfRange {
-                        edge,
-                        endpoint,
-                        vertex_count,
-                    });
-                }
-            }
-        }
-
+        let vertex_count = validate_offsets(offsets, neighbors.len())?;
+        validate_edge_endpoints(edge_endpoints, vertex_count)?;
         let mut incidence_state = validation_state(edge_endpoints.len())?;
-        for vertex in 0..vertex_count {
-            for incidence in offsets[vertex]..offsets[vertex + 1] {
-                let neighbor = neighbors[incidence];
-                if neighbor >= vertex_count {
-                    return Err(TopologyError::NeighborOutOfRange {
-                        incidence,
-                        neighbor,
-                        vertex_count,
-                    });
-                }
-                let edge = edge_ids[incidence];
-                if edge >= edge_endpoints.len() {
-                    return Err(TopologyError::EdgeIdOutOfRange {
-                        incidence,
-                        edge,
-                        edge_count: edge_endpoints.len(),
-                    });
-                }
-                let [source, target] = edge_endpoints[edge];
-                if !((vertex == source && neighbor == target)
-                    || (vertex == target && neighbor == source))
-                {
-                    return Err(TopologyError::IncidenceMismatch {
-                        incidence,
-                        vertex,
-                        neighbor,
-                        edge,
-                    });
-                }
-
-                let state = &mut incidence_state[edge];
-                let count = *state & COUNT_MASK;
-                if count == 2 {
-                    return Err(TopologyError::IncidenceMultiplicity { edge, actual: 3 });
-                }
-                *state = (*state & !COUNT_MASK) | (count + 1);
-                if source != target {
-                    *state |= if vertex == source {
-                        SOURCE_SEEN
-                    } else {
-                        TARGET_SEEN
-                    };
-                }
-            }
-        }
-        for (edge, state) in incidence_state.into_iter().enumerate() {
-            let actual = usize::from(state & COUNT_MASK);
-            if actual != 2 {
-                return Err(TopologyError::IncidenceMultiplicity { edge, actual });
-            }
-            if edge_endpoints[edge][0] != edge_endpoints[edge][1]
-                && state & (SOURCE_SEEN | TARGET_SEEN) != SOURCE_SEEN | TARGET_SEEN
-            {
-                return Err(TopologyError::EndpointIncidenceMultiplicity {
-                    edge,
-                    source_seen: state & SOURCE_SEEN != 0,
-                    target_seen: state & TARGET_SEEN != 0,
-                });
-            }
-        }
-
+        validate_incidences(
+            offsets,
+            neighbors,
+            edge_ids,
+            edge_endpoints,
+            vertex_count,
+            &mut incidence_state,
+        )?;
+        validate_incidence_state(&incidence_state, edge_endpoints)?;
         Ok(Self {
             offsets,
             neighbors,
@@ -141,6 +58,126 @@ impl<'a> BorrowedUndirectedCsr<'a> {
             edge_endpoints,
         })
     }
+}
+
+fn validate_offsets(offsets: &[usize], neighbor_count: usize) -> Result<usize, TopologyError> {
+    let vertex_count = offsets
+        .len()
+        .checked_sub(1)
+        .ok_or(TopologyError::OffsetLength {
+            expected: 1,
+            actual: 0,
+        })?;
+    if offsets[0] != 0 {
+        return Err(TopologyError::OffsetStart { actual: offsets[0] });
+    }
+    if let Some(index) = offsets.windows(2).position(|window| window[0] > window[1]) {
+        return Err(TopologyError::OffsetsNotMonotone { index });
+    }
+    let end = offsets[vertex_count];
+    if end != neighbor_count {
+        return Err(TopologyError::OffsetEnd {
+            expected: neighbor_count,
+            actual: end,
+        });
+    }
+    Ok(vertex_count)
+}
+
+fn validate_edge_endpoints(
+    edge_endpoints: &[[usize; 2]],
+    vertex_count: usize,
+) -> Result<(), TopologyError> {
+    for (edge, endpoints) in edge_endpoints.iter().enumerate() {
+        for &endpoint in endpoints {
+            if endpoint >= vertex_count {
+                return Err(TopologyError::EndpointOutOfRange {
+                    edge,
+                    endpoint,
+                    vertex_count,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_incidences(
+    offsets: &[usize],
+    neighbors: &[usize],
+    edge_ids: &[usize],
+    edge_endpoints: &[[usize; 2]],
+    vertex_count: usize,
+    incidence_state: &mut [u8],
+) -> Result<(), TopologyError> {
+    for vertex in 0..vertex_count {
+        for incidence in offsets[vertex]..offsets[vertex + 1] {
+            let neighbor = neighbors[incidence];
+            if neighbor >= vertex_count {
+                return Err(TopologyError::NeighborOutOfRange {
+                    incidence,
+                    neighbor,
+                    vertex_count,
+                });
+            }
+            let edge = edge_ids[incidence];
+            if edge >= edge_endpoints.len() {
+                return Err(TopologyError::EdgeIdOutOfRange {
+                    incidence,
+                    edge,
+                    edge_count: edge_endpoints.len(),
+                });
+            }
+            let [source, target] = edge_endpoints[edge];
+            if !((vertex == source && neighbor == target)
+                || (vertex == target && neighbor == source))
+            {
+                return Err(TopologyError::IncidenceMismatch {
+                    incidence,
+                    vertex,
+                    neighbor,
+                    edge,
+                });
+            }
+
+            let state = &mut incidence_state[edge];
+            let count = *state & COUNT_MASK;
+            if count == 2 {
+                return Err(TopologyError::IncidenceMultiplicity { edge, actual: 3 });
+            }
+            *state = (*state & !COUNT_MASK) | (count + 1);
+            if source != target {
+                *state |= if vertex == source {
+                    SOURCE_SEEN
+                } else {
+                    TARGET_SEEN
+                };
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_incidence_state(
+    incidence_state: &[u8],
+    edge_endpoints: &[[usize; 2]],
+) -> Result<(), TopologyError> {
+    for (edge, state) in incidence_state.iter().copied().enumerate() {
+        let actual = usize::from(state & COUNT_MASK);
+        if actual != 2 {
+            return Err(TopologyError::IncidenceMultiplicity { edge, actual });
+        }
+        if edge_endpoints[edge][0] != edge_endpoints[edge][1]
+            && state & (SOURCE_SEEN | TARGET_SEEN) != SOURCE_SEEN | TARGET_SEEN
+        {
+            return Err(TopologyError::EndpointIncidenceMultiplicity {
+                edge,
+                source_seen: state & SOURCE_SEEN != 0,
+                target_seen: state & TARGET_SEEN != 0,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validation_state(edge_count: usize) -> Result<Vec<u8>, TopologyError> {

@@ -41,7 +41,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Generic real-q random-cluster model | Not implemented | No Sweeny or Chayes-Machta sampler. |
 | Boundary crossing between explicit vertex sets | Validated | F3 `BoundaryQuery` is validated for owned/borrowed generic undirected views, supports several queries in one component pass, and defines empty/overlap/dedup semantics; F4 migrates the full crossing test assets. The square left/right-column and chain endpoint defaults live in the `StaticPercolationMC` parameter schema; all other parameter-built topologies require explicit site sets. |
 | Periodic embedding capability (W1) | Experimental | Directed-incidence integer cell displacements exist as explicit recorded data: the `PeriodicEmbedding` capability (`topology/embedding.rs`) and the `LatticeEmbedding` table serve the pbc chain/square/hypercubic builders and the triangular builder, which record each displacement at bond emission and never infer it from `BondType` or vertex IDs. Independently reviewed; see the W1 section below. |
-| Periodic wrapping/winding analysis (W2) | Not implemented | No winding analyzer, wrapping query, or winding-rank reporting over the W1 displacements. Crossing is not wrapping. |
+| Periodic wrapping/winding analysis (W2) | Experimental | Winding-capable component analysis over the W1 displacements: `analyze_winding` (percolation/analyzer/winding.rs) runs one physical-edge pass of union-find with checked `i32` `Z^D` potentials, reports per-component winding rank and an echelon generating set (never only a Boolean), and feeds `Wrapping`/`WindingRank` plan observables on `StaticPercolationMC::with_embedding`; open/non-embedded wrapping requests are typed errors. Engineering gates green, awaiting independent review; see the W2 section below. Crossing is not wrapping. |
 | Newman-Ziff parameter scans | Not implemented | No incremental activation curve or binomial reweighting. |
 
 At F0 no family was **Validated**. Since F4 passed independent review, the
@@ -91,8 +91,9 @@ mode only when the edge and both endpoints are occupied.
   path using explicit integer cell displacements. A component wraps when a
   cycle has nonzero accumulated displacement; winding records generators,
   axes, or rank rather than merely boundary-set connectivity. Vertex IDs,
-  `BondType`, and periodic adjacency alone do not define winding. PR #4 does
-  not implement wrapping.
+  `BondType`, and periodic adjacency alone do not define winding. W2
+  implements this analysis (Experimental, awaiting review; see the W2
+  section).
 
 ### Network conditioning
 
@@ -760,7 +761,9 @@ At F4 the adapter was uniform-only; N1 has since added the heterogeneous
 uniform-only restriction no longer applies. The remaining limitations are
 unchanged: the parameter path owns its lattice (borrowed graphs use
 the core APIs); one boundary-query normalization per adapter plan; scalar
-results only (vector observables need C0); no wrapping/winding (W2), no
+results only (vector observables need C0); wrapping/winding exists since W2
+as Experimental `Wrapping`/`WindingRank` plan observables that require an
+embedded periodic adapter (generator vectors remain analyzer-level), no
 parameter scans (Z1), no directed/process/continuum/FK/attack families; chi
 tie conventions other than single canonical-largest exclusion are separate
 named policies that do not exist.
@@ -889,8 +892,8 @@ observables — N2) and targeted attacks (N3) are Not implemented.
 ## W1 periodic embedding capability
 
 Status: **Experimental**, independently reviewed (roadmap §16 W1; engineering gates
-and tests below are green, independent review has not happened). W1 is the
-data layer only — the W2 winding analyzer is Not implemented.
+and tests below are green). W1 is the data layer; the W2 winding analyzer that
+consumes it is Experimental, awaiting review (see the W2 section below).
 
 ### API and semantics
 
@@ -981,15 +984,14 @@ All in `CMC.rs` unit tests (`lattice::graph::tests`, `topology::embedding::tests
   of the `PeriodicEmbedding` trait; plus bit-identical lattice reproduction
   by every embedding builder.
 
-### W2 preview (not implemented)
+### W2 consumption
 
-The intended consumer is one pass over physical edges:
-`embedding.edge_displacement(edge, from)` next to
+The W2 consumer is exactly the pass this section sketched: one pass over
+physical edges calling `embedding.edge_displacement(edge, from)` next to
 `UndirectedGraphView::edge_endpoints`, running union-find with integer
-potentials; a closed component whose accumulated potential mismatches is a
-winding generator. The `(edge, endpoint)` lookup key exists precisely so
-that pass never needs `BondType` or endpoint-pair geometry. No part of W2 is
-implemented in this stage.
+potentials. The `(edge, endpoint)` lookup key means that pass never needs
+`BondType` or endpoint-pair geometry. See the W2 section below for the
+delivered analyzer, its gates, and its benchmark data.
 
 ### Limitations
 
@@ -999,3 +1001,196 @@ bench. The cocycle property is a builder contract verified by tests, not
 re-checked by `try_from_edge_displacements`. An embedding detached from its
 lattice has no provenance guard — the same caller contract as the F1 view
 IDs (both must stay unchanged together).
+
+## W2 winding analyzer
+
+Status: **Experimental** — engineering gates and tests below are green,
+awaiting independent review (roadmap §16 W2). W2 is the analysis layer over
+the W1 displacement data: one physical-edge scan computes connectivity and
+winding together.
+
+### API and semantics
+
+- `analyze_winding(graph, embedding, vertex_activity, edge_activity, workspace)`
+  (`percolation/analyzer/winding.rs`) is mode-free exactly like F3: it
+  consumes an `UndirectedGraphView` plus `VertexActivity`/`EdgeActivity`
+  (active edge = edge active with both endpoints active) and one
+  `PeriodicEmbedding` table, and looks displacements up by the directed
+  incidence `(edge, endpoint)`. It is an independent implementation on its
+  own `WindingWorkspace` (`percolation/workspace/winding.rs`) rather than a
+  layer over the F3 analyzer: potentials need their own path-compressed
+  union-find, so a fused single scan is the roadmap's shared-traversal
+  orientation; F3's semantics and workspace are untouched.
+- The scan is a union-find with integer `Z^D` potentials: every vertex
+  stores its displacement toward its union-find parent, unions across
+  active edges update potentials with **checked `i32` arithmetic**
+  (`i32` ownership is W2's: W1 stores raw `i32`, W2 guarantees no silent
+  wrap — an accumulation that would leave `i32` returns the typed
+  `WindingError::DisplacementOverflow { edge }` attributed to the physical
+  edge being scanned; the check is conservative, never wrapping), and every
+  same-root closure contributes its cycle-sum mismatch as a winding
+  generator observation.
+- Generators are folded incrementally into a per-root first-nonzero-pivot
+  **echelon basis of at most `D` rows** (extended-gcd row combinations keep
+  the generated subgroup invariant; leading components positive). Results
+  therefore report per component the **winding rank and a generating set of
+  the winding subgroup** — never only a Boolean: `WindingResult::generators`
+  yields exactly `rank` vectors of `D` signed cell components (an echelon
+  generating set, not a canonical Hermite normal form).
+- `WindingSummary` carries the F3-parity connectivity scalars plus
+  `wrapping_component_count` and the canonical largest component's winding
+  rank; `ComponentWinding` lists every component in ascending canonical
+  identity order (identity = lowest active vertex ID, the F3 policy; the
+  canonical-largest tie policy is identical). The empty configuration
+  yields the empty summary.
+- Typed rejections before any scanning: vertex/edge activity length
+  mismatches, zero embedding dimensions, and a missing displacement for an
+  active-edge endpoint (`WindingError::MissingDisplacement` — a table that
+  does not describe this graph). OBC/non-embedded graphs have no embedding
+  capability at all, so wrapping requests there are explicit consumer-side
+  errors (below), never a vacuous "no winding".
+- Adapter integration: `StaticPercolationMC::with_embedding(lattice,
+  embedding, law, plan)` pairs the table with the plan. Construction
+  validates the edge count (`EmbeddingMismatch`), endpoint coverage
+  (`EmbeddingEndpoints`), and a static magnitude gate `max |component| *
+  (2V + 2) <= i32::MAX` (`EmbeddingMagnitude`), which bounds every `i32`
+  potential sum the infallible per-sweep `measure()` can produce. A plan
+  requesting `Wrapping`/`WindingRank` without an embedding is
+  `WindingWithoutEmbedding`; the parameter schema accepts
+  `observables = "wrapping,winding-rank"` with `pbc = true` on chain,
+  square, cubic, hypercubic, and triangular topologies (built with their
+  embeddings) and rejects open/honeycomb/kagome winding requests loudly.
+  The winding scan runs only when the plan requests a winding observable.
+- Scheduler-level scalars (plan-explicit): `Wrapping` is `1` when any
+  tracked component has winding rank > 0 (`0` otherwise); `WindingRank` is
+  the canonical largest component's rank in `0..=D` (an ensemble-averaged
+  integer, not a probability). Generator vectors stay analyzer-level until
+  Carlo.rs grows vector estimates (C0). The default observable set and
+  `ObservablePlan::all` do not include either name.
+
+### Validation gates
+
+All in `tests/physics/percolation_winding.rs` (16 tests) plus 13 unit tests
+(`percolation/analyzer/winding.rs`, `percolation/observable.rs`,
+`percolation/carlo.rs`).
+
+- **Independent reference (roadmap gate):** a finite-cover lift-BFS — the
+  torus replicated into a `5^D` cover (radius 2), BFS from each component's
+  seed pinned in the center cell, winding read off the cells where the seed
+  reappears, rank by plain f64 Gaussian elimination (real rank = subgroup
+  rank). This shares no algorithmic path with the production weighted
+  union-find. Radius 2 provably suffices on the tested tori (a simple cycle
+  winding k times around an axis of an L-torus needs >= kL edges). Every
+  hand-constructed case below is parity-checked against it, and the full
+  enumerations check it configuration-by-configuration. The Criterion
+  target re-runs the parity on sampled tori, skipping cover-clipped
+  samples.
+- **Hand-constructed cycles:** an interior 3x3 plaquette is contractible
+  (rank 0); a row ring wraps with generator exactly `[1, 0]`; row ring +
+  column ring sharing a site is one component of rank 2 with generators
+  `[1, 0]`, `[0, 1]`; a hand-built 4-cycle whose lift accumulates `(1, 1)`
+  has rank 1 with generator `[1, 1]` — distinguished from a single-axis
+  wrap by the generator, not the rank; the L=2 ring's two parallel bonds
+  (displacements `0` and `-1`) wind only through the cycle (the wrap-only
+  bond set is a connected open path, rank 0 — the `(edge, endpoint)` key
+  path for parallel edges); the full 2x3x4 cubic torus reports rank 3 with
+  the three unit generators.
+- **Invariances (roadmap gate):** over 8 random occupation samples on the
+  3x3 torus, gauge shifts `d'(s->t) = d(s->t) + phi(t) - phi(s)`
+  (representative/origin choice; cycle sums telescope) and full edge
+  direction reversal (negated table) leave summaries equal and generated
+  lattices identical (compared through a test-side Hermite normal form);
+  cyclic relabeling of a winding 4-ring preserves rank and the unit
+  generator for every shift.
+- **OBC/no-embedding explicit errors (roadmap gate):** adapter-level
+  `WindingWithoutEmbedding`, parameter-path rejection mentioning the
+  embedded-periodic-topology requirement (default-open square and
+  pbc-only honeycomb), and `EmbeddingError::OpenBoundaries` from the W1
+  builders.
+- **Physical endpoints:** bond p=1 on the 3x3 torus wraps with rank 2 every
+  sample, p=0 never wraps; site p=1 on the 2x2 torus wraps; fixed seeds
+  reproduce `Wrapping`/`WindingRank`/`BoundaryCrossing0` bitwise (means,
+  bin counts) and a shifted seed moves the stream.
+- **Full enumeration vs reference:** every bond configuration of the 2x2
+  torus (2^8 = 256) and the 3x3 torus (2^18 = 262144) is
+  parity-checked component-by-component (identity, size, rank) against the
+  lift-BFS reference. Exact results at p = 1/2: 2x2 P(wrapping) =
+  187/256 = 0.73046875, mean largest winding rank 252/256 = 0.984375; 3x3
+  P(wrapping) = 186684/262144 = 0.7121429443359375, mean largest rank
+  259658/262144 = 0.9905166625976563. The 2x2 hand-check pins the
+  two-disjoint-wrapping-2-cycle configuration (2 components, both rank 1)
+  and the two-open-paths configuration (rank 0).
+- **Statistical:** 16-seed scheduler z-scores (4000 sweeps/seed, seed base
+  `0x5A5A_0000`) of `Wrapping` and `WindingRank` against the exact 2x2
+  enumeration — per-seed |z| < 4, mean |z| < 1.5, no one-sided bias;
+  seed count scales through `SCUTTLE_ZSCORE_SEEDS` (verified green at 64).
+- **Cross-consistency with F3:** 32 random 4x4 samples agree on active
+  vertex/edge counts, component count, and canonical largest identity/size.
+- **Typed rejections and overflow:** activity-length mismatches, zero
+  dimensions, missing-displacement embeddings; a 3-cycle of 2*10^9
+  displacements (cycle sum exactly zero) is reported contractible while
+  3*10^9 (sum 3e9 > i32) is a typed `DisplacementOverflow`, and an 8-cycle
+  of 6*10^8 displacements (sums 4.8e9) errors at the analyzer and is
+  rejected by the adapter's static magnitude gate at construction. Unit
+  tests additionally pin extended-gcd reference values, workspace reuse
+  across repeated analyses, and dimension switches (D=1 -> D=2) on one
+  workspace.
+
+### Performance
+
+Criterion target `percolation_winding` (sample_size 10, 100 ms warmup,
+250 ms measurement; throughput = physical edges/s; recorded on the Xeon
+Gold 6148 host, p_bond = 0.5, 2026-10-09):
+
+| Case | sample+f3 | sample+winding | sample+f3+winding | adapter plain | adapter winding |
+|------|-----------|----------------|-------------------|---------------|-----------------|
+| ring V=4096, E=4096, D=1 | 69.95 us (58.6 Melem/s) | 137.2 us (29.9 Melem/s) | 197.4 us | 74.1 us | 205.7 us |
+| square 64x64 V=4096, E=8192, D=2 | 119.1 us (68.8 Melem/s) | 270.9 us (30.2 Melem/s) | 381.9 us | 118.7 us | 387.4 us |
+| cubic 16x16x8 V=2048, E=6144, D=3 | 83.4 us (73.7 Melem/s) | 220.0 us (27.9 Melem/s) | 297.3 us | 84.4 us | 296.7 us |
+
+The winding scan costs ~2.3-2.6x the F3 scan per edge (potential
+bookkeeping, potential-aware path compression, basis folding), so an
+adapter requesting both analyses runs ~3.2-3.5x the plain adapter per
+sample; the winding-only path is strictly cheaper than F3+winding because
+it fuses connectivity and winding into one scan. Reproduce with:
+
+```bash
+cargo bench -p cmc-rs --bench percolation_winding -- --test   # smoke + parity
+cargo bench -p cmc-rs --bench percolation_winding
+```
+
+### Allocation probe
+
+Six new `percolation_allocations` records (3 workspace + 3 adapter, 128
+post-warmup samples each; `--features allocation-probe -- --test`): the
+winding hot path (law sampling + `analyze_winding`) records **0.000
+allocations and 0.000 bytes per sample** in steady state after one
+`WindingWorkspace::prepare`, and the winding adapter (sweep + measure, 9
+scalars + no boundary query) likewise 0.000 / 0.000 with zero peak live
+allocations. Retained workspace capacity: ring (D=1) 327,696 B = 80.0
+B/vertex, square (D=2) 393,248 B = 96.0 B/vertex, cubic (D=3) 245,808 B =
+120.0 B/vertex — exactly `4*8 + 32 + 2*4 + 4D + 4D^2` bytes per vertex
+(union-find arrays + worst-case component table + counters + potential +
+basis blocks); 10 allocations at `prepare`, none afterwards.
+
+### Limitations
+
+Generators are an echelon generating set, not a canonical Hermite normal
+form (two runs generating the same lattice may report different vectors;
+the tests compare lattices, not rows). The overflow check is conservative:
+it can reject an adversarial table whose intermediate sums leave `i32`
+even when the mathematical winding subgroup is small, and never wraps
+silently. The adapter magnitude gate bounds potential sums only; a crafted
+table passing the gate could in principle overflow a checked basis-echelon
+combination inside `measure()` and panic loudly (builder embeddings carry
+unit displacements and cannot reach this) — use the core `analyze_winding`
+for adversarial tables. An embedding table with fewer edges than the graph
+panics at the infallible per-edge lookup, the same F1 caller contract
+(pair via `LatticeEmbedding::edge_count`); the adapter checks it for you.
+`Wrapping` is defined as "any tracked component has rank > 0" and
+`WindingRank` tracks the canonical largest component only — other
+conventions (seed-site wrapping, per-axis wrapping probabilities) are
+separate named observables that do not exist. Vector/generator output is
+analyzer-level until C0; honeycomb/kagome topologies have no embedding
+(W1), so their families cannot wind; heterogeneous laws compose with
+winding through the same adapter unchanged.

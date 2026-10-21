@@ -37,14 +37,14 @@ adapter modules:
 |-----------|---------|
 | `core/` | Move types, caches, `TrialEvaluator`, `Ensemble`, `AcceptanceRule`, visit schedules |
 | `lattice/` | `CsrLattice` graph, `System` state, `Hamiltonian` traits, built-in models, `ProposalStrategy` |
-| `topology/` | Dense IDs, capability-specific read-only graph views, validated zero-copy borrowed undirected CSR, Experimental W1 `PeriodicEmbedding` (explicit per-directed-incidence integer cell displacements for pbc hypercubic-family and triangular builders; no winding analyzer yet) |
+| `topology/` | Dense IDs, capability-specific read-only graph views, validated zero-copy borrowed undirected CSR, Experimental W1 `PeriodicEmbedding` (explicit per-directed-incidence integer cell displacements for pbc hypercubic-family and triangular builders) |
 | `algorithms/` | `Algorithm<H>` trait, 6 kernels (Metropolis, Wolff, SW, heat bath, microcanonical, hybrid) |
 | `observables/` | `Observable<H>`, `DefaultObservableSet`, energy, magnetisation, correlation |
 | `particle/` | Periodic cells, AoS coordinates, pair potentials, packed cell lists, translations and NVT/NPT/μVT adapters, rigid molecules with an optional dipolar external field |
 | `generalized/` | Wang-Landau, frozen biases, DOS/histograms, exact enumeration and reweighting |
 | `worm/` | Persistent physical/worm sectors, generic local driver and Ising graph representation |
 | `dynamics/` | Kawasaki exchange, direct Gillespie, Fenwick BKL/n-fold way and hard-sphere event chains |
-| `percolation/` | F1-F4 foundation — substrate layers Experimental, static family Validated — (topology/activity capabilities, Bernoulli laws, generic component analyzer, reusable workspace, explicit observable plan and owned `StaticPercolationMC` adapter) plus Validated N1 heterogeneous per-vertex/per-edge `StaticLaw` variants |
+| `percolation/` | F1-F4 foundation — substrate layers Experimental, static family Validated — (topology/activity capabilities, Bernoulli laws, generic component analyzer, reusable workspace, explicit observable plan and owned `StaticPercolationMC` adapter), Validated N1 heterogeneous per-vertex/per-edge `StaticLaw` variants, and Experimental W2 winding analyzer (checked-`i32` integer-potential union-find over W1 embeddings; per-component winding rank + generators; `Wrapping`/`WindingRank` adapter observables) |
 | Top-level | `classical_mc.rs` (Carlo.rs adapter), `multi_spin.rs`, `postprocess.rs` |
 
 The established lattice/particle API remains re-exported flat from `lib.rs`.
@@ -295,10 +295,46 @@ boundary query records `BoundaryCrossing0`, `BoundaryCrossing1`, ... in plan
 order. Labels are intentionally not part of the plan; `analyze_with_labels`
 serves direct label consumers.
 
+On an embedded periodic topology the plan may additionally request
+`wrapping` and `winding-rank`, recorded as `Wrapping` (1 when any component
+winds, 0 otherwise) and `WindingRank` (the canonical largest component's
+winding rank, `0..=D`); see the wrapping section below.
+
 Borrowed graphs and custom laws bypass the owned adapter: call `analyze`
 directly, or compose a runtime with `Run::from_parts()`. Arbitrary graphs can
 also construct `StaticPercolationMC::new(lattice, law, plan)` with an explicit
 `BoundaryQuery` instead of going through `FromParams`.
+
+### Wrapping and winding (W2)
+
+Crossing is not wrapping. On a periodic lattice, wrapping asks whether an
+occupied cluster winds around the torus — detected by lifting paths through
+the W1 `PeriodicEmbedding` displacements with a union-find of checked `i32`
+integer potentials, reporting per-component winding rank and generator
+vectors, never only a Boolean. The parameter path attaches the embedding
+automatically for `pbc = true` `chain`/`square`/`cubic`/`hypercubic`/
+`triangular` topologies (`observables = "wrapping,winding-rank"`); a
+wrapping request on an open or non-embedded graph is a typed error:
+
+```rust
+use cmc_rs::{build_square_with_embedding, ObservablePlan, StaticLaw,
+             StaticObservable, StaticPercolationMC};
+
+let (lattice, embedding) = build_square_with_embedding(32, 32, true).unwrap();
+let plan = ObservablePlan::new(
+    [StaticObservable::Wrapping, StaticObservable::WindingRank],
+    vec![],
+);
+let adapter =
+    StaticPercolationMC::with_embedding(lattice, embedding, StaticLaw::bond(0.5).unwrap(), plan)
+        .unwrap();
+```
+
+Direct consumers can call `analyze_winding` on any `UndirectedGraphView` with
+a `PeriodicEmbedding` and a reusable `WindingWorkspace`; generator vectors
+stay analyzer-level until Carlo.rs grows vector estimates. Validation
+(lift-BFS reference, full 2x2/3x3 enumeration, invariances, z-scores) and
+benchmark data are recorded in [PERCOLATION.md](PERCOLATION.md).
 
 ### Heterogeneous per-vertex / per-edge probabilities
 

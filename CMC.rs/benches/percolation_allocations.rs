@@ -5,12 +5,14 @@ use std::mem::size_of;
 use allocation_counter::measure;
 use carlo_rs::{Context, MonteCarlo};
 use cmc_rs::{
-    analyze, Bond, BondBernoulli, BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace,
-    GraphView, MixedBernoulli, ObservablePlan, Probability, ProbabilityField, SiteBernoulli,
-    StaticConfiguration, StaticLaw, StaticPercolationMC, UndirectedGraphView,
+    analyze, analyze_winding, Bond, BondBernoulli, BorrowedUndirectedCsr, BoundaryQuery,
+    ComponentWorkspace, GraphView, MixedBernoulli, ObservablePlan, PeriodicEmbedding, Probability,
+    ProbabilityField, SiteBernoulli, StaticConfiguration, StaticLaw, StaticObservable,
+    StaticPercolationMC, UndirectedGraphView, WindingWorkspace,
 };
 use percolation_support::{
-    cases, sample_and_analyze, Case, ReferenceConfiguration, ReferenceMode, P_BOND, P_SITE,
+    cases, sample_and_analyze, torus_cases, Case, ReferenceConfiguration, ReferenceMode, TorusCase,
+    P_BOND, P_SITE,
 };
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -435,6 +437,150 @@ fn report_heterogeneous_adapter_case(case: &Case, mode: ReferenceMode) {
     );
 }
 
+/// W2 winding-workspace probe: law sampling plus `analyze_winding` on a
+/// builder torus must be allocation-free in steady state after one
+/// `WindingWorkspace::prepare`.
+fn report_winding_case(torus_case: &TorusCase) {
+    let vertex_count = torus_case.lattice.vertex_count();
+    let edge_count = torus_case.lattice.edge_count();
+    let dimensions = torus_case.embedding.periodic_dimensions();
+    let mut configuration = StaticConfiguration::new(vertex_count, edge_count);
+    let mut prepared = None;
+    let prepare_info = measure(|| {
+        let mut workspace = WindingWorkspace::new();
+        workspace
+            .prepare(vertex_count, dimensions)
+            .expect("probe winding workspace reservation");
+        prepared = Some(workspace);
+    });
+    let mut workspace = prepared.expect("probe must retain prepared workspace");
+    let bond = BondBernoulli::new(probability(P_BOND).into());
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4633_5749_4e44);
+    for _ in 0..8 {
+        bond.sample(&torus_case.lattice, &mut configuration, &mut rng)
+            .expect("probe dimensions match");
+        std::hint::black_box(
+            analyze_winding(
+                &torus_case.lattice,
+                &torus_case.embedding,
+                &configuration,
+                &configuration,
+                &mut workspace,
+            )
+            .expect("probe winding analysis"),
+        );
+    }
+    // Audit after warmup so lazily grown storage (component table) is
+    // included in the retained-capacity accounting.
+    let capacity = workspace.capacity_audit();
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            bond.sample(&torus_case.lattice, &mut configuration, &mut rng)
+                .expect("probe dimensions match");
+            std::hint::black_box(
+                analyze_winding(
+                    &torus_case.lattice,
+                    &torus_case.embedding,
+                    &configuration,
+                    &configuration,
+                    &mut workspace,
+                )
+                .expect("probe winding analysis"),
+            );
+        }
+    });
+    eprintln!(
+        "WINDING_WORKSPACE_ALLOC topology={} D={} V={} E={} measured_samples={} \
+         workspace_parent_bytes={} workspace_size_bytes={} workspace_canonical_bytes={} \
+         workspace_potential_bytes={} workspace_basis_bytes={} workspace_basis_count_bytes={} \
+         workspace_root_slot_bytes={} workspace_scratch_bytes={} workspace_chain_bytes={} \
+         workspace_components_bytes={} workspace_total_capacity_bytes={} \
+         workspace_bytes_per_vertex={:.3} workspace_prepare_allocations={} \
+         workspace_prepare_allocator_bytes={} allocations_per_sample={:.3} \
+         allocated_bytes_per_sample={:.3} peak_live_allocations={} peak_live_bytes={}",
+        torus_case.name,
+        dimensions,
+        vertex_count,
+        edge_count,
+        ALLOCATION_SAMPLES,
+        capacity.parent,
+        capacity.size,
+        capacity.canonical,
+        capacity.potential,
+        capacity.basis,
+        capacity.basis_counts,
+        capacity.root_slot,
+        capacity.scratch,
+        capacity.chain,
+        capacity.components,
+        capacity.total_bytes(),
+        capacity.total_bytes() as f64 / vertex_count.max(1) as f64,
+        prepare_info.count_total,
+        prepare_info.bytes_total,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
+/// W2 adapter probe: `StaticPercolationMC` sweep + measure with the winding
+/// observables requested must be allocation-free in steady state, exactly
+/// like the plain adapter above.
+fn report_winding_adapter_case(torus_case: &TorusCase) {
+    let law = StaticLaw::bond(P_BOND).expect("probe probability");
+    let plan = ObservablePlan::new(
+        [
+            StaticObservable::ActiveVertexCount,
+            StaticObservable::ActiveEdgeCount,
+            StaticObservable::ComponentCount,
+            StaticObservable::LargestSize,
+            StaticObservable::GiantFraction,
+            StaticObservable::RawSecondMoment,
+            StaticObservable::FiniteClusterSusceptibility,
+            StaticObservable::Wrapping,
+            StaticObservable::WindingRank,
+        ],
+        Vec::new(),
+    );
+    let mut adapter = StaticPercolationMC::with_embedding(
+        torus_case.lattice.clone(),
+        torus_case.embedding.clone(),
+        law,
+        plan,
+    )
+    .expect("probe winding adapter must construct");
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0x4633_5741_5053),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        adapter.sweep(&mut context);
+        adapter.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    eprintln!(
+        "WINDING_ADAPTER_ALLOC topology={} law=bond-uniform V={} E={} observables=9+1 \
+         measured_samples={} allocations_per_sample={:.3} allocated_bytes_per_sample={:.3} \
+         peak_live_allocations={} peak_live_bytes={}",
+        torus_case.name,
+        torus_case.lattice.vertex_count(),
+        torus_case.lattice.edge_count(),
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
@@ -455,5 +601,9 @@ fn main() {
         for mode in ReferenceMode::ALL {
             report_case(&case, mode);
         }
+    }
+    for torus_case in torus_cases() {
+        report_winding_case(&torus_case);
+        report_winding_adapter_case(&torus_case);
     }
 }

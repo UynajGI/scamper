@@ -148,6 +148,15 @@ pub struct LatticeEmbedding {
 }
 
 impl LatticeEmbedding {
+    /// Number of physical edges this table carries displacements for.
+    ///
+    /// W2 consumers use it to pair the table with a graph before calling the
+    /// infallible per-edge lookup (an out-of-range edge ID would panic there).
+    #[inline]
+    pub fn edge_count(&self) -> usize {
+        self.endpoints.len()
+    }
+
     /// Builds an embedding table from explicit per-edge displacements.
     ///
     /// `displacements` is flat and edge-major: the vector of lattice edge `e`

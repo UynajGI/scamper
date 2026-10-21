@@ -28,7 +28,10 @@ mod summary;
 mod workspace;
 
 pub use activity::{EdgeActivity, VertexActivity};
-pub use analyzer::{analyze, analyze_with_labels, AnalysisError, AnalysisResult};
+pub use analyzer::{
+    analyze, analyze_winding, analyze_with_labels, AnalysisError, AnalysisResult, ComponentWinding,
+    WindingError, WindingResult, WindingSummary,
+};
 pub use carlo::{StaticLaw, StaticPercolationError, StaticPercolationMC};
 pub use configuration::StaticConfiguration;
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
@@ -39,4 +42,7 @@ pub use summary::ComponentSummary;
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
 pub use workspace::WorkspaceCapacityAudit;
-pub use workspace::{ComponentLabel, ComponentWorkspace};
+#[cfg(feature = "allocation-probe")]
+#[doc(hidden)]
+pub use workspace::WorkspaceWindingCapacityAudit;
+pub use workspace::{ComponentLabel, ComponentWorkspace, WindingWorkspace};

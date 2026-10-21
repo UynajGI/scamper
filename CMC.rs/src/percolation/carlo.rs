@@ -7,12 +7,16 @@ use rand::Rng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::{
-    analyze, BondBernoulli, BoundaryQuery, ComponentWorkspace, MixedBernoulli, ObservablePlan,
-    ObservablePlanError, Probability, ProbabilityField, SamplingError, SiteBernoulli,
-    StaticConfiguration, StaticObservable,
+    analyze, analyze_winding, BondBernoulli, BoundaryQuery, ComponentWorkspace, MixedBernoulli,
+    ObservablePlan, ObservablePlanError, Probability, ProbabilityField, SamplingError,
+    SiteBernoulli, StaticConfiguration, StaticObservable, WindingWorkspace,
 };
 use crate::classical_mc::{build_lattice_from_params, parse_bool, parse_param};
-use crate::{CsrLattice, GraphView, UndirectedGraphView};
+use crate::{
+    build_chain_with_embedding, build_hypercubic_with_embedding, build_square_with_embedding,
+    build_triangular_with_embedding, CsrLattice, GraphView, LatticeEmbedding, PeriodicEmbedding,
+    UndirectedGraphView,
+};
 
 /// Static Bernoulli occupation law used only at the owned runtime-adapter
 /// boundary: one uniform probability per sampled domain, or one validated
@@ -190,15 +194,52 @@ impl StaticLaw {
 /// `Run::from_parts()`.
 pub struct StaticPercolationMC {
     lattice: CsrLattice,
+    embedding: Option<LatticeEmbedding>,
     law: StaticLaw,
     configuration: StaticConfiguration,
     workspace: ComponentWorkspace,
+    winding_workspace: WindingWorkspace,
     plan: ObservablePlan,
 }
 
 impl StaticPercolationMC {
     pub fn new(
         lattice: CsrLattice,
+        law: StaticLaw,
+        plan: ObservablePlan,
+    ) -> Result<Self, StaticPercolationError> {
+        if plan.requests_winding() {
+            return Err(StaticPercolationError::WindingWithoutEmbedding);
+        }
+        Self::from_parts(lattice, None, law, plan)
+    }
+
+    /// Constructs the adapter with a periodic embedding so the plan may
+    /// request the W2 winding observables (`Wrapping`, `WindingRank`).
+    ///
+    /// The embedding must be the table for exactly this lattice: the edge
+    /// count must match, every physical edge must expose a displacement from
+    /// both endpoints, and the displacement magnitudes must pass a static
+    /// overflow gate (`max |component| * (2V + 2) <= i32::MAX`, bounding every
+    /// `i32` potential sum this adapter can produce), because the infallible
+    /// `measure()` cannot surface the analyzer's typed overflow errors. The
+    /// gate covers potential sums, not the checked basis-echelon combinations
+    /// inside the analyzer: builder embeddings (unit displacements) cannot
+    /// overflow either, while a crafted table that passes the gate could in
+    /// principle overflow a basis combination and panic loudly instead of
+    /// wrapping — use the core [`analyze_winding`] for adversarial tables.
+    pub fn with_embedding(
+        lattice: CsrLattice,
+        embedding: LatticeEmbedding,
+        law: StaticLaw,
+        plan: ObservablePlan,
+    ) -> Result<Self, StaticPercolationError> {
+        Self::from_parts(lattice, Some(embedding), law, plan)
+    }
+
+    fn from_parts(
+        lattice: CsrLattice,
+        embedding: Option<LatticeEmbedding>,
         law: StaticLaw,
         plan: ObservablePlan,
     ) -> Result<Self, StaticPercolationError> {
@@ -217,22 +258,56 @@ impl StaticPercolationMC {
                 });
             }
         }
+        let dimensions = embedding
+            .as_ref()
+            .map_or(0, |table| table.periodic_dimensions().max(1));
+        if let Some(table) = &embedding {
+            if table.edge_count() != lattice.edge_count() {
+                return Err(StaticPercolationError::EmbeddingMismatch {
+                    expected: lattice.edge_count(),
+                    actual: table.edge_count(),
+                });
+            }
+            let max_displacement = max_abs_displacement(&lattice, table)?;
+            let bound = i64::from(max_displacement) * (2 * lattice.vertex_count() as i64 + 2);
+            if max_displacement > 0 && bound > i64::from(i32::MAX) {
+                return Err(StaticPercolationError::EmbeddingMagnitude {
+                    max_displacement,
+                    vertices: lattice.vertex_count(),
+                });
+            }
+        }
         let configuration = StaticConfiguration::new(lattice.vertex_count(), lattice.edge_count());
         let mut workspace = ComponentWorkspace::new();
         workspace
             .prepare(lattice.vertex_count(), plan.boundary_queries().len(), false)
             .map_err(|_| StaticPercolationError::Capacity)?;
+        let mut winding_workspace = WindingWorkspace::new();
+        if embedding.is_some() {
+            winding_workspace
+                .prepare(lattice.vertex_count(), dimensions)
+                .map_err(|_| StaticPercolationError::Capacity)?;
+        }
         Ok(Self {
             lattice,
+            embedding,
             law,
             configuration,
             workspace,
+            winding_workspace,
             plan,
         })
     }
 
     pub const fn lattice(&self) -> &CsrLattice {
         &self.lattice
+    }
+
+    /// The periodic embedding this adapter analyzes winding against, when one
+    /// was supplied ([`Self::with_embedding`] or `pbc = true` parameter-built
+    /// topologies with winding observables).
+    pub fn embedding(&self) -> Option<&LatticeEmbedding> {
+        self.embedding.as_ref()
     }
 
     pub const fn law(&self) -> &StaticLaw {
@@ -248,6 +323,28 @@ impl StaticPercolationMC {
     }
 }
 
+/// Largest absolute displacement component over all edges and endpoints,
+/// paired-endpoint checked along the way.
+fn max_abs_displacement(
+    lattice: &CsrLattice,
+    embedding: &LatticeEmbedding,
+) -> Result<i32, StaticPercolationError> {
+    let mut max_component = 0i32;
+    for edge_index in 0..lattice.edge_count() {
+        let edge = lattice.edge_id(edge_index).expect("dense edge index");
+        let [source, target] = lattice.edge_endpoints(edge);
+        for endpoint in [source, target] {
+            let displacement = embedding
+                .edge_displacement(edge, endpoint)
+                .ok_or(StaticPercolationError::EmbeddingEndpoints { edge: edge_index })?;
+            for component in displacement.iter() {
+                max_component = max_component.max(component.abs());
+            }
+        }
+    }
+    Ok(max_component)
+}
+
 impl MonteCarlo for StaticPercolationMC {
     type Rng = Xoshiro256PlusPlus;
 
@@ -258,6 +355,29 @@ impl MonteCarlo for StaticPercolationMC {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
+        // The winding scan runs only when the plan requests a winding
+        // observable: an embedding supplied without one costs nothing per
+        // sweep (the plan would ignore the summary anyway).
+        let winding = if self.plan.requests_winding() {
+            Some(
+                analyze_winding(
+                    &self.lattice,
+                    self.embedding
+                        .as_ref()
+                        .expect("winding plans pair with an embedding"),
+                    &self.configuration,
+                    &self.configuration,
+                    &mut self.winding_workspace,
+                )
+                .expect(
+                    "constructor validated embedding domains and potential-sum magnitudes; \
+                     builder embeddings (unit displacements) cannot overflow",
+                )
+                .summary(),
+            )
+        } else {
+            None
+        };
         let result = analyze(
             &self.lattice,
             &self.configuration,
@@ -270,6 +390,7 @@ impl MonteCarlo for StaticPercolationMC {
             self.lattice.vertex_count(),
             result.summary(),
             result.query_outcomes(),
+            winding,
             ctx,
         );
     }
@@ -282,14 +403,15 @@ impl MonteCarlo for StaticPercolationMC {
 impl FromParams for StaticPercolationMC {
     fn validate_params(params: &Params) -> Result<(), CarloError> {
         parse_law(params)?;
-        parse_observables(params)?;
+        let observables = parse_observables(params)?;
         parse_index_list(params, "spanning_from")?;
         parse_index_list(params, "spanning_to")?;
         // Validate the full parameter-built topology and boundary sets here
         // as well, so `validate_params` accepts exactly what `from_params`
         // accepts (mirroring the `ClassicalMC` adapters).
         let pbc = parse_bool(params, "pbc", false)?;
-        let lattice = build_lattice_from_params(params, pbc)?;
+        let (lattice, embedding) = build_topology_from_params(params, pbc, &observables)?;
+        let _ = embedding;
         resolve_spanning_sets(params, &lattice)?;
         Ok(())
     }
@@ -298,14 +420,162 @@ impl FromParams for StaticPercolationMC {
         Self::validate_params(params)?;
         let law = parse_law(params)?;
         let pbc = parse_bool(params, "pbc", false)?;
-        let lattice = build_lattice_from_params(params, pbc)?;
         let observables = parse_observables(params)?;
+        let (lattice, embedding) = build_topology_from_params(params, pbc, &observables)?;
         let (from, to) = resolve_spanning_sets(params, &lattice)?;
         let query = BoundaryQuery::new(&lattice, &from, &to)
             .map_err(|error| invalid("spanning_from", error))?;
         let plan = ObservablePlan::new(observables, vec![query]);
-        Self::new(lattice, law, plan).map_err(|error| invalid("percolation", error))
+        let adapter = match embedding.filter(|_| plan.requests_winding()) {
+            Some(embedding) => StaticPercolationMC::with_embedding(lattice, embedding, law, plan),
+            None => StaticPercolationMC::new(lattice, law, plan),
+        };
+        adapter.map_err(|error| invalid("percolation", error))
     }
+}
+
+/// Positive lattice dimension parameter with `default` fallback.
+fn positive_dimension(params: &Params, name: &str, default: usize) -> Result<usize, CarloError> {
+    let value = parse_param::<usize>(params, name)?.unwrap_or(default);
+    if value == 0 {
+        Err(invalid(name, "dimension must be positive"))
+    } else {
+        Ok(value)
+    }
+}
+
+/// Parameter-path topology with its periodic embedding where one exists.
+///
+/// Mirrors [`build_lattice_from_params`] branch for branch (the embedding
+/// builders reproduce the plain builders' lattices bit-for-bit) and attaches
+/// the W1 displacement table exactly when `pbc` builds one. When the
+/// observables request winding but the topology has no embedding (open
+/// boundaries, or honeycomb/kagome whose embeddings do not exist), the
+/// request is rejected loudly.
+fn build_topology_from_params(
+    params: &Params,
+    pbc: bool,
+    observables: &[StaticObservable],
+) -> Result<(CsrLattice, Option<LatticeEmbedding>), CarloError> {
+    let needs_embedding = observables
+        .iter()
+        .any(|observable| observable.needs_embedding());
+    if !pbc {
+        return open_topology(build_lattice_from_params(params, false)?, needs_embedding);
+    }
+    let lattice_type = lattice_type_from_params(params);
+    let embedded = match lattice_type.as_str() {
+        "chain" => embedded_chain(params),
+        "square" => embedded_square(params),
+        "cubic" => embedded_cubic(params),
+        "hypercubic" => embedded_hypercubic(params),
+        "triangular" => embedded_triangular(params),
+        _ => return open_topology(build_lattice_from_params(params, true)?, needs_embedding),
+    }?;
+    Ok((embedded.0, Some(embedded.1)))
+}
+
+fn open_topology(
+    lattice: CsrLattice,
+    needs_embedding: bool,
+) -> Result<(CsrLattice, Option<LatticeEmbedding>), CarloError> {
+    if needs_embedding {
+        Err(invalid(
+            "observables",
+            "winding observables require an embedded periodic topology: \
+             set pbc=true with lattice_type chain, square, cubic, hypercubic, or triangular \
+             (honeycomb/kagome embeddings do not exist)",
+        ))
+    } else {
+        Ok((lattice, None))
+    }
+}
+
+fn lattice_type_from_params(params: &Params) -> String {
+    let inferred = if params.contains("Lx") {
+        "hypercubic"
+    } else {
+        "chain"
+    };
+    params
+        .get::<String>("lattice_type")
+        .unwrap_or_else(|| inferred.to_string())
+        .to_ascii_lowercase()
+}
+
+fn embedding_param_error(error: crate::EmbeddingError) -> CarloError {
+    invalid("pbc", error)
+}
+
+fn embedded_chain(params: &Params) -> Result<(CsrLattice, LatticeEmbedding), CarloError> {
+    let length = if params.contains("L") {
+        positive_dimension(params, "L", 10)?
+    } else {
+        positive_dimension(params, "Lx", 10)?
+    };
+    build_chain_with_embedding(length, true).map_err(embedding_param_error)
+}
+
+fn embedded_square(params: &Params) -> Result<(CsrLattice, LatticeEmbedding), CarloError> {
+    let lx = positive_dimension(params, "Lx", 4)?;
+    let ly = positive_dimension(params, "Ly", lx)?;
+    build_square_with_embedding(lx, ly, true).map_err(embedding_param_error)
+}
+
+fn embedded_cubic(params: &Params) -> Result<(CsrLattice, LatticeEmbedding), CarloError> {
+    let dimensions = cubic_dimensions(params)?;
+    build_hypercubic_with_embedding(
+        &dimensions,
+        &[
+            crate::BondType::CubicX,
+            crate::BondType::CubicY,
+            crate::BondType::CubicZ,
+        ],
+        true,
+    )
+    .map_err(embedding_param_error)
+}
+
+fn cubic_dimensions(params: &Params) -> Result<[usize; 3], CarloError> {
+    let lx = positive_dimension(params, "Lx", 4)?;
+    let ly = positive_dimension(params, "Ly", lx)?;
+    let lz = positive_dimension(params, "Lz", lx)?;
+    Ok([lx, ly, lz])
+}
+
+fn embedded_hypercubic(params: &Params) -> Result<(CsrLattice, LatticeEmbedding), CarloError> {
+    if !params.contains("Lx") {
+        return build_chain_with_embedding(positive_dimension(params, "L", 10)?, true)
+            .map_err(embedding_param_error);
+    }
+    let lx = positive_dimension(params, "Lx", 4)?;
+    let ly = positive_dimension(params, "Ly", lx)?;
+    if params.contains("Lz") {
+        let lz = positive_dimension(params, "Lz", lx)?;
+        return build_hypercubic_with_embedding(
+            &[lx, ly, lz],
+            &[
+                crate::BondType::CubicX,
+                crate::BondType::CubicY,
+                crate::BondType::CubicZ,
+            ],
+            true,
+        )
+        .map_err(embedding_param_error);
+    }
+    build_square_with_embedding(lx, ly, true).map_err(embedding_param_error)
+}
+
+fn embedded_triangular(params: &Params) -> Result<(CsrLattice, LatticeEmbedding), CarloError> {
+    let lx = positive_dimension(params, "Lx", 4)?;
+    let ly = positive_dimension(params, "Ly", lx)?;
+    if lx < 2 || ly < 2 {
+        return Err(invalid(
+            "Lx/Ly",
+            "triangular lattice requires both dimensions >= 2",
+        ));
+    }
+    build_triangular_with_embedding(lx, ly).map_err(embedding_param_error)
 }
 
 fn parse_law(params: &Params) -> Result<StaticLaw, CarloError> {
@@ -368,6 +638,8 @@ fn parse_observables(params: &Params) -> Result<Vec<StaticObservable>, CarloErro
             "giant-fraction" => Ok(StaticObservable::GiantFraction),
             "raw-second-moment" => Ok(StaticObservable::RawSecondMoment),
             "finite-cluster-susceptibility" => Ok(StaticObservable::FiniteClusterSusceptibility),
+            "wrapping" => Ok(StaticObservable::Wrapping),
+            "winding-rank" => Ok(StaticObservable::WindingRank),
             token => Err(invalid(
                 "observables",
                 format!("unknown observable `{token}`"),
@@ -469,6 +741,26 @@ pub enum StaticPercolationError {
         expected: usize,
         actual: usize,
     },
+    /// The plan requests winding observables but no periodic embedding was
+    /// supplied: an open/non-embedded graph has no wrapping answer at all.
+    WindingWithoutEmbedding,
+    /// The embedding table was built for a different edge count.
+    EmbeddingMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    /// The embedding has no displacement for one endpoint of a physical edge:
+    /// the table does not describe this lattice.
+    EmbeddingEndpoints {
+        edge: usize,
+    },
+    /// Displacement magnitudes cannot be guaranteed inside `i32` for this
+    /// topology; the infallible per-sweep measure cannot surface the
+    /// analyzer's typed overflow errors.
+    EmbeddingMagnitude {
+        max_displacement: i32,
+        vertices: usize,
+    },
     Capacity,
 }
 
@@ -488,6 +780,27 @@ impl fmt::Display for StaticPercolationError {
             } => write!(
                 formatter,
                 "boundary query {query} has V={actual}; adapter topology has V={expected}"
+            ),
+            Self::WindingWithoutEmbedding => write!(
+                formatter,
+                "winding observables require a periodic embedding; construct with \
+                 `StaticPercolationMC::with_embedding` or a pbc=true parameter topology"
+            ),
+            Self::EmbeddingMismatch { expected, actual } => write!(
+                formatter,
+                "embedding carries {actual} edges, adapter topology has {expected}"
+            ),
+            Self::EmbeddingEndpoints { edge } => write!(
+                formatter,
+                "embedding has no displacement for an endpoint of edge {edge}"
+            ),
+            Self::EmbeddingMagnitude {
+                max_displacement,
+                vertices,
+            } => write!(
+                formatter,
+                "max displacement {max_displacement} with V={vertices} cannot guarantee \
+                 i32 potential sums; use the core winding analyzer for typed overflow errors"
             ),
             Self::Capacity => formatter.write_str("could not reserve component workspace"),
         }
@@ -625,6 +938,158 @@ mod tests {
         for value in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
             assert!(Probability::new(value).is_err(), "accepted {value}");
         }
+    }
+
+    #[test]
+    fn winding_observables_require_and_validate_an_embedding() {
+        let (lattice, embedding) =
+            crate::build_square_with_embedding(3, 3, true).expect("torus embedding");
+        let law = || StaticLaw::bond(1.0).expect("test law");
+        let wrapping = || {
+            ObservablePlan::new(
+                [StaticObservable::Wrapping, StaticObservable::WindingRank],
+                Vec::new(),
+            )
+        };
+
+        // Plan requests winding, adapter has no embedding: typed rejection.
+        assert!(matches!(
+            StaticPercolationMC::new(lattice.clone(), law(), wrapping())
+                .err()
+                .expect("winding without embedding is rejected"),
+            StaticPercolationError::WindingWithoutEmbedding
+        ));
+
+        // Correct pairing constructs and exposes the embedding.
+        let adapter = StaticPercolationMC::with_embedding(
+            lattice.clone(),
+            embedding.clone(),
+            law(),
+            wrapping(),
+        )
+        .expect("validated embedding pairs with winding plan");
+        assert!(adapter.embedding().is_some());
+
+        // Embedding built for a different edge count: typed rejection.
+        let (other, other_embedding) =
+            crate::build_square_with_embedding(2, 2, true).expect("other torus");
+        drop(other);
+        assert!(matches!(
+            StaticPercolationMC::with_embedding(
+                lattice.clone(),
+                other_embedding,
+                law(),
+                wrapping()
+            )
+            .err()
+            .expect("edge-count mismatch is rejected"),
+            StaticPercolationError::EmbeddingMismatch {
+                expected: 18,
+                actual: 8
+            }
+        ));
+
+        // Adversarial magnitudes cannot be guaranteed inside i32: typed
+        // rejection instead of a possible panic in the infallible measure().
+        let big =
+            crate::LatticeEmbedding::try_from_edge_displacements(&lattice, 2, &[1_000_000_000; 36])
+                .expect("table shape is valid");
+        assert!(matches!(
+            StaticPercolationMC::with_embedding(lattice, big, law(), wrapping())
+                .err()
+                .expect("magnitude gate rejects"),
+            StaticPercolationError::EmbeddingMagnitude { .. }
+        ));
+    }
+
+    #[test]
+    fn embedding_with_a_plain_plan_skips_the_winding_scan() {
+        let (lattice, embedding) =
+            crate::build_square_with_embedding(3, 3, true).expect("torus embedding");
+        let plan = ObservablePlan::new([StaticObservable::ComponentCount], Vec::new());
+        let mut adapter = StaticPercolationMC::with_embedding(
+            lattice.clone(),
+            embedding.clone(),
+            StaticLaw::bond(1.0).expect("test law"),
+            plan,
+        )
+        .expect("embedding with a plain plan is accepted");
+        assert!(adapter.embedding().is_some());
+        let mut ctx = carlo_rs::Context::new_with_binsize(rng(), 0, 4);
+        adapter.sweep(&mut ctx);
+        adapter.measure(&mut ctx);
+        let values = ctx.finalize_measurements();
+        // Saturated bonds: one component, and no winding rows are recorded.
+        assert_eq!(values["ComponentCount"].mean, 1.0);
+        assert!(
+            !values.contains_key("Wrapping") && !values.contains_key("WindingRank"),
+            "plain plans record no winding observables"
+        );
+    }
+
+    #[test]
+    fn from_params_winding_observables_wire_pbc_topologies() {
+        let mut params = Params::new();
+        params.set("lattice_type", "square");
+        params.set("Lx", 3);
+        params.set("Ly", 3);
+        params.set("mode", "bond");
+        params.set("p", 1.0);
+        params.set("pbc", true);
+        params.set("observables", "wrapping,winding-rank");
+        let results = Scheduler::new(
+            RayonBackend::new(1),
+            RunConfig {
+                thermalization_sweeps: 0,
+                measurement_sweeps: 4,
+                binsize: 1,
+                ..Default::default()
+            },
+        )
+        .run_one::<StaticPercolationMC>(&params);
+        // p = 1 on a 3x3 torus: the single component winds both axes on
+        // every sample.
+        assert_eq!(
+            results.get("Wrapping").expect("wrapping recorded").mean,
+            1.0
+        );
+        assert_eq!(
+            results
+                .get("WindingRank")
+                .expect("winding rank recorded")
+                .mean,
+            2.0
+        );
+
+        // Same request without periodicity is a loud parameter rejection.
+        let mut obc = params.clone();
+        obc.set("pbc", false);
+        assert!(StaticPercolationMC::from_params(&obc, &mut rng()).is_err());
+        assert!(StaticPercolationMC::validate_params(&obc).is_err());
+
+        // Honeycomb is pbc-only but has no embedding capability (W1): also a
+        // loud rejection, mentioning the embedding requirement.
+        let mut honeycomb = Params::new();
+        honeycomb.set("lattice_type", "honeycomb");
+        honeycomb.set("Lx", 2);
+        honeycomb.set("Ly", 2);
+        honeycomb.set("p", 0.5);
+        honeycomb.set("pbc", true);
+        honeycomb.set("observables", "wrapping");
+        let error = StaticPercolationMC::from_params(&honeycomb, &mut rng())
+            .err()
+            .expect("honeycomb winding is rejected");
+        assert!(
+            error.to_string().contains("embedded periodic topology"),
+            "rejection must explain the embedding requirement: {error}"
+        );
+
+        // pbc without winding observables keeps the historical behavior: no
+        // embedding is retained.
+        let mut plain = params;
+        plain.set("observables", "components");
+        let adapter = StaticPercolationMC::from_params(&plain, &mut rng()).unwrap();
+        assert!(adapter.embedding().is_none());
     }
 
     #[test]

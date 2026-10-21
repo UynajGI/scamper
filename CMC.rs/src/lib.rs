@@ -125,12 +125,16 @@ pub use particle::{
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
 pub use percolation::WorkspaceCapacityAudit;
+#[cfg(feature = "allocation-probe")]
+#[doc(hidden)]
+pub use percolation::WorkspaceWindingCapacityAudit;
 pub use percolation::{
-    analyze, analyze_with_labels, AnalysisError, AnalysisResult, BondBernoulli, BoundaryQuery,
-    BoundaryQueryError, ComponentLabel, ComponentSummary, ComponentWorkspace, EdgeActivity,
-    MixedBernoulli, ObservablePlan, ObservablePlanError, Probability, ProbabilityField,
-    SiteBernoulli, StaticConfiguration, StaticLaw, StaticObservable, StaticPercolationError,
-    StaticPercolationMC, VertexActivity,
+    analyze, analyze_winding, analyze_with_labels, AnalysisError, AnalysisResult, BondBernoulli,
+    BoundaryQuery, BoundaryQueryError, ComponentLabel, ComponentSummary, ComponentWinding,
+    ComponentWorkspace, EdgeActivity, MixedBernoulli, ObservablePlan, ObservablePlanError,
+    Probability, ProbabilityField, SiteBernoulli, StaticConfiguration, StaticLaw, StaticObservable,
+    StaticPercolationError, StaticPercolationMC, VertexActivity, WindingError, WindingResult,
+    WindingSummary, WindingWorkspace,
 };
 pub use postprocess::{
     binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,
