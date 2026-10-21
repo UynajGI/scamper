@@ -389,6 +389,49 @@ endpoint sites are open. Validation evidence, the uniform-vs-heterogeneous
 benchmark, and the zero-allocation adapter gate are recorded in
 [PERCOLATION.md](PERCOLATION.md).
 
+### Newman-Ziff parameter scans (Z1)
+
+For uniform site/bond percolation, `scan_site`/`scan_bond` activate one random
+permutation incrementally and record the full occupation-count curve;
+`reweight` turns that one curve into scalar estimates at any `p` through exact
+binomial weights, and `ScanEstimator` reports the independent-scan
+uncertainty. The workspace is allocation-free after `prepare`. Z1 is a core
+API only: no heterogeneous/mixed/deletion scans and no scheduler adapter or
+vector `Results` until C0. It is Experimental pending independent review.
+
+```rust
+use cmc_rs::{
+    build_square, reweight, NewmanZiffWorkspace, Probability, ReweightWorkspace,
+    ScanEstimator, ScanObservable,
+};
+use rand::SeedableRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
+
+let lattice = build_square(64, 64, false);
+let mut scan_workspace = NewmanZiffWorkspace::new();
+scan_workspace.prepare(lattice.n_sites, lattice.n_edges()).unwrap();
+let mut reweight_workspace = ReweightWorkspace::new();
+let mut estimator = ScanEstimator::new();
+for seed in 0..16 {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+    let curve = cmc_rs::scan_bond(&lattice, &mut scan_workspace, &mut rng).unwrap();
+    let value = reweight(
+        &curve,
+        Probability::new(0.5).unwrap(),
+        ScanObservable::GiantFraction,
+        &mut reweight_workspace,
+    )
+    .unwrap();
+    estimator.add(value);
+}
+let estimate = estimator.estimate().unwrap();
+```
+
+Validation (prefix parity, exact 3x3 enumeration and z-scores, direct
+Bernoulli confidence intervals, endpoints, reproducibility, multigraph/empty
+cases) and benchmark/allocation data are recorded in
+[PERCOLATION.md](PERCOLATION.md).
+
 ## Arbitrary weighted graph
 
 `CsrLattice` stores each physical undirected edge exactly once and keeps CSR incidences for local access:

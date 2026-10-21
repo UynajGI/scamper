@@ -129,13 +129,18 @@ pub use percolation::WorkspaceCapacityAudit;
 #[doc(hidden)]
 pub use percolation::WorkspaceWindingCapacityAudit;
 pub use percolation::{
-    analyze, analyze_winding, analyze_with_labels, AnalysisError, AnalysisResult, BondBernoulli,
-    BoundaryQuery, BoundaryQueryError, ComponentLabel, ComponentSummary, ComponentWinding,
-    ComponentWorkspace, EdgeActivity, MixedBernoulli, ObservablePlan, ObservablePlanError,
-    Probability, ProbabilityField, SiteBernoulli, StaticConfiguration, StaticLaw, StaticObservable,
-    StaticPercolationError, StaticPercolationMC, VertexActivity, WindingError, WindingResult,
-    WindingSummary, WindingWorkspace,
+    analyze, analyze_winding, analyze_with_labels, reweight, scan_bond, scan_site, AnalysisError,
+    AnalysisResult, BondBernoulli, BoundaryQuery, BoundaryQueryError, ComponentLabel,
+    ComponentSummary, ComponentWinding, ComponentWorkspace, EdgeActivity, MixedBernoulli,
+    NewmanZiffWorkspace, ObservablePlan, ObservablePlanError, Probability, ProbabilityField,
+    ReweightError, ReweightWorkspace, ReweightedEstimate, ScanCurve, ScanError, ScanEstimator,
+    ScanMode, ScanObservable, ScanPoint, SiteBernoulli, StaticConfiguration, StaticLaw,
+    StaticObservable, StaticPercolationError, StaticPercolationMC, VertexActivity, WindingError,
+    WindingResult, WindingSummary, WindingWorkspace,
 };
+#[cfg(feature = "allocation-probe")]
+#[doc(hidden)]
+pub use percolation::{ReweightCapacityAudit, WorkspaceScanCapacityAudit};
 pub use postprocess::{
     binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,
     zero_field_ising_susceptibility,

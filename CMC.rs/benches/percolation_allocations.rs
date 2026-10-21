@@ -5,10 +5,11 @@ use std::mem::size_of;
 use allocation_counter::measure;
 use carlo_rs::{Context, MonteCarlo};
 use cmc_rs::{
-    analyze, analyze_winding, Bond, BondBernoulli, BorrowedUndirectedCsr, BoundaryQuery,
-    ComponentWorkspace, GraphView, MixedBernoulli, ObservablePlan, PeriodicEmbedding, Probability,
-    ProbabilityField, SiteBernoulli, StaticConfiguration, StaticLaw, StaticObservable,
-    StaticPercolationMC, UndirectedGraphView, WindingWorkspace,
+    analyze, analyze_winding, reweight, scan_bond, scan_site, Bond, BondBernoulli,
+    BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace, GraphView, MixedBernoulli,
+    NewmanZiffWorkspace, ObservablePlan, PeriodicEmbedding, Probability, ProbabilityField,
+    ReweightWorkspace, ScanObservable, SiteBernoulli, StaticConfiguration, StaticLaw,
+    StaticObservable, StaticPercolationMC, UndirectedGraphView, WindingWorkspace,
 };
 use percolation_support::{
     cases, sample_and_analyze, torus_cases, Case, ReferenceConfiguration, ReferenceMode, TorusCase,
@@ -138,6 +139,101 @@ fn report_adapter_case(case: &Case, mode: ReferenceMode) {
         info.count_max,
         info.bytes_max,
     );
+}
+
+fn report_scan_case(case: &Case, mode: ReferenceMode) {
+    let probability = Probability::new(P_BOND).expect("probe probability");
+    let mut scan_workspace = NewmanZiffWorkspace::new();
+    let mut reweight_workspace = ReweightWorkspace::new();
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x5343_414e);
+    for _ in 0..ADAPTER_WARMUP {
+        run_scan_once(
+            case,
+            mode,
+            &mut scan_workspace,
+            &mut reweight_workspace,
+            &mut rng,
+            probability,
+        );
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            run_scan_once(
+                case,
+                mode,
+                &mut scan_workspace,
+                &mut reweight_workspace,
+                &mut rng,
+                probability,
+            );
+        }
+    });
+    let scan_capacity = scan_workspace.capacity_audit();
+    let reweight_capacity = reweight_workspace.capacity_audit();
+    let total_bytes = scan_capacity
+        .total_bytes()
+        .saturating_add(reweight_capacity.total_bytes());
+    let elements = case
+        .lattice
+        .vertex_count()
+        .saturating_add(case.lattice.edge_count());
+    eprintln!(
+        "PERCOLATION_SCAN_ALLOC topology={} mode={} V={} E={} p={} measured_samples={} \
+         workspace_parent_bytes={} workspace_size_bytes={} workspace_vertex_active_bytes={} \
+         workspace_edge_counted_bytes={} workspace_order_bytes={} workspace_points_bytes={} \
+         workspace_scan_total_capacity_bytes={} workspace_reweight_weights_bytes={} \
+         workspace_total_capacity_bytes={} workspace_bytes_per_vertex={:.3} \
+         workspace_bytes_per_element={:.3} allocations_per_sample={:.3} \
+         allocated_bytes_per_sample={:.3} peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        mode.label(),
+        case.lattice.vertex_count(),
+        case.lattice.edge_count(),
+        P_BOND,
+        ALLOCATION_SAMPLES,
+        scan_capacity.parent,
+        scan_capacity.size,
+        scan_capacity.vertex_active,
+        scan_capacity.edge_counted,
+        scan_capacity.order,
+        scan_capacity.points,
+        scan_capacity.total_bytes(),
+        reweight_capacity.weights,
+        total_bytes,
+        total_bytes as f64 / case.lattice.vertex_count().max(1) as f64,
+        total_bytes as f64 / elements.max(1) as f64,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
+fn run_scan_once(
+    case: &Case,
+    mode: ReferenceMode,
+    scan_workspace: &mut NewmanZiffWorkspace,
+    reweight_workspace: &mut ReweightWorkspace,
+    rng: &mut Xoshiro256PlusPlus,
+    probability: Probability,
+) {
+    let curve = match mode {
+        ReferenceMode::Site => {
+            scan_site(&case.lattice, scan_workspace, rng).expect("probe site scan")
+        }
+        ReferenceMode::Bond => {
+            scan_bond(&case.lattice, scan_workspace, rng).expect("probe bond scan")
+        }
+        ReferenceMode::Mixed => unreachable!("scan probe covers pure modes"),
+    };
+    let value = reweight(
+        &curve,
+        probability,
+        ScanObservable::LargestComponentSize,
+        reweight_workspace,
+    )
+    .expect("probe reweight");
+    std::hint::black_box(value);
 }
 
 fn report_topology_view_probe() {
@@ -592,6 +688,9 @@ fn main() {
         }
         for mode in ReferenceMode::ALL {
             report_adapter_case(case, mode);
+        }
+        for mode in [ReferenceMode::Site, ReferenceMode::Bond] {
+            report_scan_case(case, mode);
         }
         for mode in ReferenceMode::ALL {
             report_heterogeneous_adapter_case(case, mode);

@@ -15,6 +15,12 @@
 //! direct, RNG-free analysis of fixed configurations (exact-enumeration
 //! validation builds on this); borrowed graphs and custom laws call them
 //! directly, optionally through `carlo_rs::Run::from_parts`.
+//!
+//! Z1 adds a separate core parameter-scan layer: [`scan_site`]/[`scan_bond`]
+//! activate one random permutation incrementally, [`reweight`] applies exact
+//! binomial weights to the resulting curve, and [`ScanEstimator`] aggregates
+//! independent scans. This is not a scheduler adapter and has no vector
+//! `Results` output until C0.
 
 mod activity;
 mod analyzer;
@@ -24,6 +30,7 @@ mod law;
 mod observable;
 mod probability;
 mod query;
+mod scan;
 mod summary;
 mod workspace;
 
@@ -38,6 +45,13 @@ pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
 pub use observable::{ObservablePlan, ObservablePlanError, StaticObservable};
 pub use probability::{Probability, ProbabilityError, ProbabilityField};
 pub use query::{BoundaryQuery, BoundaryQueryError};
+pub use scan::{
+    reweight, scan_bond, scan_site, NewmanZiffWorkspace, ReweightError, ReweightWorkspace,
+    ReweightedEstimate, ScanCurve, ScanError, ScanEstimator, ScanMode, ScanObservable, ScanPoint,
+};
+#[cfg(feature = "allocation-probe")]
+#[doc(hidden)]
+pub use scan::{ReweightCapacityAudit, WorkspaceScanCapacityAudit};
 pub use summary::ComponentSummary;
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]

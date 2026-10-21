@@ -42,7 +42,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Boundary crossing between explicit vertex sets | Validated | F3 `BoundaryQuery` is validated for owned/borrowed generic undirected views, supports several queries in one component pass, and defines empty/overlap/dedup semantics; F4 migrates the full crossing test assets. The square left/right-column and chain endpoint defaults live in the `StaticPercolationMC` parameter schema; all other parameter-built topologies require explicit site sets. |
 | Periodic embedding capability (W1) | Experimental | Directed-incidence integer cell displacements exist as explicit recorded data: the `PeriodicEmbedding` capability (`topology/embedding.rs`) and the `LatticeEmbedding` table serve the pbc chain/square/hypercubic builders and the triangular builder, which record each displacement at bond emission and never infer it from `BondType` or vertex IDs. Independently reviewed; see the W1 section below. |
 | Periodic wrapping/winding analysis (W2) | Experimental | Winding-capable component analysis over the W1 displacements: `analyze_winding` (percolation/analyzer/winding.rs) runs one physical-edge pass of union-find with checked `i32` `Z^D` potentials, reports per-component winding rank and an echelon generating set (never only a Boolean), and feeds `Wrapping`/`WindingRank` plan observables on `StaticPercolationMC::with_embedding`; open/non-embedded wrapping requests are typed errors. Engineering gates green, awaiting independent review; see the W2 section below. Crossing is not wrapping. |
-| Newman-Ziff parameter scans | Not implemented | No incremental activation curve or binomial reweighting. |
+| Newman-Ziff parameter scans (Z1) | Experimental — awaiting independent review | `scan_site`/`scan_bond` activate a uniformly random permutation and record the full occupation-count curve (component count, largest size, raw second moment, active edges); `reweight` turns one curve into scalar estimates at uniform `p` via binomial weights, and `ScanEstimator` reports scan-to-scan uncertainty. Zero allocations after `prepare`. Uniform site/bond only; no heterogeneous/mixed/deletion scans, no scheduler adapter or C0 vector output. See the Z1 section below. |
 
 At F0 no family was **Validated**. Since F4 passed independent review, the
 static family and boundary crossing are the first Validated rows; N1 adds the
@@ -763,8 +763,9 @@ unchanged: the parameter path owns its lattice (borrowed graphs use
 the core APIs); one boundary-query normalization per adapter plan; scalar
 results only (vector observables need C0); wrapping/winding exists since W2
 as Experimental `Wrapping`/`WindingRank` plan observables that require an
-embedded periodic adapter (generator vectors remain analyzer-level), no
-parameter scans (Z1), no directed/process/continuum/FK/attack families; chi
+embedded periodic adapter (generator vectors remain analyzer-level); scalar
+Newman-Ziff site/bond scans exist since Z1 (no scheduler adapter or vector
+output until C0); no directed/process/continuum/FK/attack families; chi
 tie conventions other than single canonical-largest exclusion are separate
 named policies that do not exist.
 
@@ -1194,3 +1195,159 @@ separate named observables that do not exist. Vector/generator output is
 analyzer-level until C0; honeycomb/kagome topologies have no embedding
 (W1), so their families cannot wind; heterogeneous laws compose with
 winding through the same adapter unchanged.
+
+## Z1 Newman-Ziff parameter scans
+
+Status: **Experimental — engineering gates and tests below are green, awaiting
+independent review** (roadmap §10 Z1). Z1 is a core scalar API: it does not add
+a Carlo.rs adapter or vector `Results`; those wait for C0.
+
+### Semantics
+
+A scan draws one uniformly random permutation of the tracked elements and
+activates it incrementally:
+
+- **Site:** the permutation is over vertices. `points[k]` describes the first
+  `k` active vertices; a physical edge is active iff both endpoints are active.
+  Each physical edge is counted once (self-loops once, parallel edges
+  separately), matching the F3 active-edge definition.
+- **Bond:** the permutation is over physical edges. Every vertex is tracked
+  from the start, so isolates count as components; a self-loop activation is
+  one active edge but does not change connectivity.
+
+`ScanPoint` records `occupation`, `active_edge_count`, `component_count`,
+`largest_component_size`, and `raw_second_moment = sum(s_i^2)`. `ScanCurve`
+exposes the dense activation order and exactly `trials + 1` points
+(`trials = V` site, `E` bond). One curve is one realization; independent
+curves are i.i.d. No mixed, heterogeneous, deletion, crossing, or wrapping
+process is part of Z1.
+
+### API
+
+- `NewmanZiffWorkspace::prepare(V, E)` reserves the union-find, activity,
+  order, and point buffers; repeated `scan_site`/`scan_bond` calls for the same
+  topology allocate nothing.
+- `scan_site(graph, workspace, rng) -> ScanCurve<'_>` and
+  `scan_bond(graph, workspace, rng) -> ScanCurve<'_>` work on any
+  `UndirectedGraphView`; IDs/order follow the F1 unchanged-view provenance
+  contract.
+- `ScanObservable` selects `ComponentCount`, `ActiveEdgeCount`,
+  `LargestComponentSize`, `GiantFraction`, or `RawSecondMoment`.
+- `reweight(curve, Probability, observable, &mut ReweightWorkspace) -> f64`
+  applies the exact binomial weights. `Probability` is the validated
+  `[0, 1]` boundary; no raw `f64` is accepted.
+- `ScanEstimator` accumulates independent per-scan reweighted values and
+  returns `mean`, unbiased sample `variance`, `standard_error`, and `samples`.
+- `ScanError` is capacity-only. `ReweightError` covers capacity, curve-length
+  mismatch, undefined giant fraction at `V = 0`, and the exact-f64 moment
+  limit.
+
+### Reweighting
+
+For `n` activations, a uniformly random permutation makes the size-`k` prefix
+uniform over the `C(n,k)` subsets, so the Bernoulli expectation at `p` is
+`sum_k C(n,k) p^k (1-p)^(n-k) f(point_k)`. `reweight` computes the weights by
+starting at the binomial mode and recursing outward; all relative weights are
+at most one, the common normalization cancels in the weighted mean, and no
+per-`k` `exp`/`log` is needed. `p = 0` and `p = 1` return `point_0` and
+`point_n` exactly.
+
+`GiantFraction` is `largest_size / V` with the F4 total-topology denominator;
+it is undefined at `V = 0`. `RawSecondMoment` is exact in `u128` on a point;
+reweighting converts to `f64` and rejects `V > 94,906,265` (`V^2 > 2^53`) with
+`ReweightError::InexactMomentConversion`, matching F4. The per-scan
+`reweight` value is deterministic given the curve; the estimator's variance
+and standard error describe independent-scan Monte Carlo uncertainty, not a
+binomial per-`k` variance.
+
+### Validation gates
+
+`tests/physics/percolation_scan.rs` (6 tests) plus 11 unit tests
+(`newman_ziff.rs` 5, `reweight.rs` 6):
+
+- **Every occupation-count step vs naive recomputation:** for chain 8,
+  4x4 square, 2x2x2 cubic, 3x3 triangular, 2x2 honeycomb, 2x2 kagome, a seeded
+  random graph, and a multigraph with self-loop/parallel edges, four seeds,
+  every prefix is compared field-by-field (`active_edge_count`,
+  `component_count`, `largest`, `M2`, and the mode-specific active count) to a
+  fresh F3 `analyze` over the same occupancy. F3 is itself independently
+  flood-fill validated.
+- **Exact enumeration and z-scores:** full 3x3 enumeration (site 2^9, bond
+  2^12) at `p = 0.3, 0.5, 0.7` for all five observables. `R = 16 *
+  zscore_seed_count(16)` independent scans (default 256,
+  `SCUTTLE_ZSCORE_SEEDS`-scalable) feed `ScanEstimator`; each gate requires
+  `|z| < 4.5` against the exact mean, with an exact equality path for the
+  deterministic bond `ActiveEdgeCount` and a sign-balance check. Verified at
+  `SCUTTLE_ZSCORE_SEEDS=64`.
+- **Direct Bernoulli:** independent Bernoulli occupancy + F3 analysis at
+  `p = 0.55` (8192 samples) agrees with the reweighted estimator within a
+  combined 4-sigma interval for `ComponentCount` and `LargestComponentSize`.
+- **Endpoints:** `p = 0/1` equal the first/last point exactly for every
+  observable; an empty borrowed graph returns one empty point and rejects
+  `GiantFraction`; fixed seeds reproduce order and points bitwise; a shifted
+  seed changes the order; site/bond reuse of one workspace matches fresh
+  workspaces.
+
+### Performance
+
+Criterion target `percolation_newman_ziff`, recorded 2026-10-21 on the Xeon
+Gold 6148 / rustc 1.98.0 host, short-run configuration (10 samples, 100 ms
+warm-up, 250 ms measurement). The comparison uses 17 probabilities and 64
+independent replicas for both paths; "direct" is 64 independent Bernoulli
+draws + F3 `analyze` at each `p`, and "combined" is 64 independent scans +
+17 reweights per scan. Times are point estimates, not CI thresholds.
+
+| Case | Scan | 17p reweight | Combined 64r | Direct 64r | Speedup |
+|---|---:|---:|---:|---:|---:|
+| square site (V=4096, E=8064) | 217.6 us | 278.8 us | 32.55 ms | 79.97 ms | 2.46x |
+| square bond | 207.8 us | 520.3 us | 47.88 ms | 101.03 ms | 2.11x |
+| cubic site (V=4096, E=11520) | 256.4 us | 279.8 us | 35.16 ms | 98.78 ms | 2.81x |
+| cubic bond | 256.2 us | 724.0 us | 64.97 ms | 129.95 ms | 2.00x |
+| sparse-ER site (V=4096, E=16384) | 321.7 us | 292.3 us | 38.69 ms | 179.79 ms | 4.65x |
+| sparse-ER bond | 339.9 us | 1416.6 us | 112.12 ms | 205.59 ms | 1.83x |
+
+The advantage grows with edge density for site scans and is strongest when the
+same curve is reused across many probabilities; bond scans pay the larger
+`n = E` reweight. The scan itself is a single incremental union-find pass; the
+reweight is a weighted sum over the curve.
+
+The `percolation_allocations` probe adds 10 records (5 topologies x site/bond,
+128 post-warmup scan+reweight iterations). All report **0.000 allocations,
+0.000 allocated bytes per sample, and zero peak live allocations/bytes** after
+one `prepare` of each workspace. Retained capacity (scan workspace + reweight
+weights) is:
+
+| Topology | Mode | Total bytes | B/V | B/(V+E) |
+|---|---:|---:|---:|---:|
+| chain (V=4096, E=4095) | site | 335,927 | 82.0 | 41.0 |
+| chain | bond | 335,919 | 82.0 | 41.0 |
+| square (V=4096, E=8064) | site | 562,104 | 137.2 | 46.2 |
+| square | bond | 593,848 | 145.0 | 48.8 |
+| cubic (V=4096, E=11520) | site | 759,096 | 185.3 | 48.6 |
+| cubic | bond | 818,488 | 199.8 | 52.4 |
+| sparse-ER (V=4096, E=16384) | site | 1,036,344 | 253.0 | 50.6 |
+| sparse-ER | bond | 1,134,648 | 277.0 | 55.4 |
+| power-law (V=4096, E=16374) | site | 1,035,774 | 252.9 | 50.6 |
+| power-law | bond | 1,133,998 | 276.9 | 55.4 |
+
+The point buffer (48 bytes per point) dominates; capacity excludes struct
+headers, allocator metadata, and RSS effects. Reproduce with:
+
+```bash
+cargo test -p cmc-rs --test suite percolation_scan
+SCUTTLE_ZSCORE_SEEDS=64 cargo test --release -p cmc-rs --test suite percolation_scan
+cargo bench -p cmc-rs --bench percolation_newman_ziff -- --test
+cargo bench -p cmc-rs --bench percolation_newman_ziff
+cargo bench -p cmc-rs --bench percolation_allocations --features allocation-probe -- --test
+```
+
+### Limitations
+
+Z1 is a core uniform-site/bond scan only. It has no heterogeneous
+probabilities, mixed `(p_site, p_bond)` surface, deletion process, boundary
+crossing, wrapping, or targeted/network facade. There is no Carlo.rs
+`MonteCarlo`/`FromParams` adapter and no vector `Results`/`ArrayEstimate`
+output until C0; callers consume the borrowed `ScanCurve` directly. The
+`ScanEstimator` variance is scan-to-scan only. The benchmark's direct path is
+raw Bernoulli draws plus F3 analysis, not the full law/scheduler stack, so the
+speedup is indicative rather than a scheduler-level claim.
