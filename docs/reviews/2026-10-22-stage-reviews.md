@@ -41,7 +41,14 @@ D2 (static directed analysis) was reviewed after its delivery commit
 |---|---|---|---|---|
 | D2 directed analysis | `e6120f8` | **PASS WITH NOTES** | Frame-by-frame Tarjan hand traces (parent uses child LOWLINK; pop arithmetic underflow-impossible; label-before-truncate verified); union-find canonical traced through merge chains; stamp semantics proven and empirically rollover-tested (>2^32 queries); a third independent SCC implementation agreed on 300 fresh multigraphs through reused shrinking/growing workspaces; 1M-vertex path depth; V=0/1 | Exhaustive counts corrected UP (the corpus with self-loops is 512 and 65,536 digraphs, not 64/4096); unused import + byte grouping in the required-features probe target (now passes clippy -D warnings); bench comment; u32 index-bound debug_assert; typed queue growth |
 
-All reviewed stages (W2, Z1, C0, N2, N3, network input, D1, D2) are
+D3 (layered space-time directed percolation) was reviewed after its
+delivery commit `91d07b5`:
+
+| Stage | Commit under review | Verdict | Reviewer's independent confirmation | Follow-ups applied |
+|---|---|---|---|---|
+| D3 layered directed percolation | `91d07b5` | **PASS WITH NOTES** | From-scratch xoshiro256++ model reproduced production traces bit-exactly (draw-per-incidence counts, L=70 trailing-bit mask, p=0/1 endpoints, determinism); Hinrichsen values verified in the archived text; delta_hat converged to 0.1604/0.1590 at 8000 realizations with no detectable bias; statistical honesty checked (propagated sigma, seed spread, finite-size) | Real binned error bars in the statistical gates (was one giant bin); throughput figure corrected to the bench's own ~401 M site-layers/s; ceil(L/64) wording; xi_parallel ~330; the "arrival profiles" reading recorded explicitly |
+
+All reviewed stages (W2, Z1, C0, N2, N3, network input, D1, D2, D3) are
 promoted from "Experimental — awaiting independent review" to reviewed
 status; their production availability remains conditioned
 on the branch merging into `dev`, per the platform's standing convention.

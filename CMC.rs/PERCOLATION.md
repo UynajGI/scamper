@@ -30,7 +30,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Network random failure and degree-conditioned observables | Validated | N2 `RandomFailureMC` facade over the F2 uniform site law with an original-degree `NetworkProfile` and six C0 element-preserving degree arrays (`DegreeVertexCount`, `DegreeOccupied`, `ActiveFractionByDegree`, `GiantMembershipByDegree`, `DegreeFirstMoment`, `DegreeSecondMoment`); empty bins exact-zero with explicit occupancy, `V^3` exactness gate, 0-allocation probe. Gates: bitwise site-law reduction, independent-BFS enumeration z-scores on path/cycle/star/complete, relabeling invariance, empty-bin semantics, and literature anchors (Callaway et al. PRL 85, 5468 and Cohen et al. PRL 85, 4626; PDFs in `docs/ref/`). Independent review passed 2026-10-22 (kappa/q_c and the Callaway fixed points independently re-derived; star-graph observables hand-enumerated to exact fractions; V^3 boundary recomputed); see the N2 section below and `docs/reviews/`. |
 | Targeted degree attack and robustness curves (N3) | Validated | `DegreeAttackMC` removes vertices in descending original degree with an explicit tie policy (`DegreeDescendingStableId`, seed-independent, or `DegreeDescendingSeededShuffle`, one realization per seed); one sweep is one complete removal trajectory recorded as ONE C0 vector sample (`RobustnessCurve`, `RobustnessSusceptibility` with the F4 defined-indicator convention, `RobustnessRemovedFraction` coordinates), never independent scalar samples. Grids: every removal, every k-th, or explicit checkpoints. Gates: per-step independent-BFS parity, strict survivor monotonicity, tie reproduction, coordinates/provenance through `Results` attributes, Callaway et al. Eq. (14) degree-cutoff anchors, Cohen et al. breakdown bracket; PDFs in `docs/ref/`. Adaptive residual-degree attack remains Not implemented by design. Independent review passed 2026-10-22 (both anchor graphs rebuilt independently; all eight Callaway values and both Cohen f_c values reproduced digit-for-digit); see the N3 section below and `docs/reviews/`. |
 | Directed static analysis (D2) | Validated | Three distinct questions, three distinct result types over the D1 capabilities: `analyze_weak_components` (union-find over the arc table, canonical lowest-ID labels), `analyze_strong_components` (iterative non-recursive Tarjan; `acyclic` tracks singleton-SCC self-loops separately), and `reachable` (early-exit BFS with stamped visitation; `reachable(v, v)` true by definition). Anchors: exhaustive enumeration of every digraph on 3 and 4 vertices vs transitive-closure ground truth (SCC, weak, and reachability all agree), Tarjan vs an independently written Kosaraju, weak vs undirected flood-fill, SCC transpose invariance, and closed forms for chains/trees/stars/rings/DAGs. Independent review passed 2026-10-22 (Tarjan hand-traced frame by frame; a third independent SCC implementation agreed on 300 fresh multigraphs; stamp rollover empirically tested beyond 2^32 queries); see the D2 section below and `docs/reviews/`. |
-| Layered space-time directed percolation (D3) | Experimental — awaiting independent review | `LayeredDirectedPercolationMC`: one sweep = one complete space-time realization over T explicit causal layers (double frontier bitset — memory scales with layer width, not space-time volume), recorded as ONE C0 vector sample (`DpLayerActive`, `DpSurvival` per layer; `DpExtinctionTime` scalar) — never T independent measurements. Directed bond DP with documented bitwise draw contract; single-seed and full-occupation initial conditions. Anchored to Hinrichsen Adv. Phys. 49, 815 (2000) (archived): frontier DP equals explicit-DAG path enumeration (D2 reachability engine); P(t) ~ t^-delta at p_c = 0.6447001 with delta = 0.159464 for both survival and full-seed density decay; sub/super-critical brackets. See the D3 section below. |
+| Layered space-time directed percolation (D3) | Validated | `LayeredDirectedPercolationMC`: one sweep = one complete space-time realization over T explicit causal layers (double frontier bitset — memory scales with layer width, not space-time volume), recorded as ONE C0 vector sample (`DpLayerActive`, `DpSurvival` per layer; `DpExtinctionTime` scalar) — never T independent measurements. Directed bond DP with documented bitwise draw contract; single-seed and full-occupation initial conditions. Anchored to Hinrichsen Adv. Phys. 49, 815 (2000) (archived): frontier DP equals explicit-DAG path enumeration (D2 reachability engine); P(t) ~ t^-delta at p_c = 0.6447001 with delta = 0.159464 for both survival and full-seed density decay; sub/super-critical brackets. Independent review passed 2026-10-22 (a from-scratch RNG-identical model reproduced production traces bit-exactly; delta_hat converged at 8000 realizations); see the D3 section below and `docs/reviews/`. |
 | Bootstrap percolation | Not implemented | No activation-threshold closure process. |
 | k-core percolation | Not implemented | No residual-degree peeling process. |
 | Achlioptas processes | Not implemented | No candidate-edge process, rule, or process-time output. |
@@ -1797,7 +1797,8 @@ any owned `CsrLattice` (chain/square/...; periodic or open), so the same
 adapter runs 1+1 and 2+1 dimensional processes.
 
 State is a pair of frontier bitsets (`u64` words, double-buffered):
-memory is `O(L/8)` words plus `O(T)` history counters, never `O(L * T)`.
+memory is `ceil(L/64)` words (= L/8 bytes) plus `O(T)` history counters,
+never `O(L * T)`.
 Initial conditions: `DpSeedPolicy::Single` (survival experiments) or
 `::Full` (density-decay experiments). One `sweep()` draws one complete
 realization; one `measure()` records it as ONE C0 vector sample:
@@ -1845,9 +1846,9 @@ buffers preallocated).
 ### Criterion data
 
 `cargo bench -p cmc-rs --bench directed_process` — 8 realizations per
-iteration, single seed at p_c: chain L=512, T=1200: 1.53 ms per 8
-realizations (~6.7 M site-layers/s); chain L=1024, T=2000 recorded in the
-bench run.
+iteration, single seed at p_c: chain L=512, T=1200: 1.53 ms per 8 realizations (~401 M
+site-layers/s in Criterion's element convention; ~3.2 G physical
+site-layer updates/s); chain L=1024, T=2000: 3.29 ms per 8 (~637 M/s).
 
 ### Limitations
 

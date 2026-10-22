@@ -162,8 +162,11 @@ fn one_realization_records_one_vector_sample() {
 fn survival_curve(sweeps: usize, p: f64, seed_policy: DpSeedPolicy) -> HashMap<String, Estimate> {
     let space = build_chain(512, true);
     let mut process = LayeredDirectedPercolationMC::new(space, p, 1200, seed_policy).unwrap();
-    let mut ctx =
-        Context::new_with_binsize(Xoshiro256PlusPlus::seed_from_u64(0xD3_C0), 0, sweeps + 1);
+    let mut ctx = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0x0d3c),
+        0,
+        (sweeps / 20).max(1),
+    );
     for _ in 0..sweeps {
         process.sweep(&mut ctx);
         process.measure(&mut ctx);
