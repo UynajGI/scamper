@@ -23,7 +23,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Family or capability | Status | Current scope or reason |
 |---|---|---|
 | Read-only undirected topology capability | Experimental | Independently reviewed F1 `GraphView`/`UndirectedGraphView` contracts use dense IDs and static dispatch; `CsrLattice` and validated zero-copy `BorrowedUndirectedCsr` implement them. The API remains provisional until the platform merges into `dev`. |
-| Directed topology capability (D1) | Experimental — awaiting independent review | Public `DirectedGraphView` (dense `ArcId`s, `arc_endpoints` = `[source, target]`) with separate `DirectedOutGraphView`/`DirectedInGraphView` capabilities — directedness is structural, never a storage flag. Owned `DirectedCsr` (public fields + `validate`, parallel arcs and self-loops first-class: a self-loop is one out- and one in-incidence) and zero-copy `BorrowedDirectedOutCsr`/`BorrowedDirectedCsr` (the latter requires the transpose arrays). Construction validates offset shape, incidence lengths, ranges, per-arc sense on both sides, and exact arc multiplicity (missing or duplicated arcs are typed errors). See the D1 section below. |
+| Directed topology capability (D1) | Validated | Public `DirectedGraphView` (dense `ArcId`s, `arc_endpoints` = `[source, target]`) with separate `DirectedOutGraphView`/`DirectedInGraphView` capabilities — directedness is structural, never a storage flag. Owned `DirectedCsr` (public fields + `validate`, parallel arcs and self-loops first-class: a self-loop is one out- and one in-incidence) and zero-copy `BorrowedDirectedOutCsr`/`BorrowedDirectedCsr` (the latter requires the transpose arrays). Construction validates offset shape, incidence lengths, ranges, per-arc sense on both sides, and exact arc multiplicity (missing or duplicated arcs are typed errors). Independent review passed 2026-10-22 (builder hand-traced, validator attacks predicted and confirmed empirically, SIMD explanation verified from layout evidence); see the D1 section below and `docs/reviews/`. |
 | Static configuration and Bernoulli-law substrate | Experimental | F2 provisional API separates private activity storage from independent site/bond/mixed laws, validates probability domains and topology lengths, and samples allocation-free after preparation. The independently reviewed F3 analyzer/workspace and F4 observables build on this substrate; the layer remains Experimental until the platform merges into `dev`. |
 | Static site, bond, and mixed Bernoulli percolation on arbitrary owned or borrowed undirected graphs | Validated | All family-specific gates pass: F3 component analysis with reusable workspace, canonical identities, and multi-query crossing; F4 `ObservablePlan` observables and owned `StaticPercolationMC` with every PR #4 validation asset migrated, the zero-allocation adapter gate, and 16-seed z-scores; independent review passed. Production-ready once the branch merges into `dev`. |
 | Heterogeneous occupation probabilities | Validated | N1 promotes the F2 `ProbabilityField` substrate to the `StaticPercolationMC` adapter: `StaticLaw::site_heterogeneous`/`bond_heterogeneous`/`mixed_heterogeneous` own one validated `Probability` per vertex and/or per physical edge, with adapter-constructor domain validation and scheduler scheduling through `Run::from_parts()`. Gates passed: exact non-identically-distributed small-graph enumeration (independently reproduced), bitwise uniform and mixed-pure reductions, endpoint determinism, typed length/invalid-probability rejection, 16-seed scheduler z-scores for site/bond/mixed (enumeration and Poisson-binomial references), uniform-vs-heterogeneous Criterion comparison, and a 0-allocation heterogeneous adapter probe. Independent review passed; production on the `dev` merge. The N2 random-failure facade now builds on this substrate. |
@@ -263,9 +263,9 @@ drops it before returning the zero-payload view. `try_reserve_exact` capacity or
 allocation failures return `TopologyError::ValidationCapacity`; allocator
 configurations that abort on OOM cannot be promised recoverable.
 
-Directed out/in signatures remain a crate-private compile sketch. They are not
-crate-root exports or compatibility commitments; D1 must define stable arc
-identity before publishing them.
+Directed out/in signatures were a crate-private compile sketch at F1 time;
+D1 has since promoted them to public traits with owned and borrowed CSR
+storage (see the D1 section below).
 
 `topology_view` compares direct owned access, generic owned access, and generic
 borrowed access on an open 128x128 square (`V=16,384`, `E=32,512`, `I=65,024`).
@@ -1700,7 +1700,8 @@ The adjacency scans — the hot path D2 analyses iterate — are within the F1
 band (generic even faster, as in F1's incidence scan). The arc-table scan's
 +17% is a storage-layout effect, not abstraction cost: the direct fold over
 the compact `Vec<Arc>` auto-vectorizes, while the generic per-element cost
-(0.45 ns) is *below* F1's generic edge scan (0.77 ns per element).
+(0.45 ns) is *below* the recorded F1 generic edge scan (0.72 ns per
+element, 23.472 us / 32512 edges).
 Recorded as data; the D2 analyzers iterate incidences.
 
 ### Limitations

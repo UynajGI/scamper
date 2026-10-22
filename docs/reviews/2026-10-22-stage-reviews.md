@@ -28,8 +28,14 @@ The network edge-list input was reviewed after its delivery commit
 |---|---|---|---|---|
 | Network edge-list input | `539a16f` | **PASS WITH NOTES** | Throwaway-crate parser attack (CRLF, Unicode whitespace, overflow, token counts — all typed or correct); CSR semantics verified empirically (self-loop double incidence, parallel edges distinct, file-order emission); benchmark re-run reproduced 5.5 M / 1.26 M edges/s | `vertex_count = 0` panic replaced by a typed `InvalidVertexCount` error; duplicate detection now covers repeated self-loops; pre-declared review claim replaced by this archived report; doc comments aligned |
 
-All reviewed stages (W2, Z1, C0, N2, N3, network input) are promoted from
-"Experimental — awaiting independent review" to reviewed status; their production availability remains conditioned
+D1 (directed topology) was reviewed after its delivery commit `c2ea61f`:
+
+| Stage | Commit under review | Verdict | Reviewer's independent confirmation | Follow-ups applied |
+|---|---|---|---|---|
+| D1 directed topology | `c2ea61f` | **PASS WITH NOTES** | Builder hand-traced on a parallel-arc + self-loop multigraph (exact arrays predicted and confirmed); every validator attack predicted in writing then confirmed empirically in debug and release; trait separation compile-checked; the arc-table SIMD explanation verified from struct-layout evidence (Arc 16B vs Bond 32B) | Checked arithmetic for a magic-value declared count that could overflow a validation error path; stale F1 sentence updated; per-element figure corrected to the recorded 0.72 ns; default()/validate allocation behavior documented |
+
+All reviewed stages (W2, Z1, C0, N2, N3, network input, D1) are promoted
+from "Experimental — awaiting independent review" to reviewed status; their production availability remains conditioned
 on the branch merging into `dev`, per the platform's standing convention.
 
 ## The one substantive bug the reviews caught

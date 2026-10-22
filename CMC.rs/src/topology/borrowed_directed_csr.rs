@@ -181,9 +181,13 @@ pub(super) fn validate_out_structure(
         });
     }
     let vertex_count = validate_offsets(out_offsets, out_neighbors.len())?;
+    // `usize::MAX` marks "the offsets define the count". Any other declared
+    // value must match; checked arithmetic keeps a corrupt magic-value
+    // vertex count (a public field) from overflowing here (review
+    // follow-up 2026-10-22).
     if declared_vertex_count != usize::MAX && declared_vertex_count != vertex_count {
         return Err(TopologyError::OffsetLength {
-            expected: declared_vertex_count + 1,
+            expected: declared_vertex_count.saturating_add(1),
             actual: out_offsets.len(),
         });
     }
@@ -267,7 +271,7 @@ pub(super) fn validate_transpose_structure(
     let transpose_vertex_count = validate_offsets(in_offsets, in_neighbors.len())?;
     if transpose_vertex_count != vertex_count {
         return Err(TopologyError::OffsetLength {
-            expected: vertex_count + 1,
+            expected: vertex_count.saturating_add(1),
             actual: in_offsets.len(),
         });
     }

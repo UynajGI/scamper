@@ -26,7 +26,12 @@ impl Arc {
 
 /// Owned directed CSR multigraph with dense arc IDs.
 ///
-/// Fields are public for construction parity with [`crate::CsrLattice`];
+/// [`Default`] yields an empty-shaped value that fails `validate` — build
+/// empty graphs with [`DirectedCsr::from_arcs`](0, `vec![]`) instead.
+/// `validate` is a cold-path API and allocates temporary scratch (an
+/// endpoints copy per side plus one byte per arc), mirroring the F1
+/// validators. Fields are public for construction parity with
+/// [`crate::CsrLattice`];
 /// callers that mutate them must restore the documented invariants and call
 /// [`DirectedCsr::validate`] before using the trait implementations again.
 /// Invariants: `out_offsets` and `in_offsets` have length `vertex_count + 1`,
