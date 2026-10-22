@@ -4,10 +4,14 @@ use core::fmt;
 
 mod attack;
 mod failure;
+mod input;
 mod profile;
 
 pub use attack::{AttackGrid, AttackPolicy, DegreeAttackMC};
 pub use failure::{DegreeScratch, RandomFailureMC};
+pub use input::{
+    csr_from_edge_list, DuplicateEdgePolicy, EdgeListSpec, NetworkInputError, SelfLoopPolicy,
+};
 pub use profile::{NetworkError, NetworkProfile};
 
 /// Typed rejections for the N2 facade.

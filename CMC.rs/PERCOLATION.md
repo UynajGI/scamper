@@ -39,6 +39,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | FK/random-cluster q=1 | Not implemented | Ordinary bond Bernoulli exists, but no external bond-configuration/FK contract or q=1 reduction validation exists. |
 | FK q=2 Edwards-Sokal/Swendsen-Wang | Not implemented | SW exists, but its sampled FK bonds are not exposed for this analysis. The worm high-temperature even subgraph is not FK. |
 | Generic real-q random-cluster model | Not implemented | No Sweeny or Chayes-Machta sampler. |
+| Network edge-list input | Validated | `csr_from_edge_list` builds an owned `CsrLattice` from text edge lists (`left right` per line, `#` comments and blank lines skipped) under an explicit `EdgeListSpec` (declared vertex count, duplicate policy Reject/AllowParallel, self-loop policy Reject/Allow); every rejection is typed and carries the 1-based line (parse, endpoint range, duplicate, self-loop). Zero-copy external arrays remain the F1 `BorrowedUndirectedCsr`. No binary/memory-mapped format: million-edge ingestion evidence recorded below. Independent review passed 2026-10-22 (see `docs/reviews/`). |
 | Boundary crossing between explicit vertex sets | Validated | F3 `BoundaryQuery` is validated for owned/borrowed generic undirected views, supports several queries in one component pass, and defines empty/overlap/dedup semantics; F4 migrates the full crossing test assets. The square left/right-column and chain endpoint defaults live in the `StaticPercolationMC` parameter schema; all other parameter-built topologies require explicit site sets. |
 | Periodic embedding capability (W1) | Experimental | Directed-incidence integer cell displacements exist as explicit recorded data: the `PeriodicEmbedding` capability (`topology/embedding.rs`) and the `LatticeEmbedding` table serve the pbc chain/square/hypercubic builders and the triangular builder, which record each displacement at bond emission and never infer it from `BondType` or vertex IDs. Independently reviewed; see the W1 section below. |
 | Periodic wrapping/winding analysis (W2) | Validated | Winding-capable component analysis over the W1 displacements: `analyze_winding` (percolation/analyzer/winding.rs) runs one physical-edge pass of union-find with checked `i32` `Z^D` potentials, reports per-component winding rank and an echelon generating set (never only a Boolean), and feeds `Wrapping`/`WindingRank` plan observables on `StaticPercolationMC::with_embedding`; open/non-embedded wrapping requests are typed errors. Engineering gates green and independent review passed 2026-10-22 (two from-scratch brute forces reproduced 187/256 and 186684/262144; potential and echelon algebra hand-verified; exact anchors now asserted); see the W2 section below and `docs/reviews/`. Crossing is not wrapping. |
@@ -1599,3 +1600,45 @@ cost `O(V(V+E))` per trajectory; production curves should use `Every`/`At`.
 No boundary queries, no degree-conditioned arrays (that is N2's
 `RandomFailureMC`), no `FromParams` schema — construct directly or via
 `Run::from_parts`.
+
+
+## Network edge-list input
+
+`csr_from_edge_list(spec, text)` (`percolation/network/input.rs`): one edge
+per line as two whitespace-separated `usize` endpoints; `#` comments and
+blank lines are skipped; physical edges are emitted in file order (CSR edge
+IDs follow input order). The contract is explicit in `EdgeListSpec` —
+declared vertex count, `DuplicateEdgePolicy` (`Reject` errors on the first
+repeated undirected pair; `AllowParallel` keeps repetitions as distinct
+physical edges), `SelfLoopPolicy` (`Reject`/`Allow`; a kept self-loop
+contributes two incidences, the CSR convention). Every rejection is typed
+(`NetworkInputError`) with the offending 1-based line number:
+`Parse` (token count, non-integer), `Endpoint` (range violation with the
+value), `DuplicateEdge`, `SelfLoop`. Nothing is silently dropped or merged.
+
+Zero-copy ingestion of complete external CSR arrays remains the
+independently reviewed F1 `BorrowedUndirectedCsr::new(offsets, neighbors,
+edge_ids, edge_endpoints)`.
+
+### Validation
+
+`tests/physics/percolation_network_input.rs`: parsed graphs are structurally
+identical to builder-made lattices (V/E, degree profile, full-activity
+component summary); every rejection variant carries the exact line number;
+AllowParallel keeps 4 distinct edges where Reject errors; mixed policies are
+expressible; parsed graphs flow through the N2 facade and through the F1
+borrowed view with identical analysis.
+
+### Ingestion benchmark (format decision evidence)
+
+`cargo bench -p cmc-rs --bench percolation_network_input` — parse + CSR
+build of a G(n, m) edge list, text generated outside the timed region:
+
+| Case | V | E | Time | Throughput |
+|---|---|---|---|---|
+| er16k | 4 096 | 16 384 | 3.0 ms | ~5.4 M edges/s |
+| er1m | 250 000 | 1 000 000 | 814 ms | ~1.23 M edges/s (13.1 MB text, ~16 MB/s) |
+
+A million edges ingest in well under a second, so the roadmap's bar for a
+custom binary or memory-mapped format is not met; text remains the only
+network input format.

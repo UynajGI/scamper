@@ -44,8 +44,9 @@ pub use carlo::{StaticLaw, StaticPercolationError, StaticPercolationMC};
 pub use configuration::StaticConfiguration;
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
 pub use network::{
-    AttackGrid, AttackPolicy, DegreeAttackMC, DegreeScratch, NetworkError, NetworkPercolationError,
-    NetworkProfile, RandomFailureMC,
+    csr_from_edge_list, AttackGrid, AttackPolicy, DegreeAttackMC, DegreeScratch,
+    DuplicateEdgePolicy, EdgeListSpec, NetworkError, NetworkInputError, NetworkPercolationError,
+    NetworkProfile, RandomFailureMC, SelfLoopPolicy,
 };
 pub use observable::{ObservablePlan, ObservablePlanError, StaticObservable};
 pub use probability::{Probability, ProbabilityError, ProbabilityField};

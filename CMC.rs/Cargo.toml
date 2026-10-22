@@ -83,6 +83,10 @@ harness = false
 name = "percolation_attack"
 harness = false
 
+[[bench]]
+name = "percolation_network_input"
+harness = false
+
 [features]
 default = []
 allocation-probe = ["dep:allocation-counter"]

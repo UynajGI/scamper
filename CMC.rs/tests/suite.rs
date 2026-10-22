@@ -112,6 +112,8 @@ mod percolation_heterogeneous_zscore;
 mod percolation_law_zscore;
 #[path = "physics/percolation_network.rs"]
 mod percolation_network;
+#[path = "physics/percolation_network_input.rs"]
+mod percolation_network_input;
 #[path = "physics/percolation_scan.rs"]
 mod percolation_scan;
 #[path = "physics/percolation_winding.rs"]
