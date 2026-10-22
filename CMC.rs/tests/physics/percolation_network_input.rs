@@ -9,7 +9,7 @@
 //! 3. Policies behave as named: parallel edges survive AllowParallel as
 //!    distinct physical edges; self-loops survive Allow.
 //! 4. Comments and blank lines are skipped.
-//! 5. Parsed graphs flow through the N2/N3 layers (profile + facade) and
+//! 5. Parsed graphs flow through the N2 layer (profile + facade) and
 //!    through the F1 zero-copy borrowed view with identical analysis.
 
 use cmc_rs::{

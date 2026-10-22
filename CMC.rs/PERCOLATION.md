@@ -1608,13 +1608,15 @@ No boundary queries, no degree-conditioned arrays (that is N2's
 per line as two whitespace-separated `usize` endpoints; `#` comments and
 blank lines are skipped; physical edges are emitted in file order (CSR edge
 IDs follow input order). The contract is explicit in `EdgeListSpec` —
-declared vertex count, `DuplicateEdgePolicy` (`Reject` errors on the first
-repeated undirected pair; `AllowParallel` keeps repetitions as distinct
-physical edges), `SelfLoopPolicy` (`Reject`/`Allow`; a kept self-loop
-contributes two incidences, the CSR convention). Every rejection is typed
-(`NetworkInputError`) with the offending 1-based line number:
-`Parse` (token count, non-integer), `Endpoint` (range violation with the
-value), `DuplicateEdge`, `SelfLoop`. Nothing is silently dropped or merged.
+declared vertex count (at least 1 — zero is a typed
+`InvalidVertexCount`), `DuplicateEdgePolicy` (`Reject` errors on the first
+repeated undirected pair, self-loops included; `AllowParallel` keeps
+repetitions as distinct physical edges), `SelfLoopPolicy`
+(`Reject`/`Allow`; a kept self-loop contributes two incidences, the CSR
+convention). Every rejection is typed (`NetworkInputError`) with the
+offending 1-based line number: `Parse` (token count, non-integer),
+`Endpoint` (range violation with the value), `DuplicateEdge`, `SelfLoop`.
+Nothing is silently dropped or merged.
 
 Zero-copy ingestion of complete external CSR arrays remains the
 independently reviewed F1 `BorrowedUndirectedCsr::new(offsets, neighbors,

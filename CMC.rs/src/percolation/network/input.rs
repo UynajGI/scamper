@@ -13,7 +13,9 @@
 //! (`left right`, undirected; order within a line is irrelevant). Empty
 //! lines and lines whose first non-whitespace character is `#` are skipped.
 //! Any other content (extra tokens, non-integers, trailing junk) is a typed
-//! parse error carrying the 1-based line number.
+//! parse error carrying the 1-based line number. `vertex_count` must be at
+//! least 1. CRLF input parses (line splitting and trimming both drop `\r`);
+//! a UTF-8 BOM is not special-cased and yields a typed parse error.
 
 use std::collections::HashSet;
 
@@ -75,6 +77,10 @@ impl EdgeListSpec {
 /// or a construction-level reason.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NetworkInputError {
+    /// The spec declared zero vertices: no graph can be built. (Review
+    /// follow-up 2026-10-22: this used to fall through to a construction
+    /// panic.)
+    InvalidVertexCount { vertex_count: usize },
     /// A line is not `left right` with two integer endpoints.
     Parse { line: usize, reason: &'static str },
     /// An endpoint lies outside `0..vertex_count`.
@@ -96,6 +102,12 @@ pub enum NetworkInputError {
 impl core::fmt::Display for NetworkInputError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::InvalidVertexCount { vertex_count } => {
+                write!(
+                    formatter,
+                    "vertex count must be at least 1, got {vertex_count}"
+                )
+            }
             Self::Parse { line, reason } => {
                 write!(formatter, "line {line}: {reason}")
             }
@@ -161,11 +173,13 @@ pub fn csr_from_edge_list(spec: EdgeListSpec, text: &str) -> Result<CsrLattice, 
                 });
             }
         }
-        if left == right {
-            if spec.self_loop_policy == SelfLoopPolicy::Reject {
-                return Err(NetworkInputError::SelfLoop { line, vertex: left });
-            }
-        } else if spec.duplicate_policy == DuplicateEdgePolicy::Reject {
+        if left == right && spec.self_loop_policy == SelfLoopPolicy::Reject {
+            return Err(NetworkInputError::SelfLoop { line, vertex: left });
+        }
+        // Duplicate detection covers every edge, self-loops included: a
+        // repeated edge is a repeated edge. (Review follow-up 2026-10-22:
+        // self-loops used to be silently exempt.)
+        if spec.duplicate_policy == DuplicateEdgePolicy::Reject {
             let pair = (left.min(right), left.max(right));
             if !seen.insert(pair) {
                 return Err(NetworkInputError::DuplicateEdge {

@@ -21,8 +21,15 @@ day after its delivery commit `5f2dd2a`:
 |---|---|---|---|---|
 | N3 targeted attacks | `5f2dd2a` | **PASS WITH NOTES** | End-to-end rebuild of both anchor graphs in a throwaway crate; independent Callaway Eq. (14) solver reproduces all eight cutoff values digit-for-digit; Cohen f_c values reproduced exactly; Fisher-Yates uniformity verified by exhaustive enumeration; path6 attack hand-simulated | Corrected the "0.02-0.03" misquote of Cohen et al. (their continuum value at alpha=2.5 is ~0.056; the range belongs to alpha~3), aligned the roadmap bracket wording (0.3 f_c), removed a stray pdftotext dump, documented the config-model repair bias |
 
-All reviewed stages (W2, Z1, C0, N2, N3) are promoted from "Experimental —
-awaiting independent review" to reviewed status; their production availability remains conditioned
+The network edge-list input was reviewed after its delivery commit
+`539a16f`:
+
+| Stage | Commit under review | Verdict | Reviewer's independent confirmation | Follow-ups applied |
+|---|---|---|---|---|
+| Network edge-list input | `539a16f` | **PASS WITH NOTES** | Throwaway-crate parser attack (CRLF, Unicode whitespace, overflow, token counts — all typed or correct); CSR semantics verified empirically (self-loop double incidence, parallel edges distinct, file-order emission); benchmark re-run reproduced 5.5 M / 1.26 M edges/s | `vertex_count = 0` panic replaced by a typed `InvalidVertexCount` error; duplicate detection now covers repeated self-loops; pre-declared review claim replaced by this archived report; doc comments aligned |
+
+All reviewed stages (W2, Z1, C0, N2, N3, network input) are promoted from
+"Experimental — awaiting independent review" to reviewed status; their production availability remains conditioned
 on the branch merging into `dev`, per the platform's standing convention.
 
 ## The one substantive bug the reviews caught
