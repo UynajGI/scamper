@@ -166,6 +166,11 @@ impl KCoreWorkspace {
     /// Residual degree of `index` at the end of the last run (for core
     /// vertices: the degree inside the core; for deleted vertices: the
     /// value at deletion).
+    ///
+    /// # Panics
+    /// Panics when `index >= vertex_count` (review follow-up 2026-10-23:
+    /// unlike `in_core`/`deletion_round` there is no meaningful default
+    /// for a missing counter).
     pub fn residual_degree(&self, index: usize) -> u32 {
         self.residual.get(index)
     }

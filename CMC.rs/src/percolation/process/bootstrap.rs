@@ -176,6 +176,15 @@ impl BootstrapWorkspace {
     ///
     /// Valid until the next run on this workspace; indices are dense
     /// vertex positions.
+    /// Whether `index` is active after the last run.
+    ///
+    /// Meaningful only after at least one closure run: before any run on a
+    /// prepared workspace every vertex reads as active (slots hold stamp
+    /// zero), and on an unprepared workspace the call panics (review
+    /// follow-up 2026-10-23).
+    ///
+    /// # Panics
+    /// Panics when the workspace was never prepared.
     pub fn is_active(&self, index: usize) -> bool {
         self.flags.is_marked(index)
     }

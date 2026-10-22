@@ -910,3 +910,124 @@ fn er_emergence_brackets_janson_luczak_threshold() {
         "the giant core component must carry most of the core: {above_largest:.5} vs {theory:.5}"
     );
 }
+
+// ── Review follow-up: in-repo multigraph coverage ─────────────────────────
+
+#[test]
+fn kcore_handles_self_loops_and_parallel_edges() {
+    use cmc_rs::{Bond, BondType, CsrLattice};
+
+    // Two vertices joined by three parallel edges plus one self-loop at 0:
+    // incidences at 0 = 3 (parallel) + 2 (self-loop) = 5, at 1 = 3.
+    let lattice = CsrLattice::from_edges(
+        2,
+        vec![
+            Bond::new(0, 1, BondType::Generic, 1.0),
+            Bond::new(0, 1, BondType::Generic, 1.0),
+            Bond::new(0, 1, BondType::Generic, 1.0),
+            Bond::new(0, 0, BondType::Generic, 1.0),
+        ],
+    );
+    let mut workspace = KCoreWorkspace::default();
+
+    // k = 4: vertex 1 (residual 3) deletes in round 1; vertex 0 keeps 5
+    // until the parallel edges die, then 5 - 3 = 2 < 4 deletes in round 2.
+    let summary = kcore_decompose(
+        &lattice,
+        &CoreThresholds::uniform(4).unwrap(),
+        &[true, true],
+        &mut workspace,
+    )
+    .unwrap();
+    assert_eq!(summary.core_vertex_count, 0);
+    assert_eq!(workspace.deletion_round(0), Some(2));
+    assert_eq!(workspace.deletion_round(1), Some(1));
+
+    // k = 3: both survive (residuals 5 and 3); the self-loop's two
+    // incidences keep vertex 0 alive by the documented convention.
+    let summary = kcore_decompose(
+        &lattice,
+        &CoreThresholds::uniform(3).unwrap(),
+        &[true, true],
+        &mut workspace,
+    )
+    .unwrap();
+    assert_eq!(summary.core_vertex_count, 2);
+    assert_eq!(workspace.residual_degree(0), 5);
+    assert_eq!(workspace.residual_degree(1), 3);
+    // All three parallel edges stay; the self-loop counts once as a
+    // physical core edge.
+    assert_eq!(summary.core_edge_count, 4);
+
+    // Random multigraph fuzz vs an independent adjacency-matrix peeler
+    // (self-loops count twice, parallel edges per edge) over many graphs.
+    let mut rng: u64 = 0x000c_0e11;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    for round in 0..120 {
+        let vertices = 2 + (next() % 6) as usize;
+        let arc_count = (next() % 10) as usize;
+        let mut bonds = Vec::new();
+        for _ in 0..arc_count {
+            let left = (next() % vertices as u64) as usize;
+            let right = (next() % vertices as u64) as usize;
+            bonds.push(Bond::new(left, right, BondType::Generic, 1.0));
+        }
+        let lattice = CsrLattice::from_edges(vertices, bonds.clone());
+        let k = 1 + (next() % 4) as usize;
+
+        // Independent reference: adjacency lists with the same incidence
+        // convention, peeled by repeated full scans.
+        let mut degree: Vec<u32> = vec![0; vertices];
+        let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); vertices];
+        for bond in &bonds {
+            if bond.source == bond.target {
+                degree[bond.source] += 2;
+                adjacency[bond.source].push(bond.source);
+                adjacency[bond.source].push(bond.source);
+            } else {
+                degree[bond.source] += 1;
+                degree[bond.target] += 1;
+                adjacency[bond.source].push(bond.target);
+                adjacency[bond.target].push(bond.source);
+            }
+        }
+        let mut alive: Vec<bool> = vec![true; vertices];
+        loop {
+            let mut changed = false;
+            for vertex in 0..vertices {
+                if alive[vertex] && (degree[vertex] as usize) < k {
+                    alive[vertex] = false;
+                    changed = true;
+                    for &neighbor in &adjacency[vertex] {
+                        degree[neighbor] = degree[neighbor].saturating_sub(1);
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let summary = kcore_decompose(
+            &lattice,
+            &CoreThresholds::uniform(k).unwrap(),
+            &vec![true; vertices],
+            &mut workspace,
+        )
+        .unwrap();
+        #[allow(clippy::needless_range_loop)]
+        let expected: usize = (0..vertices).filter(|&v| alive[v]).count();
+        assert_eq!(
+            summary.core_vertex_count, expected,
+            "round {round}: multigraph core mismatch (V={vertices}, k={k})"
+        );
+        for (vertex, is_alive) in alive.iter().enumerate() {
+            assert_eq!(workspace.in_core(vertex), *is_alive);
+        }
+    }
+}

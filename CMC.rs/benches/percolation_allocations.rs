@@ -901,6 +901,14 @@ fn report_kcore_case(case: &Case) {
     });
     // KCoreSurvivorCount array + three scalars.
     let observable_count = 4;
+    // Review follow-up 2026-10-23: assert like the bootstrap probe — a
+    // silent regression to nonzero allocations must fail the probe, not
+    // merely print.
+    assert_eq!(
+        info.count_total, 0,
+        "kcore realization allocated {} times in steady state",
+        info.count_total
+    );
     eprintln!(
         "KCORE_PROCESS_ALLOC topology={} V={} E={} k=3 keep={} recorded_rounds=256 \
          observables={} measured_realizations={} allocations_per_realization={:.3} \
@@ -950,8 +958,39 @@ fn report_bootstrap_case(case: &Case) {
             std::hint::black_box(&mut context);
         }
     });
+    assert_eq!(
+        info.count_total, 0,
+        "bootstrap synchronous realizations must allocate nothing in steady state"
+    );
+
+    // Review follow-up 2026-10-23: assert the QueueClosure clock too —
+    // it shares the same E1 buffers; this pins the symmetry claim.
+    let mut process = BootstrapPercolationMC::new(
+        case.lattice.clone(),
+        BootstrapThreshold::Homogeneous { value: 2 },
+        BootstrapSeeds::Density { p: P_SITE },
+        BootstrapDynamics::QueueClosure,
+        32,
+    )
+    .expect("probe process (queue clock)");
+    for _ in 0..ADAPTER_WARMUP {
+        process.sweep(&mut context);
+        process.measure(&mut context);
+    }
+    let queue_info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            process.sweep(&mut context);
+            process.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    assert_eq!(
+        queue_info.count_total, 0,
+        "bootstrap queue-closure realizations must allocate nothing in steady state"
+    );
+
     // BootstrapActiveCount array + two always-on scalars + the clock
-    // scalar (BootstrapRounds here).
+    // scalar.
     let observable_count = 4;
     eprintln!(
         "BOOTSTRAP_PROCESS_ALLOC topology={} V={} E={} r=2 seed_density={} steps=32 \
@@ -967,10 +1006,6 @@ fn report_bootstrap_case(case: &Case) {
         info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
         info.count_max,
         info.bytes_max,
-    );
-    assert_eq!(
-        info.count_total, 0,
-        "bootstrap realizations must allocate nothing in steady state"
     );
 }
 
