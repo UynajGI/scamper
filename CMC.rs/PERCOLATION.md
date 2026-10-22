@@ -29,7 +29,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Heterogeneous occupation probabilities | Validated | N1 promotes the F2 `ProbabilityField` substrate to the `StaticPercolationMC` adapter: `StaticLaw::site_heterogeneous`/`bond_heterogeneous`/`mixed_heterogeneous` own one validated `Probability` per vertex and/or per physical edge, with adapter-constructor domain validation and scheduler scheduling through `Run::from_parts()`. Gates passed: exact non-identically-distributed small-graph enumeration (independently reproduced), bitwise uniform and mixed-pure reductions, endpoint determinism, typed length/invalid-probability rejection, 16-seed scheduler z-scores for site/bond/mixed (enumeration and Poisson-binomial references), uniform-vs-heterogeneous Criterion comparison, and a 0-allocation heterogeneous adapter probe. Independent review passed; production on the `dev` merge. The N2 random-failure facade now builds on this substrate. |
 | Network random failure and degree-conditioned observables | Validated | N2 `RandomFailureMC` facade over the F2 uniform site law with an original-degree `NetworkProfile` and six C0 element-preserving degree arrays (`DegreeVertexCount`, `DegreeOccupied`, `ActiveFractionByDegree`, `GiantMembershipByDegree`, `DegreeFirstMoment`, `DegreeSecondMoment`); empty bins exact-zero with explicit occupancy, `V^3` exactness gate, 0-allocation probe. Gates: bitwise site-law reduction, independent-BFS enumeration z-scores on path/cycle/star/complete, relabeling invariance, empty-bin semantics, and literature anchors (Callaway et al. PRL 85, 5468 and Cohen et al. PRL 85, 4626; PDFs in `docs/ref/`). Independent review passed 2026-10-22 (kappa/q_c and the Callaway fixed points independently re-derived; star-graph observables hand-enumerated to exact fractions; V^3 boundary recomputed); see the N2 section below and `docs/reviews/`. |
 | Targeted degree attack and robustness curves (N3) | Validated | `DegreeAttackMC` removes vertices in descending original degree with an explicit tie policy (`DegreeDescendingStableId`, seed-independent, or `DegreeDescendingSeededShuffle`, one realization per seed); one sweep is one complete removal trajectory recorded as ONE C0 vector sample (`RobustnessCurve`, `RobustnessSusceptibility` with the F4 defined-indicator convention, `RobustnessRemovedFraction` coordinates), never independent scalar samples. Grids: every removal, every k-th, or explicit checkpoints. Gates: per-step independent-BFS parity, strict survivor monotonicity, tie reproduction, coordinates/provenance through `Results` attributes, Callaway et al. Eq. (14) degree-cutoff anchors, Cohen et al. breakdown bracket; PDFs in `docs/ref/`. Adaptive residual-degree attack remains Not implemented by design. Independent review passed 2026-10-22 (both anchor graphs rebuilt independently; all eight Callaway values and both Cohen f_c values reproduced digit-for-digit); see the N3 section below and `docs/reviews/`. |
-| Directed static reachability, weak/strong components | Not implemented | `CsrLattice` is undirected; directedness is not a mode flag. |
+| Directed static analysis (D2) | Experimental — awaiting independent review | Three distinct questions, three distinct result types over the D1 capabilities: `analyze_weak_components` (union-find over the arc table, canonical lowest-ID labels), `analyze_strong_components` (iterative non-recursive Tarjan; `acyclic` tracks singleton-SCC self-loops separately), and `reachable` (early-exit BFS with stamped visitation; `reachable(v, v)` true by definition). Anchors: exhaustive enumeration of every digraph on 3 and 4 vertices vs transitive-closure ground truth (SCC, weak, and reachability all agree), Tarjan vs an independently written Kosaraju, weak vs undirected flood-fill, SCC transpose invariance, and closed forms for chains/trees/stars/rings/DAGs. See the D2 section below. |
 | Layered space-time directed percolation | Not implemented | No causal-layer process or survival/arrival profiles. |
 | Bootstrap percolation | Not implemented | No activation-threshold closure process. |
 | k-core percolation | Not implemented | No residual-degree peeling process. |
@@ -1710,3 +1710,76 @@ No directed analysis yet (D2: reachability, weak components, SCC). No
 directed lattice builders — construct via `DirectedCsr::from_arcs` or the
 transpose-validated borrowed views. No arc weights or arc activity types;
 D2/D3 define those against their own occupancy contracts.
+
+
+## D2 static directed analysis
+
+Three analyses over the D1 directed capabilities
+(`percolation/directed/`), each with its own workspace and result type:
+
+| Question | API | Algorithm |
+|---|---|---|
+| Weak components (direction ignored) | `analyze_weak_components` | union-find over the physical arc table; canonical lowest-member labels |
+| Strongly connected components | `analyze_strong_components` | iterative Tarjan (explicit DFS stack — deep graphs cannot overflow the call stack); adjacency materialized into the workspace once per analysis, then plain-slice DFS |
+| source -> target reachability | `reachable` | early-exit BFS with stamped visitation (repeated queries never clear the visited array); `reachable(v, v)` is true by definition |
+
+Summaries follow the platform conventions: canonical component identity is
+the lowest member vertex ID; equal-size largest components resolve to the
+lowest identity; `raw_second_moment = sum(s_i^2)`. `StrongComponentSummary
+::acyclic` is false exactly when a directed cycle exists — a size-1 SCC
+with a self-loop is tracked separately from multi-vertex SCCs.
+
+### Validation anchors
+
+`tests/physics/directed_analysis.rs` (3 tests, all green):
+
+- **Exhaustive definitional anchor**: every simple digraph on 3 vertices
+  (2^6 = 64) and on 4 vertices (2^12 = 4096) — SCC labels, weak labels,
+  and every (source, target) reachability pair equal ground truth computed
+  from the mathematical definitions by transitive closure
+  (`u ~ v iff u reaches v and v reaches u`), independent of any SCC
+  algorithm. This is a stronger anchor than any published benchmark: it is
+  exhaustive over the input space.
+- **Tarjan vs Kosaraju**: an independently written test-side Kosaraju
+  (own DFS, own reverse sweep) produces identical partitions on the
+  exhaustive corpus and on 40 random digraphs (V in 5..45, up to 200 arcs
+  with self-loops and parallel arcs, xorshift RNG independent of the
+  production RNG).
+- **Weak vs flood-fill**: test-side undirected BFS matches on both corpora.
+- **Transpose invariance**: reversing every arc leaves the SCC partition
+  unchanged (all 40 random rounds).
+- **Closed forms**: directed chain (1 weak component, 10 singleton SCCs,
+  acyclic, reachability = order relation), out/in-stars (acyclic), ring
+  (one size-6 SCC, cyclic), complete DAG (acyclic, full downstream
+  reachability), single self-loop (singleton SCC but `acyclic = false`).
+
+Literature: Tarjan's SCC algorithm (R. E. Tarjan, SIAM J. Comput. 1(2),
+146-160, 1972) predates arXiv, so no PDF can be archived; the D2 gates
+instead anchor to the *definition* exhaustively (all digraphs up to 4
+vertices) plus algorithm-cross-validation (Tarjan vs Kosaraju), which is
+strictly stronger than reproducing published numbers. Kosaraju's
+formalization (Sharir 1981) is likewise pre-arXiv for this purpose.
+
+### Steady-state allocation gate
+
+`DIRECTED_ANALYSIS_ALLOC`: one weak + one strong + one far-corner
+reachability analysis per round, after warmup, on all five benchmark
+topologies: **0 allocations per round** (stamped visitation and prepared
+workspaces).
+
+### Criterion data
+
+`cargo bench -p cmc-rs --bench directed_analysis` (V=16384):
+
+| Case | A | weak | strong | reachability (far corner) |
+|---|---|---|---|---|
+| directed grid | 40 576 | 279 µs | 498 µs | 117 µs |
+| random digraph | 49 152 | 719 µs | 1.20 ms | 422 µs |
+
+### Limitations
+
+No occupancy/activity contract yet — these are pure-topology analyses over
+the full arc set. Directed *percolation* (occupancy, observables,
+space-time layers) is D3, which builds on this stage and on C0 vector
+output. Reachability is single-pair; multi-source or all-pairs variants
+wait for a demonstrated need.

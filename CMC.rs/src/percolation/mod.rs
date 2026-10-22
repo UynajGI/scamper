@@ -26,6 +26,7 @@ mod activity;
 mod analyzer;
 mod carlo;
 mod configuration;
+mod directed;
 mod law;
 mod network;
 mod observable;
@@ -42,6 +43,11 @@ pub use analyzer::{
 };
 pub use carlo::{StaticLaw, StaticPercolationError, StaticPercolationMC};
 pub use configuration::StaticConfiguration;
+pub use directed::{
+    analyze_strong_components, analyze_weak_components, reachable, DirectedAnalysisError,
+    ReachabilityWorkspace, StrongComponentResult, StrongComponentSummary, StrongComponentWorkspace,
+    WeakComponentResult, WeakComponentSummary, WeakComponentWorkspace,
+};
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
 pub use network::{
     csr_from_edge_list, AttackGrid, AttackPolicy, DegreeAttackMC, DegreeScratch,

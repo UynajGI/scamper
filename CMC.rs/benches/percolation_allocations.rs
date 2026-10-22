@@ -769,6 +769,62 @@ fn report_degree_attack_case(case: &Case) {
     );
 }
 
+/// D2 probe: repeated weak/strong/reachability analyses on prepared
+/// workspaces must be allocation-free in steady state.
+fn report_directed_analysis_case(case: &Case) {
+    use cmc_rs::{
+        analyze_strong_components, analyze_weak_components, reachable, Arc, DirectedCsr,
+        DirectedGraphView, DirectedOutGraphView, ReachabilityWorkspace, StrongComponentWorkspace,
+        WeakComponentWorkspace,
+    };
+    let vertices = case.lattice.vertex_count();
+    let edge_count = case.lattice.edge_count();
+    // Orient every undirected bond forward with occasional back arcs.
+    let mut arcs = Vec::with_capacity(edge_count + edge_count / 8);
+    for edge in &case.lattice.edges {
+        let (source, target) = if edge.source < edge.target {
+            (edge.source, edge.target)
+        } else {
+            (edge.target, edge.source)
+        };
+        arcs.push(Arc::new(source, target));
+        if source % 8 == 0 && source > 0 {
+            arcs.push(Arc::new(target, source));
+        }
+    }
+    let graph = DirectedCsr::from_arcs(vertices, arcs).expect("valid arcs");
+    let mut weak = WeakComponentWorkspace::default();
+    let mut strong = StrongComponentWorkspace::default();
+    let mut reach = ReachabilityWorkspace::default();
+    let goal = graph.vertex_id(vertices - 1).unwrap();
+    for _ in 0..ADAPTER_WARMUP {
+        analyze_weak_components(&graph, &mut weak).unwrap();
+        analyze_strong_components(&graph, &mut strong).unwrap();
+        reachable(&graph, graph.vertex_id(0).unwrap(), goal, &mut reach).unwrap();
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            analyze_weak_components(&graph, &mut weak).unwrap();
+            analyze_strong_components(&graph, &mut strong).unwrap();
+            reachable(&graph, graph.vertex_id(0).unwrap(), goal, &mut reach).unwrap();
+            std::hint::black_box((&mut weak, &mut strong, &mut reach));
+        }
+    });
+    eprintln!(
+        "DIRECTED_ANALYSIS_ALLOC topology={} V={} A={} measured_rounds={} \
+         allocations_per_round={:.3} allocated_bytes_per_round={:.3} \
+         peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        vertices,
+        graph.arc_count(),
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
@@ -777,6 +833,7 @@ fn main() {
         report_law_case(case);
         report_random_failure_case(case);
         report_degree_attack_case(case);
+        report_directed_analysis_case(case);
         for mode in ReferenceMode::ALL {
             report_component_case(case, mode);
         }

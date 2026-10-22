@@ -56,6 +56,8 @@ mod connectivity;
 mod continuous_cross_solver;
 #[path = "physics/continuous_spins.rs"]
 mod continuous_spins;
+#[path = "physics/directed_analysis.rs"]
+mod directed_analysis;
 #[path = "physics/dynamics_exact.rs"]
 mod dynamics_exact;
 #[path = "physics/ergodicity.rs"]

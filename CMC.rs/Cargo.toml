@@ -87,6 +87,10 @@ harness = false
 name = "percolation_network_input"
 harness = false
 
+[[bench]]
+name = "directed_analysis"
+harness = false
+
 [features]
 default = []
 allocation-probe = ["dep:allocation-counter"]

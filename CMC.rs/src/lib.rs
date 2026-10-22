@@ -129,17 +129,19 @@ pub use percolation::WorkspaceCapacityAudit;
 #[doc(hidden)]
 pub use percolation::WorkspaceWindingCapacityAudit;
 pub use percolation::{
-    analyze, analyze_winding, analyze_with_labels, csr_from_edge_list, reweight, scan_bond,
-    scan_site, AnalysisError, AnalysisResult, AttackGrid, AttackPolicy, BondBernoulli,
-    BoundaryQuery, BoundaryQueryError, ComponentLabel, ComponentSummary, ComponentWinding,
-    ComponentWorkspace, DegreeAttackMC, DegreeScratch, DuplicateEdgePolicy, EdgeActivity,
+    analyze, analyze_strong_components, analyze_weak_components, analyze_winding,
+    analyze_with_labels, csr_from_edge_list, reachable, reweight, scan_bond, scan_site,
+    AnalysisError, AnalysisResult, AttackGrid, AttackPolicy, BondBernoulli, BoundaryQuery,
+    BoundaryQueryError, ComponentLabel, ComponentSummary, ComponentWinding, ComponentWorkspace,
+    DegreeAttackMC, DegreeScratch, DirectedAnalysisError, DuplicateEdgePolicy, EdgeActivity,
     EdgeListSpec, MixedBernoulli, NetworkError, NetworkInputError, NetworkPercolationError,
     NetworkProfile, NewmanZiffWorkspace, ObservablePlan, ObservablePlanError, Probability,
-    ProbabilityField, RandomFailureMC, ReweightError, ReweightWorkspace, ReweightedEstimate,
-    ScanCurve, ScanError, ScanEstimator, ScanMode, ScanObservable, ScanPoint, SelfLoopPolicy,
-    SiteBernoulli, StaticConfiguration, StaticLaw, StaticObservable, StaticPercolationError,
-    StaticPercolationMC, VertexActivity, WindingError, WindingResult, WindingSummary,
-    WindingWorkspace,
+    ProbabilityField, RandomFailureMC, ReachabilityWorkspace, ReweightError, ReweightWorkspace,
+    ReweightedEstimate, ScanCurve, ScanError, ScanEstimator, ScanMode, ScanObservable, ScanPoint,
+    SelfLoopPolicy, SiteBernoulli, StaticConfiguration, StaticLaw, StaticObservable,
+    StaticPercolationError, StaticPercolationMC, StrongComponentResult, StrongComponentSummary,
+    StrongComponentWorkspace, VertexActivity, WeakComponentResult, WeakComponentSummary,
+    WeakComponentWorkspace, WindingError, WindingResult, WindingSummary, WindingWorkspace,
 };
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
