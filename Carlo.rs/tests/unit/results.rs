@@ -619,3 +619,36 @@ fn test_merge_stderr_is_pooled_bin_variance() {
     let expected = expected.sqrt();
     assert!((merged.get("Energy").unwrap().stderr - expected).abs() < 1e-12);
 }
+
+#[test]
+fn test_results_attribute_convenience_on_finalized_results() {
+    let mut results = Results::new();
+    results.add(
+        "Energy",
+        Estimate {
+            mean: 1.0,
+            stderr: 0.1,
+            autocorr_time: 1.0,
+            n_bins: 4,
+        },
+    );
+    results.set_attribute("attack_policy", "degree-descending/stable-id");
+    results.set_attribute("curve_points", 64);
+
+    assert_eq!(
+        results.attribute("attack_policy").and_then(|v| v.as_str()),
+        Some("degree-descending/stable-id")
+    );
+    assert_eq!(
+        results.attribute("curve_points").and_then(|v| v.as_u64()),
+        Some(64)
+    );
+    assert!(results.attribute("missing").is_none());
+
+    // Survives the JSON round trip alongside the arrays.
+    let back = Results::from_json(&results.to_json().unwrap()).unwrap();
+    assert_eq!(
+        back.attribute("attack_policy").and_then(|v| v.as_str()),
+        Some("degree-descending/stable-id")
+    );
+}

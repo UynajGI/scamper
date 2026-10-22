@@ -130,14 +130,14 @@ pub use percolation::WorkspaceCapacityAudit;
 pub use percolation::WorkspaceWindingCapacityAudit;
 pub use percolation::{
     analyze, analyze_winding, analyze_with_labels, reweight, scan_bond, scan_site, AnalysisError,
-    AnalysisResult, BondBernoulli, BoundaryQuery, BoundaryQueryError, ComponentLabel,
-    ComponentSummary, ComponentWinding, ComponentWorkspace, DegreeScratch, EdgeActivity,
-    MixedBernoulli, NetworkError, NetworkPercolationError, NetworkProfile, NewmanZiffWorkspace,
-    ObservablePlan, ObservablePlanError, Probability, ProbabilityField, RandomFailureMC,
-    ReweightError, ReweightWorkspace, ReweightedEstimate, ScanCurve, ScanError, ScanEstimator,
-    ScanMode, ScanObservable, ScanPoint, SiteBernoulli, StaticConfiguration, StaticLaw,
-    StaticObservable, StaticPercolationError, StaticPercolationMC, VertexActivity, WindingError,
-    WindingResult, WindingSummary, WindingWorkspace,
+    AnalysisResult, AttackGrid, AttackPolicy, BondBernoulli, BoundaryQuery, BoundaryQueryError,
+    ComponentLabel, ComponentSummary, ComponentWinding, ComponentWorkspace, DegreeAttackMC,
+    DegreeScratch, EdgeActivity, MixedBernoulli, NetworkError, NetworkPercolationError,
+    NetworkProfile, NewmanZiffWorkspace, ObservablePlan, ObservablePlanError, Probability,
+    ProbabilityField, RandomFailureMC, ReweightError, ReweightWorkspace, ReweightedEstimate,
+    ScanCurve, ScanError, ScanEstimator, ScanMode, ScanObservable, ScanPoint, SiteBernoulli,
+    StaticConfiguration, StaticLaw, StaticObservable, StaticPercolationError, StaticPercolationMC,
+    VertexActivity, WindingError, WindingResult, WindingSummary, WindingWorkspace,
 };
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]

@@ -5,11 +5,12 @@ use std::mem::size_of;
 use allocation_counter::measure;
 use carlo_rs::{Context, MonteCarlo};
 use cmc_rs::{
-    analyze, analyze_winding, reweight, scan_bond, scan_site, Bond, BondBernoulli,
-    BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace, GraphView, MixedBernoulli,
-    NewmanZiffWorkspace, ObservablePlan, PeriodicEmbedding, Probability, ProbabilityField,
-    RandomFailureMC, ReweightWorkspace, ScanObservable, SiteBernoulli, StaticConfiguration,
-    StaticLaw, StaticObservable, StaticPercolationMC, UndirectedGraphView, WindingWorkspace,
+    analyze, analyze_winding, reweight, scan_bond, scan_site, AttackGrid, AttackPolicy, Bond,
+    BondBernoulli, BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace, DegreeAttackMC,
+    GraphView, MixedBernoulli, NewmanZiffWorkspace, ObservablePlan, PeriodicEmbedding, Probability,
+    ProbabilityField, RandomFailureMC, ReweightWorkspace, ScanObservable, SiteBernoulli,
+    StaticConfiguration, StaticLaw, StaticObservable, StaticPercolationMC, UndirectedGraphView,
+    WindingWorkspace,
 };
 use percolation_support::{
     cases, sample_and_analyze, torus_cases, Case, ReferenceConfiguration, ReferenceMode, TorusCase,
@@ -718,6 +719,56 @@ fn report_random_failure_case(case: &Case) {
     );
 }
 
+/// N3 adapter probe: `DegreeAttackMC::sweep` + `measure` (one full attack
+/// trajectory: order construction plus a component analysis per
+/// checkpoint) must be allocation-free in steady state; buffers are
+/// retained after the first trajectory and the grid keeps ~17 checkpoints
+/// so the probe stays fast.
+fn report_degree_attack_case(case: &Case) {
+    let step = (case.lattice.vertex_count() / 16).max(1);
+    let mut adapter = DegreeAttackMC::new(
+        case.lattice.clone(),
+        AttackPolicy::DegreeDescendingSeededShuffle,
+        AttackGrid::Every { step },
+    )
+    .expect("probe adapter");
+    let checkpoints = adapter.checkpoints().len();
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0xa11_a),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        adapter.sweep(&mut context);
+        adapter.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    // RobustnessCurve + RobustnessRemovedFraction + susceptibility
+    // indicator + susceptibility array (defined for these mid-range grids).
+    let observable_count = 4;
+    eprintln!(
+        "PERCOLATION_DEGREE_ATTACK_ALLOC topology={} V={} E={} checkpoints={} \
+         observables={} measured_trajectories={} allocations_per_trajectory={:.3} \
+         allocated_bytes_per_trajectory={:.3} peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        case.lattice.vertex_count(),
+        case.lattice.edge_count(),
+        checkpoints,
+        observable_count,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
@@ -725,6 +776,7 @@ fn main() {
     for case in &benchmark_cases {
         report_law_case(case);
         report_random_failure_case(case);
+        report_degree_attack_case(case);
         for mode in ReferenceMode::ALL {
             report_component_case(case, mode);
         }

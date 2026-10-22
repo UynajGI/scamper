@@ -2,9 +2,11 @@
 
 use core::fmt;
 
+mod attack;
 mod failure;
 mod profile;
 
+pub use attack::{AttackGrid, AttackPolicy, DegreeAttackMC};
 pub use failure::{DegreeScratch, RandomFailureMC};
 pub use profile::{NetworkError, NetworkProfile};
 
@@ -33,6 +35,12 @@ pub enum NetworkPercolationError {
     InexactDegreeMoment { total_vertices: usize },
     /// A scratch buffer could not be reserved.
     Capacity,
+    /// The graph has no vertices to attack.
+    EmptyGraph,
+    /// An `AttackGrid::Every` step was zero.
+    InvalidGrid(&'static str),
+    /// An `AttackGrid::At` removal count lies outside `0..=V`.
+    GridDomain { removal: usize, vertices: usize },
 }
 
 impl fmt::Display for NetworkPercolationError {
@@ -62,6 +70,12 @@ impl fmt::Display for NetworkPercolationError {
                  exact f64 conversion is not guaranteed"
             ),
             Self::Capacity => write!(formatter, "could not reserve network scratch storage"),
+            Self::EmptyGraph => write!(formatter, "attack needs at least one vertex"),
+            Self::InvalidGrid(reason) => write!(formatter, "invalid attack grid: {reason}"),
+            Self::GridDomain { removal, vertices } => write!(
+                formatter,
+                "attack grid checkpoint at removal {removal} lies outside 0..={vertices}"
+            ),
         }
     }
 }

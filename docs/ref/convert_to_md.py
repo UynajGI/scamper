@@ -30,6 +30,11 @@ PAPERS = {
         "Phys. Rev. Lett. 85, 4626 (2000)",
         "https://arxiv.org/abs/cond-mat/0007048",
     ),
+    "Cohen_2001_PRL_intentional_attack": (
+        "Breakdown of the Internet under Intentional Attack",
+        "Phys. Rev. Lett. 86, 3682 (2001)",
+        "https://arxiv.org/abs/cond-mat/0010251",
+    ),
 }
 
 def main() -> int:

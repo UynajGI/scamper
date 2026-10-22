@@ -356,6 +356,22 @@ impl Results {
         self.metadata = metadata;
     }
 
+    /// Record one provenance attribute on this result's metadata.
+    ///
+    /// Convenience for run-owning adapters (attack policies, curve
+    /// coordinates, process identifiers) to stamp provenance onto finalized
+    /// results without cloning the whole metadata struct. Generic and
+    /// domain-agnostic: Carlo.rs stores and round-trips the value without
+    /// interpreting it.
+    pub fn set_attribute(&mut self, key: impl Into<String>, value: impl Into<Json>) {
+        self.metadata.set_attribute(key, value);
+    }
+
+    /// Look up one provenance attribute.
+    pub fn attribute(&self, key: &str) -> Option<&Json> {
+        self.metadata.attribute(key)
+    }
+
     /// Get metadata.
     pub fn metadata(&self) -> &Metadata {
         &self.metadata

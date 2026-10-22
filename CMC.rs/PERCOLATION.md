@@ -28,7 +28,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Static site, bond, and mixed Bernoulli percolation on arbitrary owned or borrowed undirected graphs | Validated | All family-specific gates pass: F3 component analysis with reusable workspace, canonical identities, and multi-query crossing; F4 `ObservablePlan` observables and owned `StaticPercolationMC` with every PR #4 validation asset migrated, the zero-allocation adapter gate, and 16-seed z-scores; independent review passed. Production-ready once the branch merges into `dev`. |
 | Heterogeneous occupation probabilities | Validated | N1 promotes the F2 `ProbabilityField` substrate to the `StaticPercolationMC` adapter: `StaticLaw::site_heterogeneous`/`bond_heterogeneous`/`mixed_heterogeneous` own one validated `Probability` per vertex and/or per physical edge, with adapter-constructor domain validation and scheduler scheduling through `Run::from_parts()`. Gates passed: exact non-identically-distributed small-graph enumeration (independently reproduced), bitwise uniform and mixed-pure reductions, endpoint determinism, typed length/invalid-probability rejection, 16-seed scheduler z-scores for site/bond/mixed (enumeration and Poisson-binomial references), uniform-vs-heterogeneous Criterion comparison, and a 0-allocation heterogeneous adapter probe. Independent review passed; production on the `dev` merge. The N2 random-failure facade now builds on this substrate. |
 | Network random failure and degree-conditioned observables | Validated | N2 `RandomFailureMC` facade over the F2 uniform site law with an original-degree `NetworkProfile` and six C0 element-preserving degree arrays (`DegreeVertexCount`, `DegreeOccupied`, `ActiveFractionByDegree`, `GiantMembershipByDegree`, `DegreeFirstMoment`, `DegreeSecondMoment`); empty bins exact-zero with explicit occupancy, `V^3` exactness gate, 0-allocation probe. Gates: bitwise site-law reduction, independent-BFS enumeration z-scores on path/cycle/star/complete, relabeling invariance, empty-bin semantics, and literature anchors (Callaway et al. PRL 85, 5468 and Cohen et al. PRL 85, 4626; PDFs in `docs/ref/`). Independent review passed 2026-10-22 (kappa/q_c and the Callaway fixed points independently re-derived; star-graph observables hand-enumerated to exact fractions; V^3 boundary recomputed); see the N2 section below and `docs/reviews/`. |
-| Targeted or adaptive attack and robustness curves | Not implemented | No removal process or vector-valued realization output. |
+| Targeted degree attack and robustness curves (N3) | Experimental — awaiting independent review | `DegreeAttackMC` removes vertices in descending original degree with an explicit tie policy (`DegreeDescendingStableId`, seed-independent, or `DegreeDescendingSeededShuffle`, one realization per seed); one sweep is one complete removal trajectory recorded as ONE C0 vector sample (`RobustnessCurve`, `RobustnessSusceptibility` with the F4 defined-indicator convention, `RobustnessRemovedFraction` coordinates), never independent scalar samples. Grids: every removal, every k-th, or explicit checkpoints. Gates: per-step independent-BFS parity, strict survivor monotonicity, tie reproduction, coordinates/provenance through `Results` attributes, Callaway et al. Eq. (14) degree-cutoff anchors, Cohen et al. breakdown bracket; PDFs in `docs/ref/`. Adaptive residual-degree attack remains Not implemented by design. See the N3 section below. |
 | Directed static reachability, weak/strong components | Not implemented | `CsrLattice` is undirected; directedness is not a mode flag. |
 | Layered space-time directed percolation | Not implemented | No causal-layer process or survival/arrival profiles. |
 | Bootstrap percolation | Not implemented | No activation-threshold closure process. |
@@ -1491,3 +1491,108 @@ and no boundary-query defaults; construct `RandomFailureMC::new` directly or
 through `Run::from_parts`. `DegreeSecondMoment` bounds graphs to
 `V <= 208_063` for exact f64 conversion. Adaptive/residual-degree
 conditioning is explicitly out of scope.
+
+## N3 targeted degree attack and robustness curves
+
+`DegreeAttackMC` (`percolation/network/attack.rs`) removes vertices in
+descending **original** degree (the `NetworkProfile` cache). Ties resolve by
+an explicit policy: `DegreeDescendingStableId` (ascending dense ID,
+deterministic and seed-independent) or `DegreeDescendingSeededShuffle`
+(Fisher-Yates over each equal-degree run, one realization per seed, bitwise
+reproducible for a fixed seed). Adaptive residual-degree attack is a
+different process and stays out of scope by roadmap decision.
+
+### One trajectory is one vector realization
+
+One `sweep()` samples the removal order (tie randomness only); one
+`measure()` walks the trajectory with a fresh F3 component analysis at every
+checkpoint and records, per trajectory (never per checkpoint as independent
+scalars):
+
+| Name | Definition |
+|---|---|
+| `RobustnessCurve[i]` | `S_max / V` at checkpoint `i` (F4 `GiantFraction` convention, fixed denominator `V`) |
+| `RobustnessSusceptibility[i]` | F4 finite-cluster susceptibility at checkpoint `i`; recorded only when defined at every checkpoint of the trajectory |
+| `RobustnessSusceptibilityDefined` | scalar 0/1 indicator, always recorded |
+| `RobustnessRemovedFraction[i]` | removed fraction `r_i / V`, constant coordinates |
+
+Grids: `Full` (V+1 points, `O(V(V+E))` per trajectory), `Every { step }`
+(always ending at `V`), `At { removals }` (user-exact, so a grid can stay
+inside the susceptibility-defined region). `V^2 <= 2^53` is enforced
+(susceptibility squares component sizes). Provenance: callers stamp
+`results.set_attribute("attack_policy", mc.policy().as_provenance())` and
+the grid; Carlo.rs stores and round-trips the values without interpreting
+them.
+
+### Validation gates (roadmap §9 N3)
+
+All in `tests/physics/percolation_attack.rs`:
+
+- **Per-step naive parity**: full-resolution trajectories on star5, path6,
+  and a 12-vertex ER graph, both policies: every checkpoint's giant fraction
+  and susceptibility equal an independent adjacency-BFS reference exactly
+  (no statistics), and the survivor count is strictly monotone (recomputed
+  independently from the survivor mask).
+- **Tie reproduction**: the stable-ID order is seed-independent (and equals
+  the hand-derived path8 order); seeded shuffle reproduces bitwise for a
+  fixed seed, reshuffles tie groups for new seeds, and preserves the
+  degree-descending group structure.
+- **Coordinates and provenance**: `RobustnessRemovedFraction` is exactly
+  `i * step / V`; full-grid trajectories hit undefined-susceptibility
+  checkpoints (intact connected graph, empty end) so only the indicator is
+  recorded; policy attributes survive `Results` JSON round-trip.
+- **Literature anchor (exact)** — Callaway et al., PRL 85, 5468 (2000),
+  Eq. (14): checkpoints at complete degree-group boundaries (removing
+  exactly all vertices with degree > K) on a 60k-vertex ER configuration
+  graph (z = 2.5) and a 60k power-law configuration graph
+  (alpha = 2.5, m = 2, cutoff 400); theory `S = F0(1) - F0(u)`,
+  `u = 1 - F1(1) + F1(u)` with `q_k = 1{k <= K}` evaluated on each graph's
+  own degree distribution. Measured vs theory (deterministic stable-ID
+  trajectories; deviations well inside the 0.006 finite-N slack):
+  ER z = 2.5 — K=7: 0.8856/0.8851, K=6: 0.8641/0.8627, K=5: 0.7949/0.7954,
+  K=4: 0.5671/0.5690 (max deviation 0.0019); power-law alpha = 2.5,
+  m = 2, cutoff 400 — K=80: 0.9899/0.9898, K=40: 0.9694/0.9694,
+  K=20: 0.9167/0.9175, K=10: 0.7678/0.7707 (max deviation 0.0029).
+- **Literature anchor (bracket)** — Cohen et al., PRL 86, 3682 (2001):
+  their Eqs. (2)/(7)/(9) attacked-distribution estimate with the
+  `kappa = 2` criterion gives the breakdown fraction `f_c`; the empirical
+  estimate lands at `f_c = 0.0211` for the paper's headline regime
+  (alpha = 2.5, m = 1, N = 6e4) — inside their predicted 0.02-0.03 — versus
+  `f_c = 0.2428` for ER z = 2.5. Gates: `f_c(power-law) < 0.5 f_c(ER)`
+  (0.087 ratio) and the measured giant survives at `0.3 f_c`
+  (`S = 0.346 > 0.25`) but has collapsed at `1.5 f_c`
+  (`S = 0.0016 < 0.05`). A statistical bracket, never an exact threshold
+  claim (the estimate carries its own continuum approximations).
+
+### Steady-state allocation gate
+
+`PERCOLATION_DEGREE_ATTACK_ALLOC` (allocation-probe bench): after warmup,
+one complete trajectory (order construction + 17 checkpoint analyses) is
+allocation-free on all five benchmark topologies (0.000/trajectory).
+
+### Criterion data
+
+`cargo bench -p cmc-rs --bench percolation_attack` — 8 trajectories x ~17
+checkpoints per iteration (V = 4096):
+
+| Topology | stable-id | seeded-shuffle |
+|---|---|---|
+| chain (E=4095) | 5.30 ms | 9.06 ms |
+| square (E=8064) | 7.56 ms | 11.23 ms |
+| cubic (E=11520) | 9.37 ms | 13.24 ms |
+| sparse-er (E=16384) | 23.8 ms | 25.4 ms |
+| power-law (E=16374) | 13.9 ms | 15.0 ms |
+
+The shuffle premium is the tie-group Fisher-Yates (largest on the chain,
+whose 4094 interior vertices form one tie group).
+
+### Limitations
+
+Original-degree order only: adaptive residual-degree attack (recomputed
+during the attack) is deliberately excluded (separate later PR). The
+trajectory analysis is checkpoint-parallel-naive: every checkpoint is a
+fresh exact analysis (no incremental removal structures), so `Full` grids
+cost `O(V(V+E))` per trajectory; production curves should use `Every`/`At`.
+No boundary queries, no degree-conditioned arrays (that is N2's
+`RandomFailureMC`), no `FromParams` schema — construct directly or via
+`Run::from_parts`.
