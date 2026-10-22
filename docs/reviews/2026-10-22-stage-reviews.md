@@ -34,8 +34,16 @@ D1 (directed topology) was reviewed after its delivery commit `c2ea61f`:
 |---|---|---|---|---|
 | D1 directed topology | `c2ea61f` | **PASS WITH NOTES** | Builder hand-traced on a parallel-arc + self-loop multigraph (exact arrays predicted and confirmed); every validator attack predicted in writing then confirmed empirically in debug and release; trait separation compile-checked; the arc-table SIMD explanation verified from struct-layout evidence (Arc 16B vs Bond 32B) | Checked arithmetic for a magic-value declared count that could overflow a validation error path; stale F1 sentence updated; per-element figure corrected to the recorded 0.72 ns; default()/validate allocation behavior documented |
 
-All reviewed stages (W2, Z1, C0, N2, N3, network input, D1) are promoted
-from "Experimental — awaiting independent review" to reviewed status; their production availability remains conditioned
+D2 (static directed analysis) was reviewed after its delivery commit
+`e6120f8`:
+
+| Stage | Commit under review | Verdict | Reviewer's independent confirmation | Follow-ups applied |
+|---|---|---|---|---|
+| D2 directed analysis | `e6120f8` | **PASS WITH NOTES** | Frame-by-frame Tarjan hand traces (parent uses child LOWLINK; pop arithmetic underflow-impossible; label-before-truncate verified); union-find canonical traced through merge chains; stamp semantics proven and empirically rollover-tested (>2^32 queries); a third independent SCC implementation agreed on 300 fresh multigraphs through reused shrinking/growing workspaces; 1M-vertex path depth; V=0/1 | Exhaustive counts corrected UP (the corpus with self-loops is 512 and 65,536 digraphs, not 64/4096); unused import + byte grouping in the required-features probe target (now passes clippy -D warnings); bench comment; u32 index-bound debug_assert; typed queue growth |
+
+All reviewed stages (W2, Z1, C0, N2, N3, network input, D1, D2) are
+promoted from "Experimental — awaiting independent review" to reviewed
+status; their production availability remains conditioned
 on the branch merging into `dev`, per the platform's standing convention.
 
 ## The one substantive bug the reviews caught

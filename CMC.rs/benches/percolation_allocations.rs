@@ -734,7 +734,7 @@ fn report_degree_attack_case(case: &Case) {
     .expect("probe adapter");
     let checkpoints = adapter.checkpoints().len();
     let mut context = Context::new_with_binsize(
-        Xoshiro256PlusPlus::seed_from_u64(0xa11_a),
+        Xoshiro256PlusPlus::seed_from_u64(0xa11a),
         0,
         ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
     );
@@ -774,8 +774,7 @@ fn report_degree_attack_case(case: &Case) {
 fn report_directed_analysis_case(case: &Case) {
     use cmc_rs::{
         analyze_strong_components, analyze_weak_components, reachable, Arc, DirectedCsr,
-        DirectedGraphView, DirectedOutGraphView, ReachabilityWorkspace, StrongComponentWorkspace,
-        WeakComponentWorkspace,
+        DirectedGraphView, ReachabilityWorkspace, StrongComponentWorkspace, WeakComponentWorkspace,
     };
     let vertices = case.lattice.vertex_count();
     let edge_count = case.lattice.edge_count();

@@ -23,7 +23,8 @@ impl ReachabilityWorkspace {
             self.visited.resize(vertex_count, 0);
         }
         if self.queue.capacity() < vertex_count {
-            self.queue = Vec::with_capacity(vertex_count);
+            self.queue.clear();
+            self.queue.try_reserve_exact(vertex_count)?;
         }
         Ok(())
     }

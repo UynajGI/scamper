@@ -1,7 +1,7 @@
 //! D2 benchmark: weak components, SCC, and reachability throughput.
 //!
 //! Measures one full analysis of each kind on a directed grid (V=16384,
-//! A=48832, mixed orientation) and a random digraph, with workspaces
+//! A=40576 with back arcs) and a random digraph and a random digraph, with workspaces
 //! prepared once so the timed region is the analysis itself.
 //!
 //! Run with: cargo bench -p cmc-rs --bench directed_analysis

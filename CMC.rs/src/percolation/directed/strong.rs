@@ -111,6 +111,11 @@ where
     G: DirectedGraphView + DirectedOutGraphView,
 {
     let vertex_count = graph.vertex_count();
+    // Tarjan indices live in u32 with UNSET = u32::MAX: the discovery
+    // index space covers at most 2^32 - 1 vertices. A graph that large
+    // cannot be reserved on real hardware (the typed capacity error fires
+    // first), but the bound is recorded explicitly.
+    debug_assert!(vertex_count < u32::MAX as usize);
     workspace.prepare(vertex_count, graph.arc_count())?;
 
     let mut has_self_loop = false;
