@@ -205,7 +205,12 @@ pub fn config_model_power_law(
             .expect("bumpable degree");
         *bump += 1;
     }
-    // Stub pairing. Broad degree sequences (kappa >> 2) produce ~kappa/2
+    // Stub pairing. NOTE: the partner-swap repair preserves the degree
+    // sequence exactly and keeps the realized graphs loopless, but the
+    // exclusion rule mildly biases the ensemble relative to a uniformly
+    // sampled loopless configuration model — acceptable for a physics
+    // anchor, and the realized graphs here finish with 0 residual
+    // self-loops. Broad degree sequences (kappa >> 2) produce ~kappa/2
     // self-loops per random pairing, so wholesale reshuffling would almost
     // never succeed; instead repair each self-loop locally by swapping
     // partners with a random disjoint pair (each repair strictly removes

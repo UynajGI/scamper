@@ -14,8 +14,15 @@ summarized below.
 | C0 vector estimates | `cf701b8` | **PASS WITH NOTES** | Hand-derived per-element statistics bit-exact vs scalar accumulators; legacy JSON parsed; old code proven to silently zip-truncate in release (probe), new code errors; multispin migration preserves the same physical quantity | **Fixed merged stderr** (pre-existing flaw, review issue 1): pooled-bin variance `sum_i n_i s_i^2 / N^2` replaces the `/n_runs^2` form that underestimated merged error bars by sqrt(n_runs); regression test added. **Fixed per-element tau**: now estimated from completed bins only, exactly matching the scalar convention (outlier partial bins no longer inflate tau); parity test added |
 | N2 random failure + degree observables | `bb11fb3` | **PASS WITH NOTES** | Cohen q_c re-derived (kappa = 3.5000 -> 0.4000 ideal; empirical 0.3996); Callaway Eq. (5) fixed point re-solved independently (S = 0.1857/0.4258/0.6374 vs MC 0.1857/0.4261/0.6377); star-graph degree observables hand-enumerated to exact fractions (GiantMembershipByDegree[1] = 47/128, tie-policy-sensitive); V^3 gate threshold recomputed (208063 boundary) | PERCOLATION.md bracket transcription corrected (S = 0.1851, not 0.1857); V^3-gate rejection branch now tested at the exact boundary |
 
-All four stages are promoted from "Experimental — awaiting independent
-review" to reviewed status; their production availability remains conditioned
+N3 (targeted degree attack + robustness curves) was reviewed later the same
+day after its delivery commit `5f2dd2a`:
+
+| Stage | Commit under review | Verdict | Reviewer's independent confirmation | Follow-ups applied |
+|---|---|---|---|---|
+| N3 targeted attacks | `5f2dd2a` | **PASS WITH NOTES** | End-to-end rebuild of both anchor graphs in a throwaway crate; independent Callaway Eq. (14) solver reproduces all eight cutoff values digit-for-digit; Cohen f_c values reproduced exactly; Fisher-Yates uniformity verified by exhaustive enumeration; path6 attack hand-simulated | Corrected the "0.02-0.03" misquote of Cohen et al. (their continuum value at alpha=2.5 is ~0.056; the range belongs to alpha~3), aligned the roadmap bracket wording (0.3 f_c), removed a stray pdftotext dump, documented the config-model repair bias |
+
+All reviewed stages (W2, Z1, C0, N2, N3) are promoted from "Experimental —
+awaiting independent review" to reviewed status; their production availability remains conditioned
 on the branch merging into `dev`, per the platform's standing convention.
 
 ## The one substantive bug the reviews caught

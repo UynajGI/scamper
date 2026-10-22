@@ -453,9 +453,12 @@ fn cohen_breakdown_fraction(bins: &[usize]) -> f64 {
 #[test]
 fn intentional_attack_bracket_matches_cohen_prediction() {
     const N: usize = 60_000;
-    // m = 1 is the paper's headline regime (their Fig. 1: alpha = 2.5
-    // collapses around f_c ~ 0.02-0.03); the natural cutoff for N = 6e4 is
-    // ~N^{1/(alpha-1)} ~ 1500.
+    // m = 1 is the paper's headline regime. Their continuum Eqs. (8)+(11)
+    // give p_c ~ 0.056 at alpha = 2.5 (0.02-0.03 belongs to alpha ~ 3);
+    // the discrete-empirical estimate of the same kappa = 2 criterion on
+    // a finite N = 6e4 network lands lower (0.021 below) because the
+    // realized cutoff is far below the continuum assumption. The gate
+    // compares our two graphs under OUR estimate and only brackets.
     let power_law = config_model_power_law(N, 2.5, 1, 1500, 0x90_1b);
     let er = erdos_renyi_graph(N, 75_000, 0x005e_ed02);
 
