@@ -91,6 +91,10 @@ harness = false
 name = "directed_analysis"
 harness = false
 
+[[bench]]
+name = "directed_process"
+harness = false
+
 [features]
 default = []
 allocation-probe = ["dep:allocation-counter"]

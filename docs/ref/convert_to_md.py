@@ -30,6 +30,11 @@ PAPERS = {
         "Phys. Rev. Lett. 85, 4626 (2000)",
         "https://arxiv.org/abs/cond-mat/0007048",
     ),
+    "Hinrichsen_2000_AdvPhys_absorbing_states": (
+        "Nonequilibrium Critical Phenomena and Phase Transitions into Absorbing States",
+        "Adv. Phys. 49, 815 (2000)",
+        "https://arxiv.org/abs/cond-mat/0001070",
+    ),
     "Cohen_2001_PRL_intentional_attack": (
         "Breakdown of the Internet under Intentional Attack",
         "Phys. Rev. Lett. 86, 3682 (2001)",

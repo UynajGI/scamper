@@ -824,6 +824,52 @@ fn report_directed_analysis_case(case: &Case) {
     );
 }
 
+/// D3 probe: one complete layered directed-percolation realization
+/// (frontier bitset propagation over all layers) must be allocation-free
+/// in steady state.
+fn report_directed_process_case(case: &Case) {
+    use cmc_rs::{DpSeedPolicy, LayeredDirectedPercolationMC};
+    let width = case.lattice.vertex_count();
+    let mut process = LayeredDirectedPercolationMC::new(
+        case.lattice.clone(),
+        0.6447001,
+        256,
+        DpSeedPolicy::Single { site: width / 2 },
+    )
+    .expect("probe process");
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0xd3a1),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        process.sweep(&mut context);
+        process.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            process.sweep(&mut context);
+            process.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    // DpLayerActive + DpSurvival arrays + extinction scalar.
+    let observable_count = 3;
+    eprintln!(
+        "DIRECTED_PROCESS_ALLOC topology={} V={} layers=256 observables={} \
+         measured_realizations={} allocations_per_realization={:.3} \
+         allocated_bytes_per_realization={:.3} peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        width,
+        observable_count,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
@@ -833,6 +879,7 @@ fn main() {
         report_random_failure_case(case);
         report_degree_attack_case(case);
         report_directed_analysis_case(case);
+        report_directed_process_case(case);
         for mode in ReferenceMode::ALL {
             report_component_case(case, mode);
         }

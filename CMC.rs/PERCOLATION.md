@@ -30,7 +30,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Network random failure and degree-conditioned observables | Validated | N2 `RandomFailureMC` facade over the F2 uniform site law with an original-degree `NetworkProfile` and six C0 element-preserving degree arrays (`DegreeVertexCount`, `DegreeOccupied`, `ActiveFractionByDegree`, `GiantMembershipByDegree`, `DegreeFirstMoment`, `DegreeSecondMoment`); empty bins exact-zero with explicit occupancy, `V^3` exactness gate, 0-allocation probe. Gates: bitwise site-law reduction, independent-BFS enumeration z-scores on path/cycle/star/complete, relabeling invariance, empty-bin semantics, and literature anchors (Callaway et al. PRL 85, 5468 and Cohen et al. PRL 85, 4626; PDFs in `docs/ref/`). Independent review passed 2026-10-22 (kappa/q_c and the Callaway fixed points independently re-derived; star-graph observables hand-enumerated to exact fractions; V^3 boundary recomputed); see the N2 section below and `docs/reviews/`. |
 | Targeted degree attack and robustness curves (N3) | Validated | `DegreeAttackMC` removes vertices in descending original degree with an explicit tie policy (`DegreeDescendingStableId`, seed-independent, or `DegreeDescendingSeededShuffle`, one realization per seed); one sweep is one complete removal trajectory recorded as ONE C0 vector sample (`RobustnessCurve`, `RobustnessSusceptibility` with the F4 defined-indicator convention, `RobustnessRemovedFraction` coordinates), never independent scalar samples. Grids: every removal, every k-th, or explicit checkpoints. Gates: per-step independent-BFS parity, strict survivor monotonicity, tie reproduction, coordinates/provenance through `Results` attributes, Callaway et al. Eq. (14) degree-cutoff anchors, Cohen et al. breakdown bracket; PDFs in `docs/ref/`. Adaptive residual-degree attack remains Not implemented by design. Independent review passed 2026-10-22 (both anchor graphs rebuilt independently; all eight Callaway values and both Cohen f_c values reproduced digit-for-digit); see the N3 section below and `docs/reviews/`. |
 | Directed static analysis (D2) | Validated | Three distinct questions, three distinct result types over the D1 capabilities: `analyze_weak_components` (union-find over the arc table, canonical lowest-ID labels), `analyze_strong_components` (iterative non-recursive Tarjan; `acyclic` tracks singleton-SCC self-loops separately), and `reachable` (early-exit BFS with stamped visitation; `reachable(v, v)` true by definition). Anchors: exhaustive enumeration of every digraph on 3 and 4 vertices vs transitive-closure ground truth (SCC, weak, and reachability all agree), Tarjan vs an independently written Kosaraju, weak vs undirected flood-fill, SCC transpose invariance, and closed forms for chains/trees/stars/rings/DAGs. Independent review passed 2026-10-22 (Tarjan hand-traced frame by frame; a third independent SCC implementation agreed on 300 fresh multigraphs; stamp rollover empirically tested beyond 2^32 queries); see the D2 section below and `docs/reviews/`. |
-| Layered space-time directed percolation | Not implemented | No causal-layer process or survival/arrival profiles. |
+| Layered space-time directed percolation (D3) | Experimental — awaiting independent review | `LayeredDirectedPercolationMC`: one sweep = one complete space-time realization over T explicit causal layers (double frontier bitset — memory scales with layer width, not space-time volume), recorded as ONE C0 vector sample (`DpLayerActive`, `DpSurvival` per layer; `DpExtinctionTime` scalar) — never T independent measurements. Directed bond DP with documented bitwise draw contract; single-seed and full-occupation initial conditions. Anchored to Hinrichsen Adv. Phys. 49, 815 (2000) (archived): frontier DP equals explicit-DAG path enumeration (D2 reachability engine); P(t) ~ t^-delta at p_c = 0.6447001 with delta = 0.159464 for both survival and full-seed density decay; sub/super-critical brackets. See the D3 section below. |
 | Bootstrap percolation | Not implemented | No activation-threshold closure process. |
 | k-core percolation | Not implemented | No residual-degree peeling process. |
 | Achlioptas processes | Not implemented | No candidate-edge process, rule, or process-time output. |
@@ -1784,3 +1784,76 @@ the full arc set. Directed *percolation* (occupancy, observables,
 space-time layers) is D3, which builds on this stage and on C0 vector
 output. Reachability is single-pair; multi-source or all-pairs variants
 wait for a demonstrated need.
+
+
+## D3 layered space-time directed percolation
+
+`LayeredDirectedPercolationMC` (`percolation/directed/process.rs`):
+directed **bond** percolation as an absorbing-state process. Layer `t+1`
+site `j` is active iff some spatial neighbor `i` is active in layer `t`
+and the directed bond `i -> j` is open at time `t` (independent
+Bernoulli(p) per time step and directed incidence). The spatial lattice is
+any owned `CsrLattice` (chain/square/...; periodic or open), so the same
+adapter runs 1+1 and 2+1 dimensional processes.
+
+State is a pair of frontier bitsets (`u64` words, double-buffered):
+memory is `O(L/8)` words plus `O(T)` history counters, never `O(L * T)`.
+Initial conditions: `DpSeedPolicy::Single` (survival experiments) or
+`::Full` (density-decay experiments). One `sweep()` draws one complete
+realization; one `measure()` records it as ONE C0 vector sample:
+`DpLayerActive[t]` (active count), `DpSurvival[t]` (0/1 indicator), and
+the scalar `DpExtinctionTime` — the layer count is the array shape, so a
+time series is never misreported as T independent scalar samples.
+
+**RNG draw contract** (bitwise reproducibility; the parity gate replays
+it): per layer, active sites ascending, CSR incidence order, one `f64`
+draw per incidence, open iff `< p`; bonds out of inactive sites are never
+drawn (they cannot change the process law).
+
+### Validation anchors
+
+`tests/physics/directed_process.rs` (5 tests):
+
+- **Frontier DP = explicit DAG path enumeration** (the roadmap gate): an
+  independent oracle replays the draw contract with its own bookkeeping;
+  the production layer counts match the oracle sets exactly, and the fully
+  materialized layered DAG (open bonds as arcs) checked with the D2
+  `reachable` engine agrees node-by-node at every layer.
+- **One realization = one vector sample**: after 16 sweeps both arrays
+  carry exactly 16 samples per element (binsize 1).
+- **Critical power law** — Hinrichsen, Adv. Phys. 49, 815 (2000)
+  (arXiv:cond-mat/0001070, archived in `docs/ref/`, Tables 1-2):
+  L=512 periodic ring, p = p_c(bond, 1+1D) = 0.6447001, single center
+  seed, T = 1200: P(64)/P(1024) gives delta_hat within 0.05 of
+  delta = 0.159464 at 2000 sweeps (env-tunable `SCUTTLE_DP_SWEEPS`).
+- **Density decay**: full occupation at p_c, rho(64)/rho(1024) recovers
+  the same delta (tolerance 0.06) — a second, independent anchor with the
+  same exponent.
+- **Phase brackets**: p = 0.60 extinguishes (P(1024) < 0.01); p = 0.68 on
+  the same ring stays active (P(1024) > 0.5; the eventual plateau is the
+  percolation strength ~ (p-p_c)^beta ~ 0.4 and t = 1024 spans only a few
+  correlation times xi_parallel ~ 200, so the measurement sits in the
+  transient approach ~0.67 — a statistical bracket, never an exact
+  threshold claim).
+
+### Steady-state allocation gate
+
+`DIRECTED_PROCESS_ALLOC`: one complete 256-layer realization per round on
+all five benchmark topologies: **0 allocations** (frontier pair + history
+buffers preallocated).
+
+### Criterion data
+
+`cargo bench -p cmc-rs --bench directed_process` — 8 realizations per
+iteration, single seed at p_c: chain L=512, T=1200: 1.53 ms per 8
+realizations (~6.7 M site-layers/s); chain L=1024, T=2000 recorded in the
+bench run.
+
+### Limitations
+
+Bond DP only (site DP and the Domany-Kinzel stochastic cellular automaton
+are different processes); no activity-conditioned observables (k-moments,
+pair correlations) or winding variants yet; spatial lattice must be an
+owned `CsrLattice` (borrowed views via a future adapter if a need
+appears); the extinction-time scalar is a per-realization integer
+recorded as f64.

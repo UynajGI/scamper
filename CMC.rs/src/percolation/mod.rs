@@ -45,8 +45,9 @@ pub use carlo::{StaticLaw, StaticPercolationError, StaticPercolationMC};
 pub use configuration::StaticConfiguration;
 pub use directed::{
     analyze_strong_components, analyze_weak_components, reachable, DirectedAnalysisError,
-    ReachabilityWorkspace, StrongComponentResult, StrongComponentSummary, StrongComponentWorkspace,
-    WeakComponentResult, WeakComponentSummary, WeakComponentWorkspace,
+    DpProcessError, DpSeedPolicy, LayeredDirectedPercolationMC, ReachabilityWorkspace,
+    StrongComponentResult, StrongComponentSummary, StrongComponentWorkspace, WeakComponentResult,
+    WeakComponentSummary, WeakComponentWorkspace,
 };
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
 pub use network::{

@@ -18,10 +18,12 @@
 use core::fmt;
 use std::collections::TryReserveError;
 
+mod process;
 mod reach;
 mod strong;
 mod weak;
 
+pub use process::{DpProcessError, DpSeedPolicy, LayeredDirectedPercolationMC};
 pub use reach::{reachable, ReachabilityWorkspace};
 pub use strong::{
     analyze_strong_components, StrongComponentResult, StrongComponentSummary,

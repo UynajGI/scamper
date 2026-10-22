@@ -58,6 +58,8 @@ mod continuous_cross_solver;
 mod continuous_spins;
 #[path = "physics/directed_analysis.rs"]
 mod directed_analysis;
+#[path = "physics/directed_process.rs"]
+mod directed_process;
 #[path = "physics/dynamics_exact.rs"]
 mod dynamics_exact;
 #[path = "physics/ergodicity.rs"]
