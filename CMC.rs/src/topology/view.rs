@@ -1,4 +1,4 @@
-use super::{EdgeId, VertexId};
+use super::{ArcId, EdgeId, VertexId};
 
 /// One undirected incidence from the queried vertex.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,16 +54,53 @@ pub trait UndirectedGraphView: GraphView {
     fn incidences(&self, vertex: VertexId) -> impl Iterator<Item = Incidence> + '_;
 }
 
-// D1 will decide the public directed-incidence shape. Keeping these capabilities
-// crate-private prevents the F1 sketch from becoming a compatibility promise.
-#[allow(dead_code)]
-pub(crate) trait DirectedOutGraphView: GraphView {
-    fn out_neighbors(&self, vertex: VertexId) -> impl Iterator<Item = VertexId> + '_;
+/// One directed incidence (arc) leaving or entering the queried vertex.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ArcIncidence {
+    /// The vertex reached by following the arc in the queried direction.
+    pub neighbor: VertexId,
+    /// The arc traversed.
+    pub arc: ArcId,
 }
 
-#[allow(dead_code)]
-pub(crate) trait DirectedInGraphView: GraphView {
-    fn in_neighbors(&self, vertex: VertexId) -> impl Iterator<Item = VertexId> + '_;
+/// Read-only directed multigraph capability (D1).
+///
+/// Arc IDs are stable dense indices; arc `a` runs
+/// `arc_endpoints(a)[0] -> arc_endpoints(a)[1]`. Parallel arcs (same
+/// source and target) keep distinct IDs; self-loops are legal and count as
+/// one out-incidence and one in-incidence at their vertex. Directedness is
+/// a capability, never a storage flag: out- and in-adjacency are separate
+/// traits so a caller cannot silently treat an arc list as symmetric.
+pub trait DirectedGraphView: GraphView {
+    fn arc_count(&self) -> usize;
+
+    /// Returns the ID at `index`, or `None` outside this view's dense range.
+    #[inline]
+    fn arc_id(&self, index: usize) -> Option<ArcId> {
+        ArcId::new(index, self.arc_count())
+    }
+
+    /// `[source, target]` of the arc; direction is source -> target.
+    fn arc_endpoints(&self, arc: ArcId) -> [VertexId; 2];
+
+    /// Convenience iterator over this view's dense arc IDs in ascending
+    /// order. Like [`GraphView::vertex_ids`], this default is a convenience,
+    /// not a performance obligation.
+    #[inline]
+    fn arc_ids(&self) -> impl Iterator<Item = ArcId> {
+        (0..self.arc_count()).map(ArcId::from_valid_index)
+    }
+}
+
+/// Outgoing-adjacency capability: iterate the arcs leaving a vertex.
+pub trait DirectedOutGraphView: DirectedGraphView {
+    fn out_arcs(&self, vertex: VertexId) -> impl Iterator<Item = ArcIncidence> + '_;
+}
+
+/// Incoming-adjacency capability: iterate the arcs entering a vertex,
+/// backed by a transpose representation.
+pub trait DirectedInGraphView: DirectedGraphView {
+    fn in_arcs(&self, vertex: VertexId) -> impl Iterator<Item = ArcIncidence> + '_;
 }
 
 #[cfg(test)]
@@ -78,39 +115,39 @@ mod tests {
         }
     }
 
+    impl DirectedGraphView for OutFixture {
+        fn arc_count(&self) -> usize {
+            1
+        }
+
+        fn arc_endpoints(&self, _arc: ArcId) -> [VertexId; 2] {
+            [VertexId::from_valid_index(0), VertexId::from_valid_index(1)]
+        }
+    }
+
     impl DirectedOutGraphView for OutFixture {
-        fn out_neighbors(&self, vertex: VertexId) -> impl Iterator<Item = VertexId> + '_ {
-            self.0[vertex.index()].iter().copied()
+        fn out_arcs(&self, vertex: VertexId) -> impl Iterator<Item = ArcIncidence> + '_ {
+            let neighbor = self.0[vertex.index()][0];
+            [ArcIncidence {
+                neighbor,
+                arc: ArcId::from_valid_index(0),
+            }]
+            .into_iter()
         }
-    }
-
-    struct InFixture([[VertexId; 1]; 2]);
-
-    impl GraphView for InFixture {
-        fn vertex_count(&self) -> usize {
-            2
-        }
-    }
-
-    impl DirectedInGraphView for InFixture {
-        fn in_neighbors(&self, vertex: VertexId) -> impl Iterator<Item = VertexId> + '_ {
-            self.0[vertex.index()].iter().copied()
-        }
-    }
-
-    fn first_out<G: DirectedOutGraphView>(graph: &G, vertex: VertexId) -> VertexId {
-        graph.out_neighbors(vertex).next().expect("fixture arc")
-    }
-
-    fn first_in<G: DirectedInGraphView>(graph: &G, vertex: VertexId) -> VertexId {
-        graph.in_neighbors(vertex).next().expect("fixture arc")
     }
 
     #[test]
-    fn directed_in_and_out_sketches_are_separate_capabilities() {
-        let zero = VertexId::new(0, 2).expect("fixture ID");
-        let one = VertexId::new(1, 2).expect("fixture ID");
-        assert_eq!(first_out(&OutFixture([[one], [one]]), zero), one);
-        assert_eq!(first_in(&InFixture([[zero], [zero]]), one), zero);
+    fn directed_out_is_a_capability_with_arc_identity() {
+        let graph = OutFixture([
+            [VertexId::from_valid_index(1)],
+            [VertexId::from_valid_index(1)],
+        ]);
+        let first = graph
+            .out_arcs(VertexId::from_valid_index(0))
+            .next()
+            .expect("fixture arc");
+        assert_eq!(first.arc.index(), 0);
+        assert_eq!(first.neighbor.index(), 1);
+        assert_eq!(graph.arc_endpoints(first.arc)[1], first.neighbor);
     }
 }

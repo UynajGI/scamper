@@ -96,12 +96,170 @@ fn bench_topology_view(criterion: &mut Criterion) {
     incidences.finish();
 }
 
+/// D1 gate: generic directed adjacency scans must stay within the same
+/// noise band as direct field access on the owned representation.
+fn direct_directed_arc_scan(graph: &cmc_rs::DirectedCsr) -> usize {
+    graph.arcs.iter().fold(0usize, |sum, arc| {
+        sum.wrapping_add(arc.source).wrapping_add(arc.target)
+    })
+}
+
+fn generic_directed_arc_scan<G: cmc_rs::DirectedGraphView>(graph: &G) -> usize {
+    graph.arc_ids().fold(0usize, |sum, arc| {
+        let [source, target] = graph.arc_endpoints(arc);
+        sum.wrapping_add(source.index())
+            .wrapping_add(target.index())
+    })
+}
+
+fn direct_directed_out_scan(graph: &cmc_rs::DirectedCsr) -> usize {
+    (0..graph.vertex_count).fold(0usize, |sum, vertex| {
+        let (start, end) = (graph.out_offsets[vertex], graph.out_offsets[vertex + 1]);
+        (start..end).fold(sum, |sum, slot| {
+            sum.wrapping_add(graph.out_neighbors[slot])
+                .wrapping_add(graph.out_arc_ids[slot])
+        })
+    })
+}
+
+fn generic_directed_out_scan<G: cmc_rs::DirectedOutGraphView>(graph: &G) -> usize {
+    graph.vertex_ids().fold(0usize, |sum, vertex| {
+        graph.out_arcs(vertex).fold(sum, |sum, incidence| {
+            sum.wrapping_add(incidence.neighbor.index())
+                .wrapping_add(incidence.arc.index())
+        })
+    })
+}
+
+fn direct_directed_in_scan(graph: &cmc_rs::DirectedCsr) -> usize {
+    (0..graph.vertex_count).fold(0usize, |sum, vertex| {
+        let (start, end) = (graph.in_offsets[vertex], graph.in_offsets[vertex + 1]);
+        (start..end).fold(sum, |sum, slot| {
+            sum.wrapping_add(graph.in_neighbors[slot])
+                .wrapping_add(graph.in_arc_ids[slot])
+        })
+    })
+}
+
+fn generic_directed_in_scan<G: cmc_rs::DirectedInGraphView>(graph: &G) -> usize {
+    graph.vertex_ids().fold(0usize, |sum, vertex| {
+        graph.in_arcs(vertex).fold(sum, |sum, incidence| {
+            sum.wrapping_add(incidence.neighbor.index())
+                .wrapping_add(incidence.arc.index())
+        })
+    })
+}
+
+fn bench_directed_topology_view(criterion: &mut Criterion) {
+    // Orient every square bond +x/+y, plus reverse arcs on every other
+    // column to exercise mixed in/out degrees.
+    let square = build_square(WIDTH, HEIGHT, false);
+    let mut arcs = Vec::with_capacity(square.n_edges() * 2);
+    for edge in &square.edges {
+        let (source, target) = if edge.source < edge.target {
+            (edge.source, edge.target)
+        } else {
+            (edge.target, edge.source)
+        };
+        arcs.push(cmc_rs::Arc::new(source, target));
+        if source % 2 == 0 {
+            arcs.push(cmc_rs::Arc::new(target, source));
+        }
+    }
+    let directed = cmc_rs::DirectedCsr::from_arcs(square.n_sites, arcs).expect("valid arcs");
+    let endpoints: Vec<_> = directed
+        .arcs
+        .iter()
+        .map(|arc| [arc.source, arc.target])
+        .collect();
+    let borrowed = cmc_rs::BorrowedDirectedCsr::new(
+        &directed.out_offsets,
+        &directed.out_neighbors,
+        &directed.out_arc_ids,
+        &endpoints,
+        &directed.in_offsets,
+        &directed.in_neighbors,
+        &directed.in_arc_ids,
+    )
+    .expect("builder output must validate");
+
+    let arc_count = cmc_rs::DirectedGraphView::arc_count(&directed);
+    assert_eq!(
+        direct_directed_arc_scan(&directed),
+        generic_directed_arc_scan(&directed)
+    );
+    assert_eq!(
+        direct_directed_out_scan(&directed),
+        generic_directed_out_scan(&directed)
+    );
+    assert_eq!(
+        direct_directed_out_scan(&directed),
+        generic_directed_out_scan(&borrowed)
+    );
+    assert_eq!(
+        direct_directed_in_scan(&directed),
+        generic_directed_in_scan(&directed)
+    );
+    assert_eq!(
+        direct_directed_in_scan(&directed),
+        generic_directed_in_scan(&borrowed)
+    );
+
+    for (label, elements) in [
+        ("arc_scan", arc_count),
+        ("out_scan", arc_count),
+        ("in_scan", arc_count),
+    ] {
+        let mut group = criterion.benchmark_group(format!(
+            "topology_view/directed_{label}/V={}/A={}",
+            directed.vertex_count, arc_count
+        ));
+        group.throughput(Throughput::Elements(elements as u64));
+        match label {
+            "arc_scan" => {
+                group.bench_function("direct_owned", |bencher| {
+                    bencher.iter(|| black_box(direct_directed_arc_scan(black_box(&directed))));
+                });
+                group.bench_function("generic_owned", |bencher| {
+                    bencher.iter(|| black_box(generic_directed_arc_scan(black_box(&directed))));
+                });
+                group.bench_function("generic_borrowed", |bencher| {
+                    bencher.iter(|| black_box(generic_directed_arc_scan(black_box(&borrowed))));
+                });
+            }
+            "out_scan" => {
+                group.bench_function("direct_owned", |bencher| {
+                    bencher.iter(|| black_box(direct_directed_out_scan(black_box(&directed))));
+                });
+                group.bench_function("generic_owned", |bencher| {
+                    bencher.iter(|| black_box(generic_directed_out_scan(black_box(&directed))));
+                });
+                group.bench_function("generic_borrowed", |bencher| {
+                    bencher.iter(|| black_box(generic_directed_out_scan(black_box(&borrowed))));
+                });
+            }
+            _ => {
+                group.bench_function("direct_owned", |bencher| {
+                    bencher.iter(|| black_box(direct_directed_in_scan(black_box(&directed))));
+                });
+                group.bench_function("generic_owned", |bencher| {
+                    bencher.iter(|| black_box(generic_directed_in_scan(black_box(&directed))));
+                });
+                group.bench_function("generic_borrowed", |bencher| {
+                    bencher.iter(|| black_box(generic_directed_in_scan(black_box(&borrowed))));
+                });
+            }
+        }
+        group.finish();
+    }
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(20)
         .warm_up_time(Duration::from_millis(250))
         .measurement_time(Duration::from_secs(1));
-    targets = bench_topology_view
+    targets = bench_topology_view, bench_directed_topology_view
 }
 criterion_main!(benches);

@@ -51,6 +51,33 @@ pub enum TopologyError {
         source_seen: bool,
         target_seen: bool,
     },
+    /// An out-incidence references an arc that does not start there:
+    /// `arc_endpoints[arc][0] != vertex` or the neighbor is not the target.
+    OutArcMismatch {
+        incidence: usize,
+        vertex: usize,
+        neighbor: usize,
+        arc: usize,
+    },
+    /// An in-incidence references an arc that does not end there:
+    /// `arc_endpoints[arc][1] != vertex` or the neighbor is not the source.
+    InArcMismatch {
+        incidence: usize,
+        vertex: usize,
+        neighbor: usize,
+        arc: usize,
+    },
+    /// An arc appears `actual != 1` times across the out incidences
+    /// (`0` = missing, `>= 2` = duplicated).
+    ArcOutMultiplicity {
+        arc: usize,
+        actual: usize,
+    },
+    /// An arc appears `actual != 1` times across the transpose incidences.
+    ArcInMultiplicity {
+        arc: usize,
+        actual: usize,
+    },
     /// Validation scratch could not reserve one byte per physical edge.
     ///
     /// This covers capacity overflow and allocator errors reported by
@@ -123,6 +150,34 @@ impl fmt::Display for TopologyError {
             Self::IncidenceMultiplicity { edge, actual } => write!(
                 formatter,
                 "physical edge {edge} must have exactly two incidences, got {actual}"
+            ),
+            Self::OutArcMismatch {
+                incidence,
+                vertex,
+                neighbor,
+                arc,
+            } => write!(
+                formatter,
+                "out-incidence {incidence} at vertex {vertex} references arc {arc} \
+                 that does not run {vertex} -> {neighbor}"
+            ),
+            Self::InArcMismatch {
+                incidence,
+                vertex,
+                neighbor,
+                arc,
+            } => write!(
+                formatter,
+                "in-incidence {incidence} at vertex {vertex} references arc {arc} \
+                 that does not run {neighbor} -> {vertex}"
+            ),
+            Self::ArcOutMultiplicity { arc, actual } => write!(
+                formatter,
+                "arc {arc} appears {actual} times in the out incidences (expected exactly 1)"
+            ),
+            Self::ArcInMultiplicity { arc, actual } => write!(
+                formatter,
+                "arc {arc} appears {actual} times in the transpose incidences (expected exactly 1)"
             ),
             Self::EndpointIncidenceMultiplicity {
                 edge,

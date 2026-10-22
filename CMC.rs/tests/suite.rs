@@ -126,6 +126,8 @@ mod potts_exact;
 mod statistical_regression;
 #[path = "physics/sw_continuous.rs"]
 mod sw_continuous;
+#[path = "physics/topology_directed.rs"]
+mod topology_directed;
 #[path = "physics/topology_view.rs"]
 mod topology_view;
 #[path = "physics/transition_balance.rs"]

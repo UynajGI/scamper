@@ -23,7 +23,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Family or capability | Status | Current scope or reason |
 |---|---|---|
 | Read-only undirected topology capability | Experimental | Independently reviewed F1 `GraphView`/`UndirectedGraphView` contracts use dense IDs and static dispatch; `CsrLattice` and validated zero-copy `BorrowedUndirectedCsr` implement them. The API remains provisional until the platform merges into `dev`. |
-| Directed topology capability sketch | Experimental | Separate outgoing/incoming signatures exist only crate-private with compile fixtures; no directed API is re-exported before D1 fixes arc identity and storage contracts. |
+| Directed topology capability (D1) | Experimental — awaiting independent review | Public `DirectedGraphView` (dense `ArcId`s, `arc_endpoints` = `[source, target]`) with separate `DirectedOutGraphView`/`DirectedInGraphView` capabilities — directedness is structural, never a storage flag. Owned `DirectedCsr` (public fields + `validate`, parallel arcs and self-loops first-class: a self-loop is one out- and one in-incidence) and zero-copy `BorrowedDirectedOutCsr`/`BorrowedDirectedCsr` (the latter requires the transpose arrays). Construction validates offset shape, incidence lengths, ranges, per-arc sense on both sides, and exact arc multiplicity (missing or duplicated arcs are typed errors). See the D1 section below. |
 | Static configuration and Bernoulli-law substrate | Experimental | F2 provisional API separates private activity storage from independent site/bond/mixed laws, validates probability domains and topology lengths, and samples allocation-free after preparation. The independently reviewed F3 analyzer/workspace and F4 observables build on this substrate; the layer remains Experimental until the platform merges into `dev`. |
 | Static site, bond, and mixed Bernoulli percolation on arbitrary owned or borrowed undirected graphs | Validated | All family-specific gates pass: F3 component analysis with reusable workspace, canonical identities, and multi-query crossing; F4 `ObservablePlan` observables and owned `StaticPercolationMC` with every PR #4 validation asset migrated, the zero-allocation adapter gate, and 16-seed z-scores; independent review passed. Production-ready once the branch merges into `dev`. |
 | Heterogeneous occupation probabilities | Validated | N1 promotes the F2 `ProbabilityField` substrate to the `StaticPercolationMC` adapter: `StaticLaw::site_heterogeneous`/`bond_heterogeneous`/`mixed_heterogeneous` own one validated `Probability` per vertex and/or per physical edge, with adapter-constructor domain validation and scheduler scheduling through `Run::from_parts()`. Gates passed: exact non-identically-distributed small-graph enumeration (independently reproduced), bitwise uniform and mixed-pure reductions, endpoint determinism, typed length/invalid-probability rejection, 16-seed scheduler z-scores for site/bond/mixed (enumeration and Poisson-binomial references), uniform-vs-heterogeneous Criterion comparison, and a 0-allocation heterogeneous adapter probe. Independent review passed; production on the `dev` merge. The N2 random-failure facade now builds on this substrate. |
@@ -1644,3 +1644,68 @@ build of a G(n, m) edge list, text generated outside the timed region:
 A million edges ingest in well under a second, so the roadmap's bar for a
 custom binary or memory-mapped format is not met; text remains the only
 network input format.
+
+
+## D1 directed topology capability
+
+Public directed capabilities (roadmap §11 D1), promoted from the F1
+crate-private sketch:
+
+- `DirectedGraphView: GraphView` — `arc_count`, `arc_id`, `arc_ids`, and
+  `arc_endpoints(arc) = [source, target]`; dense `ArcId`s follow the F1
+  ID contract.
+- `DirectedOutGraphView` / `DirectedInGraphView` — separate adjacency
+  capabilities; no symmetric fallback exists and `CsrLattice` never
+  masquerades as directed.
+
+Owned `DirectedCsr` (`topology/directed_csr.rs`): one dense physical arc
+table plus two CSR incidence structures (outgoing by source, transposed by
+target), built by `from_arcs` (input order = arc ID order). Public fields
+with a documented invariant list and `validate()`, matching the
+`CsrLattice` contract. Parallel arcs keep distinct IDs; a self-loop is one
+out- and one in-incidence at its vertex.
+
+Borrowed zero-copy views (`topology/borrowed_directed_csr.rs`):
+`BorrowedDirectedOutCsr` (out CSR + arc endpoint table — the minimum
+carrying stable arc identity) and `BorrowedDirectedCsr` (+ transpose
+arrays). One-time validation on both sides: offset shape, incidence
+lengths, neighbor/arc ranges, per-arc sense (`OutArcMismatch` /
+`InArcMismatch`), and exact multiplicity — `ArcOutMultiplicity` /
+`ArcInMultiplicity` catch both duplicated and missing arcs.
+
+### Validation
+
+`tests/physics/topology_directed.rs` (5 tests): owned exposes both
+directions with correct arc identity on a ring + parallel-arc + self-loop
+graph; empty graphs and isolated vertices are valid; owned/borrowed parity
+for every vertex in both directions; every malformed representation is
+rejected with the exact typed variant (12 rejection cases across offset
+shape, lengths, ranges, sense, and multiplicity on both sides);
+`validate` catches mutated public fields (sense check fires before
+multiplicity for inconsistent corruptions; sense-consistent duplicates
+trip multiplicity).
+
+### Trait-overhead benchmark (F1-style local gate)
+
+`cargo bench -p cmc-rs --bench topology_view` — directed additions on a
+V=16384, A=48832 mixed-orientation grid, same shapes as the F1 gates:
+
+| Scan | direct | generic owned | generic borrowed |
+|---|---|---|---|
+| out incidences | 79.8 µs | 68.9 µs (−14%) | 75.1 µs |
+| in incidences | 81.9 µs | 68.5 µs (−16%) | ~75 µs |
+| arc table | 18.6 µs | 21.8 µs (+17%) | 22.0 µs |
+
+The adjacency scans — the hot path D2 analyses iterate — are within the F1
+band (generic even faster, as in F1's incidence scan). The arc-table scan's
++17% is a storage-layout effect, not abstraction cost: the direct fold over
+the compact `Vec<Arc>` auto-vectorizes, while the generic per-element cost
+(0.45 ns) is *below* F1's generic edge scan (0.77 ns per element).
+Recorded as data; the D2 analyzers iterate incidences.
+
+### Limitations
+
+No directed analysis yet (D2: reachability, weak components, SCC). No
+directed lattice builders — construct via `DirectedCsr::from_arcs` or the
+transpose-validated borrowed views. No arc weights or arc activity types;
+D2/D3 define those against their own occupancy contracts.

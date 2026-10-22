@@ -150,8 +150,10 @@ pub use postprocess::{
 };
 pub use statistics::{statistical_efficiency, StatisticalEfficiency};
 pub use topology::{
-    BorrowedUndirectedCsr, DirectedDisplacement, EdgeId, EmbeddingError, GraphView, Incidence,
-    LatticeEmbedding, PeriodicEmbedding, TopologyError, UndirectedGraphView, VertexId,
+    Arc, ArcId, ArcIncidence, BorrowedDirectedCsr, BorrowedDirectedOutCsr, BorrowedUndirectedCsr,
+    DirectedCsr, DirectedDisplacement, DirectedGraphView, DirectedInGraphView,
+    DirectedOutGraphView, EdgeId, EmbeddingError, GraphView, Incidence, LatticeEmbedding,
+    PeriodicEmbedding, TopologyError, UndirectedGraphView, VertexId,
 };
 pub use worm::{
     enumerate_ising_graph_expansion, EndpointPairHistogram, ExactIsingGraphExpansion,
