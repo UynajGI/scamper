@@ -48,6 +48,8 @@ mod worm_stage5;
 
 #[path = "physics/bkl_gillespie_equilibrium.rs"]
 mod bkl_gillespie_equilibrium;
+#[path = "physics/bootstrap_percolation.rs"]
+mod bootstrap_percolation;
 #[path = "physics/common.rs"]
 mod common;
 #[path = "physics/connectivity.rs"]
@@ -78,6 +80,8 @@ mod hybrid_compositions;
 mod input_validation;
 #[path = "physics/kawasaki_exact.rs"]
 mod kawasaki_exact;
+#[path = "physics/kcore_percolation.rs"]
+mod kcore_percolation;
 #[path = "physics/lattice_exact.rs"]
 mod lattice_exact;
 #[path = "physics/long_convergence.rs"]

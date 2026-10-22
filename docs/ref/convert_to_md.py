@@ -40,6 +40,16 @@ PAPERS = {
         "Phys. Rev. Lett. 86, 3682 (2001)",
         "https://arxiv.org/abs/cond-mat/0010251",
     ),
+    "Holroyd_2003_PTRF_bootstrap_sharp_threshold": (
+        "Sharp Metastability Threshold for Two-Dimensional Bootstrap Percolation",
+        "Probab. Theory Relat. Fields 125, 195-224 (2003)",
+        "https://arxiv.org/abs/math/0206132",
+    ),
+    "Janson_2007_kcore_simple_solution": (
+        "A Simple Solution to the k-Core Problem",
+        "Random Structures Algorithms 30, 50-62 (2007)",
+        "https://arxiv.org/abs/math/0508453",
+    ),
 }
 
 def main() -> int:

@@ -95,6 +95,14 @@ harness = false
 name = "directed_process"
 harness = false
 
+[[bench]]
+name = "kcore_percolation"
+harness = false
+
+[[bench]]
+name = "bootstrap_percolation"
+harness = false
+
 [features]
 default = []
 allocation-probe = ["dep:allocation-counter"]

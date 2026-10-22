@@ -31,8 +31,8 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Targeted degree attack and robustness curves (N3) | Validated | `DegreeAttackMC` removes vertices in descending original degree with an explicit tie policy (`DegreeDescendingStableId`, seed-independent, or `DegreeDescendingSeededShuffle`, one realization per seed); one sweep is one complete removal trajectory recorded as ONE C0 vector sample (`RobustnessCurve`, `RobustnessSusceptibility` with the F4 defined-indicator convention, `RobustnessRemovedFraction` coordinates), never independent scalar samples. Grids: every removal, every k-th, or explicit checkpoints. Gates: per-step independent-BFS parity, strict survivor monotonicity, tie reproduction, coordinates/provenance through `Results` attributes, Callaway et al. Eq. (14) degree-cutoff anchors, Cohen et al. breakdown bracket; PDFs in `docs/ref/`. Adaptive residual-degree attack remains Not implemented by design. Independent review passed 2026-10-22 (both anchor graphs rebuilt independently; all eight Callaway values and both Cohen f_c values reproduced digit-for-digit); see the N3 section below and `docs/reviews/`. |
 | Directed static analysis (D2) | Validated | Three distinct questions, three distinct result types over the D1 capabilities: `analyze_weak_components` (union-find over the arc table, canonical lowest-ID labels), `analyze_strong_components` (iterative non-recursive Tarjan; `acyclic` tracks singleton-SCC self-loops separately), and `reachable` (early-exit BFS with stamped visitation; `reachable(v, v)` true by definition). Anchors: exhaustive enumeration of every digraph on 3 and 4 vertices vs transitive-closure ground truth (SCC, weak, and reachability all agree), Tarjan vs an independently written Kosaraju, weak vs undirected flood-fill, SCC transpose invariance, and closed forms for chains/trees/stars/rings/DAGs. Independent review passed 2026-10-22 (Tarjan hand-traced frame by frame; a third independent SCC implementation agreed on 300 fresh multigraphs; stamp rollover empirically tested beyond 2^32 queries); see the D2 section below and `docs/reviews/`. |
 | Layered space-time directed percolation (D3) | Validated | `LayeredDirectedPercolationMC`: one sweep = one complete space-time realization over T explicit causal layers (double frontier bitset — memory scales with layer width, not space-time volume), recorded as ONE C0 vector sample (`DpLayerActive`, `DpSurvival` per layer; `DpExtinctionTime` scalar) — never T independent measurements. Directed bond DP with documented bitwise draw contract; single-seed and full-occupation initial conditions. Anchored to Hinrichsen Adv. Phys. 49, 815 (2000) (archived): frontier DP equals explicit-DAG path enumeration (D2 reachability engine); P(t) ~ t^-delta at p_c = 0.6447001 with delta = 0.159464 for both survival and full-seed density decay; sub/super-critical brackets. Independent review passed 2026-10-22 (a from-scratch RNG-identical model reproduced production traces bit-exactly; delta_hat converged at 8000 realizations); see the D3 section below and `docs/reviews/`. |
-| Bootstrap percolation | Not implemented | No activation-threshold closure process. |
-| k-core percolation | Not implemented | No residual-degree peeling process. |
+| Bootstrap percolation | Experimental — awaiting independent review | E2 `BootstrapWorkspace` + `BootstrapPercolationMC` (roadmap §12): monotone activation-threshold closure over the E1 `ProcessQueue`/`NeighborCounters`/`StampFlags` primitives, generic over `UndirectedGraphView` with seeds as any `VertexActivity`, homogeneous `r` or per-vertex `u32` thresholds, and TWO explicit clocks — `SynchronousRounds` (Holroyd's parallel rounds) and `QueueClosure` (order-independent FIFO monotone closure) — recorded as `BootstrapActiveCount` (ONE C0 vector sample, fixed shape, truncate/pad convention) + `BootstrapFinalActive`/`BootstrapActivatedTotal`/`BootstrapRounds`|`BootstrapEvents` scalars. Gates: exhaustive 2^V seed masks on path/cycle/star/complete for every r in 0..=max_degree+1 AND seeded heterogeneous vectors vs an independent repeated-full-scan reference (closure sets, per-round trajectories, scalar invariants; ~2600 production runs); r=0 activates all / r>max_degree preserves seeds verbatim; FIFO queue closure = one-random-vertex-at-a-time and shuffled-sweep closures (test-RNG orders) = synchronous closure on random multigraphs; hand-worked heterogeneous cascade; bitwise replay of the one-f64-per-vertex density draw contract; Holroyd (PTRF 125, 195 (2003), arXiv:math/0206132, archived PDF) finite-size metastability brackets — his own full-activation observable I(L,p) is 1.0000 +/- 0.0013 at p+ = pi^2/(18 ln L) and 0.0000-0.0025 at p+/4 for L = 32/64/128, the measured half-majority density p_hat(L) = 0.0692/0.0577/0.0480 decays monotonically (the 1/ln L law) with p_hat ln L = 0.240/0.240/0.233 strictly inside (lambda/4, lambda), and the metastable window is sharper than a factor 1.5 (P(p_hat/1.5) <= 0.018, P(1.5 p_hat) >= 0.992); 0-allocation realization probe on five topologies; Criterion data. See the E2 section. |
+| k-core percolation | Experimental — awaiting independent review | E3 `kcore_decompose` + `KCoreMC` (roadmap §12): residual-degree peeling over the E1 `ProcessQueue`/`NeighborCounters`/`StampFlags` primitives, generic over `UndirectedGraphView`, uniform or per-vertex `u32` thresholds, arbitrary initial activity, synchronous-round survivor accounting (`KCoreSurvivorCount` as ONE C0 vector sample + `KCoreFinalSize`/`KCoreRounds`/`KCoreDeletedTotal` scalars), deterministic deletion order and waves exposed post-run. Gates: exhaustive 2^V initial subsets on path/cycle/star/complete vs an independent repeated-full-scan reference (1456 runs), k=0 removes nothing / k>max_degree removes everything in one round, queue-order independence across 90 shuffled relabeling orders, hand-worked heterogeneous thresholds, 1-core/tree closed forms, bitwise site-law reduction of the activity draw, and the Janson-Luczak (arXiv:math/0508453, archived) 3-core emergence bracket on G(n=5e4, m) — own solver reproduces `lambda_3 = 3.350919`, below c=lambda_3-0.15 the 3-core is extinguished (0.00000 ± 0.00000), above c=lambda_3+0.15 it measures 0.45309 ± 0.00134 vs theory 0.45167. 0 allocations/realization probe on five topologies; Criterion data below. See the E3 section. |
 | Achlioptas processes | Not implemented | No candidate-edge process, rule, or process-time output. |
 | Invasion percolation | Not implemented | No frozen thresholds or minimum-frontier growth. |
 | Continuum/Boolean percolation | Not implemented | Particle geometry and cell lists exist elsewhere, but no continuum percolation adapter or validated overlap analyzer exists. |
@@ -1858,3 +1858,286 @@ pair correlations) or winding variants yet; spatial lattice must be an
 owned `CsrLattice` (borrowed views via a future adapter if a need
 appears); the extinction-time scalar is a per-realization integer
 recorded as f64.
+
+## E3 k-core percolation
+
+`kcore_decompose` + `KCoreWorkspace` (`percolation/process/kcore.rs`) and
+the `KCoreMC` adapter: the k-core is the unique maximal induced subgraph
+in which every vertex `v` keeps at least `t_v` neighbors (`CoreThresholds`
+uniform or per-vertex `u32`). Degrees use the platform multigraph
+convention (a self-loop contributes 2, parallel edges count separately).
+
+### API
+
+- `kcore_decompose(graph, thresholds, initial_active, workspace)`: the
+  reusable, RNG-free core analysis, generic over `UndirectedGraphView`,
+  driven through the E1 primitives — `ProcessQueue` (two-phase FIFO),
+  `NeighborCounters` (residual degrees), `StampFlags` (deleted/visited
+  marks). Deterministic (ascending initial scan, CSR incidence order).
+  Typed `KCoreError` rejections (threshold/activity length, `u32` counter
+  range, capacity); zero allocations after `prepare`.
+- `KCoreSummary`: core vertex count, core edge count (physical edges with
+  both endpoints in the core), largest core component (one BFS pass),
+  peeling rounds, deleted total.
+- Post-run workspace access: `deletion_order()` (pop order),
+  `round_survivors()` (length rounds + 1; index 0 = initial activity),
+  `in_core(v)`, `deletion_round(v)` (synchronous wave), `residual_degree(v)`.
+- `KCoreMC::new(lattice, keep, thresholds, recorded_rounds)`: one sweep
+  draws the initial activity with the F2 uniform site law (bitwise
+  identical to `StaticPercolationMC` site sampling — verified gate; exact
+  keep = 0/1 shortcuts) and peels deterministically. One measure records
+  ONE C0 vector sample `KCoreSurvivorCount[r]` (fixed shape
+  `recorded_rounds + 1`; early termination pads with the final core size,
+  overrun truncates the recording only — the D3 fixed-layer convention)
+  plus scalars `KCoreFinalSize`, `KCoreRounds`, `KCoreDeletedTotal`.
+  Researchers sweeping `k` or the keep probability run one adapter per
+  value (each point is its own ensemble); documented, deliberately no
+  built-in sweep.
+
+### Semantics: synchronous rounds under FIFO peeling
+
+Peeling pops each queue segment (vertices enqueued during the previous
+round) as one round; a vertex crossing below its threshold during round
+`r` deletions is deleted in round `r + 1` — exactly the simultaneous-wave
+process, at one-incidence-touch cost. The final core is order-independent
+mathematically (the min-residual-degree subgraphs are closed under union,
+so the maximal element is unique); the shuffled-relabeling gate verifies
+this empirically rather than the code enforcing it.
+
+### Validation gates (roadmap §12 E3)
+
+`tests/physics/kcore_percolation.rs` (11 tests):
+
+- **Exhaustive initial subgraphs vs repeated full scans**: every `2^V`
+  initial activity subset on path5/cycle6/star6/complete4/complete5,
+  uniform `k in {0,1,2,3,6}` plus two heterogeneous threshold patterns —
+  1456 (graph, threshold, subset) runs — match an independently written
+  repeated-full-scan reference on core membership, every summary field,
+  and the round count.
+- **Endpoints**: `k = 0` removes nothing on 288 enumerated subsets;
+  `k > max_degree` removes everything in exactly one synchronous round
+  with ascending deletion order and survivor curve `[V, 0]`.
+- **Queue-order independence**: 12 random relabelings (with shuffled edge
+  insertion order) per (graph, k, subset) across path/cycle/star/complete
+  — 90 distinct deletion orders observed, identical core sets and
+  summaries throughout.
+- **Hand-worked heterogeneous thresholds** with full wave accounting
+  (path/star cascades traced by hand, survivors and `deletion_round`
+  asserted).
+- **Classic deterministic facts**: the 1-core of any connected graph is
+  the whole graph with zero rounds; `k = 1` removes only isolates; the
+  k-core of a tree is empty for every `k >= 2`.
+- **Adapter contract**: keep = 1 is bitwise the direct decomposition;
+  initial activity is bitwise the F2 site law on the same stream; one
+  realization records exactly one vector sample (fixed shape, one bin per
+  element per realization, non-increasing means); the recorded-round
+  budget truncates/pads without changing the exact scalars; typed
+  constructor rejections.
+- **Literature anchor** — Janson & Luczak, Random Structures Algorithms
+  30, 50-62 (2007) (arXiv:math/0508453, archived in `docs/ref/`),
+  Theorem 1.1 (after Pittel, Spencer & Wormald): an own solver computes
+  `lambda_k = min_{mu>0} mu/psi_{k-1}(mu)` (`psi_j(mu) = P(Poisson(mu) >=
+  j)`) and the above-threshold fraction `psi_k(mu_k(lambda))`. Measured
+  (G(n = 5e4, m), k = 3, 12 realizations per point, env-tunable via
+  `SCUTTLE_KCORE_REALIZATIONS`):
+  - solver `lambda_3 = 3.350919` at `mu* = 1.7933` (identity check, not
+    an MC claim);
+  - below, c = 3.2009: 3-core fraction 0.00000 ± 0.00000, largest core
+    0.00000 — extinguished;
+  - above, c = 3.5009: 3-core fraction 0.45309 ± 0.00134 vs theory
+    `psi_3(mu_3(c)) = 0.45167` (agreement within ~1 sigma + finite-N
+    slack), largest-core fraction 0.45309 (the giant carries the core).
+    A statistical bracket with real error bars, never an exact finite-N
+    threshold claim.
+
+### Steady-state allocation gate
+
+`KCORE_PROCESS_ALLOC` (allocation probe, k = 3, keep 0.5927, 256 recorded
+rounds, 128 measured realizations after warmup): **0 allocations and 0
+allocated bytes per realization** on all five benchmark topologies
+(chain/square/cubic/sparse-er/power-law at V = 4096).
+
+### Criterion data
+
+`cargo bench -p cmc-rs --bench kcore_percolation` (8 realizations per
+iteration, V = 4096, keep 0.5927, quick mode):
+
+| Case | k = 1 | k = 3 |
+|---|---|---|
+| chain (E 4095) | 1.04 ms | 1.04 ms |
+| square (E 8064) | 1.73 ms | 1.67 ms |
+| cubic (E 11520) | 2.34 ms | 2.55 ms |
+| sparse-er (E 16384) | 3.45 ms | 3.63 ms |
+| power-law (E 16374) | 2.94 ms | 3.24 ms |
+
+Per realization that is ~0.13-0.45 ms for V = 4096 at ~9-32 M peeled
+vertices/s in the Criterion elements convention (throughput unit: one
+vertex per realization).
+
+### Limitations
+
+Vertex process only (no edge activity/thresholds — a bond k-core variant
+would be a separate process); the recorded-round budget is fixed at
+construction (per-realization round counts vary, so the C0 vector needs
+the documented truncate/pad convention); no core-number decomposition
+(every vertex's maximal k, not just one k per run) — a future analytic
+layer if a workload justifies it; the adapter owns a `CsrLattice`
+(borrowed graphs use `kcore_decompose` directly); no built-in k/keep
+sweep by design (one adapter per ensemble point).
+
+## E2 bootstrap percolation
+
+`BootstrapWorkspace` + `BootstrapPercolationMC`
+(`percolation/process/bootstrap.rs`): monotone activation-threshold
+closure. An inactive vertex activates once its **active-neighbor
+incidences** reach a per-vertex threshold; a single O(V + E) closure
+replaces repeated full scans. Buffers are the E1 primitives only — there
+is deliberately no shared physical transition type (roadmap §12 E1/E2).
+
+### API
+
+- `BootstrapThreshold::Homogeneous { value }` or
+  `::Heterogeneous { values: Vec<u32> }` (one per dense vertex).
+- `BootstrapWorkspace::synchronous_rounds(graph, seeds, thresholds,
+  trajectory)` / `::queue_closure(...)`: RNG-free core analysis, generic
+  over `G: UndirectedGraphView` with seeds supplied as **any
+  `VertexActivity`** (researchers bring arbitrary graphs and
+  caller-sampled activity). `trajectory` is a caller-owned buffer holding
+  the per-step active counts; `BootstrapOutcome` carries `seed_count`,
+  `final_active`, `activated_total = final - seeds`, and the clock time
+  (`rounds` or `events`).
+- `BootstrapPercolationMC::new(graph, thresholds, seeds, dynamics, steps)`:
+  the Carlo.rs adapter, generic over the owned graph type. Seeds are
+  `BootstrapSeeds::Density { p }` (each vertex independently a seed; draw
+  contract: one `f64` per vertex, ascending dense index, seed iff
+  `draw < p`) or `::Fixed { vertices }` (explicit, deterministic
+  realizations). One `sweep()` is one complete realization; one
+  `measure()` records ONE C0 element-preserving array sample plus closure
+  scalars:
+  - `BootstrapActiveCount[i]`, `i` in `0..steps`: active count at recorded
+    step `i` (step 0 = seeds). Entries past the closure repeat the final
+    count; a closure longer than `steps` truncates the array while the
+    scalars still report the full closure.
+  - `BootstrapFinalActive`, `BootstrapActivatedTotal` (rule activations
+    beyond the seeds), and `BootstrapRounds` (synchronous) or
+    `BootstrapEvents` (queue) as the clock scalar.
+- `is_active(index)` exposes the last run's closure set on the workspace.
+
+### Conventions
+
+- **Two explicit clocks** (the roadmap's "specify ... whether recorded
+  time means synchronous rounds or queue closure order"):
+  `BootstrapDynamics::SynchronousRounds` is the literature's parallel
+  update (`A_0` = seeds; round `t + 1` activates every inactive vertex
+  with `|N(v) ∩ A_t| >= r_v`; trajectory `[|A_0|, |A_1|, ...]`, `rounds` =
+  update rounds until no change). `BootstrapDynamics::QueueClosure` is an
+  asynchronous FIFO monotone closure (seeds ascending, then threshold-0
+  vertices ascending, then first crossings; `events` = rule activations
+  after the seeds). The **final closure is order-independent** in the
+  queue clock (monotone-process fixed point); only the event sequence
+  depends on the order.
+- Threshold-0 vertices activate at the first update step in both clocks
+  and count as rule activations, not seeds. Hence `r = 0` activates every
+  vertex and `r > max_degree` preserves exactly the seeds (both gates
+  asserted verbatim below).
+- Parallel edges count once per incidence (the F3 physical-edge
+  convention); a self-loop never helps its own vertex activate.
+- Typed `BootstrapError` rejections: empty graph, zero recorded steps,
+  heterogeneous-threshold length, fixed-seed domain, seed-activity domain,
+  seed density, capacity.
+
+### Validation gates (roadmap §12 E2)
+
+`tests/physics/bootstrap_percolation.rs` (13 tests, ~15 s):
+
+- **Exhaustive 2^V initial states vs repeated full scans**: path P5,
+  cycle C5, star (4 leaves), K4, K5; every seed mask x every homogeneous
+  r in `0..=max_degree + 1` (720 mask x r combinations) x both clocks —
+  final closure SETS equal an independent full-scan reference, plus
+  scalar invariants (`seed_count`, `activated_total = final - seeds`,
+  `events` in queue mode). Per-round trajectories additionally equal an
+  independent simultaneous-sweep reference (528 mask x r combinations).
+  Heterogeneous thresholds: 12 seeded threshold vectors (values
+  `0..=degree+1`) x all seed masks x both clocks (672 combinations).
+- **`r = 0` activates all vertices**; rounds = 0 only when the seeds
+  already cover the graph.
+- **`r > max_degree` preserves only initial seeds** (final set == seed
+  mask, 0 rounds, 0 rule activations).
+- **Order independence**: on seeded random graphs (simple + parallel-edge
+  variants) with random seeds and random heterogeneous thresholds, the
+  FIFO production queue closure equals a test-RNG one-random-qualifying-
+  vertex-at-a-time closure and a test-RNG shuffled-sweep closure, and
+  equals the synchronous-rounds closure (24 draws x 7 graphs).
+- **Hand-worked heterogeneous example**: path 0-1-2-3-4, thresholds
+  `[2,1,1,2,3]`, seeds `{0,4}` — trajectory `[2,3,4,5]`, 3 rounds / 3
+  events, full closure.
+- **Adapter contracts**: fixed seeds reproduce the core bitwise
+  (outcome + trajectory); the density draw contract replays bitwise;
+  `measure` records the fixed-shape array + scalars (deterministic seeds
+  give exact means and zero stderr); typed domain rejections.
+- **Literature anchor — Holroyd, Probab. Theory Relat. Fields 125,
+  195-224 (2003)** (arXiv:math/0206132, archived in `docs/ref/`):
+  Theorem 1 proves `I(L,p) -> 1` iff `p ln L > pi^2/18` for 2D `r = 2`
+  bootstrap, i.e. the finite-size seed threshold obeys
+  `p_c(L) ~ pi^2/(18 ln L)`. All gates are statistical brackets with real
+  error bars (400 realizations per point by default, env-tunable via
+  `SCUTTLE_BOOTSTRAP_SEEDS`), never an exact finite-L threshold claim,
+  because Holroyd's convergence is notoriously slow (finite-L thresholds
+  sit far below the asymptotic constant — the very effect that made the
+  pre-Holroyd numerics of Adler-Stauffer-Aharony misleading):
+  - *His own observable* `I(L,p)` = P(full L x L torus activation) at
+    formula-derived densities: at `p+ = pi^2/(18 ln L)` it is
+    `1.0000 +/- 0.0013` for L = 32, 64, 128 (the `p ln L > lambda` side
+    is already certain at these sizes); at `p+/4` (`p ln L = lambda/4`)
+    it is `0.0000 +/- 0.0013` (L=32), `0.0025 +/- 0.0025` (L=64),
+    `0.0000 +/- 0.0013` (L=128).
+  - *Half-majority density* `p_hat(L)` (bisected): `0.0692` (L=32),
+    `0.0577` (L=64), `0.0480` (L=128) — monotonically decreasing (the
+    1/ln L decay), with `p_hat * ln L = 0.240 / 0.240 / 0.233` strictly
+    inside `(lambda/4, lambda) = (0.137, 0.548)`: a fixed ~0.43 lambda
+    fraction at accessible sizes, approaching the asymptotic constant
+    from below, consistent with the theorem and never claimed to reach
+    it.
+  - *Sharpness*: the metastable window is narrower than a factor 1.5 in
+    p at every size: `P(p_hat/1.5) = 0.0175 / 0.0050 / 0.0000` and
+    `P(1.5 p_hat) = 0.9925 / 1.0000 / 1.0000` for L = 32/64/128.
+
+### Steady-state allocation gate
+
+`BOOTSTRAP_PROCESS_ALLOC` (r = 2, density 0.5927, 32 steps, 128 measured
+realizations): **0.000 allocations and 0 bytes per realization** on all
+five benchmark topologies (chain, square, cubic, sparse-er, power-law);
+the probe asserts the zero.
+
+### Criterion data
+
+`cargo bench -p cmc-rs --bench bootstrap_percolation -- --quick`
+(8 realizations per iteration; throughput counts `V + E` per realization,
+so times below are per 8 realizations):
+
+| Topology | V | E | SynchronousRounds | QueueClosure |
+|---|---:|---:|---:|---:|
+| chain (open) | 4096 | 4095 | 293.17 us (~224 M elem/s) | 599.15 us (~109 M elem/s) |
+| square (open) | 4096 | 8064 | 1.4461 ms (~67 M elem/s) | 1.4008 ms (~69 M elem/s) |
+| cubic (open) | 4096 | 11520 | 2.3039 ms (~54 M elem/s) | 2.3558 ms (~53 M elem/s) |
+| sparse-er | 4096 | 16384 | 2.7526 ms (~60 M elem/s) | 2.9785 ms (~55 M elem/s) |
+| power-law | 4096 | 16374 | 2.4326 ms (~67 M elem/s) | 2.6060 ms (~63 M elem/s) |
+| torus 128x128 (p = 0.048) | 16384 | 32768 | 2.7712 ms (~142 M elem/s) | 2.7179 ms (~145 M elem/s) |
+
+The chain is the one topology where the queue clock trails the
+synchronous clock twofold: at density 0.59 the closure activates
+everything and the FIFO event order walks the path non-contiguously,
+while round frontiers stay contiguous; on every other topology (and at
+the sparse Holroyd operating point) the two clocks are within a few
+percent.
+
+### Limitations
+
+Monotone activation only (no de-activation; k-core peeling is E3); the
+array horizon `steps` truncates long trajectories (scalars stay exact);
+no per-vertex activation time observable, spanning/winding diagnostics,
+or activity-conditioned observables yet; `BootstrapSeeds::Density` is the
+only built-in stochastic seed law (arbitrary laws go through the core
+with a caller `VertexActivity`); the adapter owns its graph (borrowed
+graphs use the core functions directly); time scalars are per-realization
+integers recorded as `f64`.

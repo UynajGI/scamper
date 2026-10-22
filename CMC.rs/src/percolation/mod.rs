@@ -31,6 +31,7 @@ mod law;
 mod network;
 mod observable;
 mod probability;
+mod process;
 mod query;
 mod scan;
 mod summary;
@@ -57,6 +58,11 @@ pub use network::{
 };
 pub use observable::{ObservablePlan, ObservablePlanError, StaticObservable};
 pub use probability::{Probability, ProbabilityError, ProbabilityField};
+pub use process::{
+    kcore_decompose, BootstrapDynamics, BootstrapError, BootstrapOutcome, BootstrapPercolationMC,
+    BootstrapSeeds, BootstrapThreshold, BootstrapWorkspace, CoreThresholds, KCoreError, KCoreMC,
+    KCoreSummary, KCoreWorkspace, NeighborCounters, ProcessError, ProcessQueue, StampFlags,
+};
 pub use query::{BoundaryQuery, BoundaryQueryError};
 pub use scan::{
     reweight, scan_bond, scan_site, NewmanZiffWorkspace, ReweightError, ReweightWorkspace,

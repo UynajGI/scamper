@@ -870,6 +870,110 @@ fn report_directed_process_case(case: &Case) {
     );
 }
 
+/// E3 probe: one complete k-core realization (site-keep activity draw,
+/// residual-degree peeling to completion, summary recording) must be
+/// allocation-free in steady state.
+fn report_kcore_case(case: &Case) {
+    use cmc_rs::{CoreThresholds, KCoreMC};
+    let vertices = case.lattice.vertex_count();
+    let mut process = KCoreMC::new(
+        case.lattice.clone(),
+        P_SITE,
+        CoreThresholds::uniform(3).expect("probe threshold"),
+        256,
+    )
+    .expect("probe process");
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0xE3A1),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        process.sweep(&mut context);
+        process.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            process.sweep(&mut context);
+            process.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    // KCoreSurvivorCount array + three scalars.
+    let observable_count = 4;
+    eprintln!(
+        "KCORE_PROCESS_ALLOC topology={} V={} E={} k=3 keep={} recorded_rounds=256 \
+         observables={} measured_realizations={} allocations_per_realization={:.3} \
+         allocated_bytes_per_realization={:.3} peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        vertices,
+        case.lattice.edge_count(),
+        P_SITE,
+        observable_count,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
+/// Adapter probe: `BootstrapPercolationMC::sweep` + `measure` must be
+/// allocation-free in steady state (E1 buffers prepared once). The context
+/// binsize exceeds warmup plus measured samples so no accumulator bin
+/// completes inside the measured window; the warmup covers the first
+/// `measure` of each observable name.
+fn report_bootstrap_case(case: &Case) {
+    use cmc_rs::{BootstrapDynamics, BootstrapPercolationMC, BootstrapSeeds, BootstrapThreshold};
+    let vertices = case.lattice.vertex_count();
+    let mut process = BootstrapPercolationMC::new(
+        case.lattice.clone(),
+        BootstrapThreshold::Homogeneous { value: 2 },
+        BootstrapSeeds::Density { p: P_SITE },
+        BootstrapDynamics::SynchronousRounds,
+        32,
+    )
+    .expect("probe process");
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0x00E2),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        process.sweep(&mut context);
+        process.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            process.sweep(&mut context);
+            process.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    // BootstrapActiveCount array + two always-on scalars + the clock
+    // scalar (BootstrapRounds here).
+    let observable_count = 4;
+    eprintln!(
+        "BOOTSTRAP_PROCESS_ALLOC topology={} V={} E={} r=2 seed_density={} steps=32 \
+         observables={} measured_realizations={} allocations_per_realization={:.3} \
+         allocated_bytes_per_realization={:.3} peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        vertices,
+        case.lattice.edge_count(),
+        P_SITE,
+        observable_count,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+    assert_eq!(
+        info.count_total, 0,
+        "bootstrap realizations must allocate nothing in steady state"
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
@@ -880,6 +984,8 @@ fn main() {
         report_degree_attack_case(case);
         report_directed_analysis_case(case);
         report_directed_process_case(case);
+        report_kcore_case(case);
+        report_bootstrap_case(case);
         for mode in ReferenceMode::ALL {
             report_component_case(case, mode);
         }
