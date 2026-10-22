@@ -114,8 +114,27 @@ impl<R: Rng + SeedableRng> Context<R> {
     }
 
     /// Finalize measurements and return estimates.
+    ///
+    /// Array observables collapse to element-averaged scalars; prefer
+    /// [`Context::finalize_measurements_split`] when per-element structure
+    /// must survive.
     pub fn finalize_measurements(&self) -> HashMap<String, Estimate> {
         self.measurements.finalize()
+    }
+
+    /// Finalize measurements, separating scalar and array observables.
+    ///
+    /// Scalar semantics match [`Context::finalize_measurements`]; array
+    /// observables are returned as element-preserving
+    /// [`ArrayEstimate`](crate::ArrayEstimate) values with independent
+    /// per-element statistics.
+    pub fn finalize_measurements_split(
+        &self,
+    ) -> (
+        HashMap<String, Estimate>,
+        HashMap<String, crate::ArrayEstimate>,
+    ) {
+        self.measurements.finalize_split()
     }
 
     /// Finalize complex measurements and return estimates.
@@ -150,10 +169,14 @@ impl<R: Rng + SeedableRng> Context<R> {
     }
 
     /// Record an array observable sample.
+    ///
     /// The shape is determined by the first call for each observable name.
-    pub fn measure_array(&mut self, name: &str, values: &[f64]) {
+    /// A later sample whose length disagrees returns
+    /// [`CarloError::ShapeMismatch`](crate::CarloError::ShapeMismatch)
+    /// naming the observable instead of silently truncating.
+    pub fn measure_array(&mut self, name: &str, values: &[f64]) -> Result<(), crate::CarloError> {
         let name = self.qualified_measurement_name(name);
-        self.measurements.add_sample_array(name.as_ref(), values);
+        self.measurements.add_sample_array(name.as_ref(), values)
     }
 
     /// Record a complex observable sample.

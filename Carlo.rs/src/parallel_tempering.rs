@@ -532,8 +532,8 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
         // Flush any remaining PT measurements
         self.mc.finalize_pt_measurements(&mut self.ctx);
 
-        let estimates = self.ctx.finalize_measurements();
-        let mut results = Results::from_measurements(&estimates);
+        let (estimates, arrays) = self.ctx.finalize_measurements_split();
+        let mut results = Results::from_measurements_with_arrays(&estimates, &arrays);
         results.set_metadata(Metadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
             timestamp: chrono::Utc::now(),
@@ -541,6 +541,7 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
             thermalization_sweeps: self.ctx.thermalization_sweeps(),
             measurement_sweeps: self.sweeps_done,
             n_tasks: self.comm.size() as usize,
+            attributes: std::collections::BTreeMap::new(),
         });
         results
     }

@@ -4,6 +4,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::CarloError;
+
 /// Statistical estimate with error analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Estimate {
@@ -110,4 +112,168 @@ impl fmt::Display for ComplexEstimate {
             self.re.mean, self.re.stderr, self.im.mean, self.im.stderr
         )
     }
+}
+
+/// Element-preserving estimate for an array observable.
+///
+/// Each element carries an independent [`Estimate`] (mean, stderr,
+/// autocorrelation time, bin count) computed from that element's own bin
+/// column. The `shape` records the logical geometry so a merged or
+/// reweighted curve keeps its coordinate structure instead of collapsing
+/// to one scalar.
+///
+/// A scalar observable is represented by [`Estimate`] alone; `ArrayEstimate`
+/// with an empty `shape` is rejected.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArrayEstimate {
+    /// Logical shape of the observable (non-empty; row-major element order).
+    pub shape: Vec<usize>,
+
+    /// One estimate per element, `shape` product entries in row-major order.
+    pub elements: Vec<Estimate>,
+}
+
+impl ArrayEstimate {
+    /// Create from a shape and per-element estimates.
+    ///
+    /// Returns [`CarloError::ShapeMismatch`] unless `elements.len()` equals
+    /// the product of `shape` dimensions. Scalar observables (empty `shape`)
+    /// are rejected with [`CarloError::InvalidConfig`] — they belong in an
+    /// [`Estimate`].
+    pub fn new(shape: Vec<usize>, elements: Vec<Estimate>) -> Result<Self, CarloError> {
+        if shape.is_empty() || shape.contains(&0) {
+            return Err(CarloError::InvalidConfig {
+                field: "ArrayEstimate::new".into(),
+                reason: "array estimates require a non-empty shape with positive dimensions; \
+                         scalar observables are plain Estimate values"
+                    .into(),
+            });
+        }
+        let n = shape.iter().product::<usize>();
+        if elements.len() != n {
+            return Err(CarloError::ShapeMismatch {
+                observable: "ArrayEstimate".into(),
+                expected_len: n,
+                got_len: elements.len(),
+            });
+        }
+        Ok(Self { shape, elements })
+    }
+
+    /// Create from one bin-mean column per element.
+    ///
+    /// Column `i` holds the bin means of element `i`; every column must have
+    /// the same length. Autocorrelation times are estimated per element via
+    /// the same variance-ratio method the scalar path uses.
+    pub fn from_element_bins(shape: &[usize], columns: &[Vec<f64>]) -> Result<Self, CarloError> {
+        let n = shape.iter().product::<usize>();
+        if shape.is_empty() || n == 0 {
+            return Err(CarloError::InvalidConfig {
+                field: "ArrayEstimate::from_element_bins".into(),
+                reason: "array estimates require a non-empty shape with positive dimensions".into(),
+            });
+        }
+        if columns.len() != n {
+            return Err(CarloError::ShapeMismatch {
+                observable: "ArrayEstimate".into(),
+                expected_len: n,
+                got_len: columns.len(),
+            });
+        }
+        let expected_bins = columns.first().map(Vec::len).unwrap_or(0);
+        if columns.iter().any(|c| c.len() != expected_bins) {
+            return Err(CarloError::InvalidConfig {
+                field: "ArrayEstimate::from_element_bins".into(),
+                reason: format!(
+                    "element columns must share one bin count, expected {expected_bins}"
+                ),
+            });
+        }
+
+        let elements = columns
+            .iter()
+            .map(|column| {
+                let tau = variance_ratio_autocorr(column);
+                Estimate::from_bins_with_autocorr(column, tau)
+            })
+            .collect();
+        Ok(Self {
+            shape: shape.to_vec(),
+            elements,
+        })
+    }
+
+    /// Logical shape of the observable.
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    /// Per-element estimates in row-major order.
+    pub fn elements(&self) -> &[Estimate] {
+        &self.elements
+    }
+
+    /// Number of elements (`shape` product).
+    pub fn n_elements(&self) -> usize {
+        self.elements.len()
+    }
+
+    /// Estimate for one element by flat row-major index.
+    pub fn element(&self, index: usize) -> Option<&Estimate> {
+        self.elements.get(index)
+    }
+
+    /// Estimate for one element by multi-dimensional index.
+    pub fn at(&self, index: &[usize]) -> Option<&Estimate> {
+        if index.len() != self.shape.len() {
+            return None;
+        }
+        let mut flat = 0usize;
+        for (&idx, &dim) in index.iter().zip(self.shape.iter()) {
+            if idx >= dim {
+                return None;
+            }
+            flat = flat * dim + idx;
+        }
+        self.elements.get(flat)
+    }
+}
+
+/// Variance-ratio integrated autocorrelation time over bin means.
+///
+/// τ = 0.5 · (σ²_rebin / (σ²_bins / 2) − 1), floored at zero and reported
+/// as 1.0 when there are too few bins or no variance to compare. This is
+/// the same estimator [`crate::Accumulator::autocorr_time`] applies to
+/// scalar bin means, factored out so array elements reuse it directly.
+pub(crate) fn variance_ratio_autocorr(values: &[f64]) -> f64 {
+    let n = values.len();
+    if n < 2 {
+        return 1.0;
+    }
+
+    let n_f64 = n as f64;
+    let mu = values.iter().sum::<f64>() / n_f64;
+    let var_no_rebin = values.iter().map(|x| (x - mu).powi(2)).sum::<f64>() / (n_f64 - 1.0);
+
+    let rebin_n = n / 2;
+    if rebin_n < 2 {
+        return 1.0;
+    }
+
+    let rebin_means: Vec<f64> = (0..rebin_n)
+        .map(|i| (values[2 * i] + values[2 * i + 1]) / 2.0)
+        .collect();
+    let rebin_mu = rebin_means.iter().sum::<f64>() / rebin_n as f64;
+    let var_rebin = rebin_means
+        .iter()
+        .map(|x| (x - rebin_mu).powi(2))
+        .sum::<f64>()
+        / (rebin_n as f64 - 1.0);
+
+    let expected_var = var_no_rebin / 2.0;
+    if expected_var <= 0.0 {
+        return 1.0;
+    }
+
+    0.5 * (var_rebin / expected_var - 1.0).max(0.0)
 }

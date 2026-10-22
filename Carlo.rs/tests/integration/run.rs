@@ -304,3 +304,68 @@ fn test_runid_taskid() {
     assert_eq!(tid, tid2);
     assert_ne!(tid, TaskId::new(8));
 }
+
+// ── Array observables flow element-preserving to Results (C0) ──────────────
+
+struct CurveMC {
+    sweep_index: usize,
+}
+
+impl MonteCarlo for CurveMC {
+    type Rng = Xoshiro256PlusPlus;
+
+    fn sweep(&mut self, _ctx: &mut Context<Self::Rng>) {
+        self.sweep_index += 1;
+    }
+
+    fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
+        let x = self.sweep_index as f64;
+        ctx.measure("LastSweep", x);
+        ctx.measure_array("RobustnessCurve", &[x, 2.0 * x, 4.0 * x])
+            .expect("curve length is fixed");
+    }
+}
+
+impl FromParams for CurveMC {
+    fn from_params(_params: &Params, _rng: &mut Self::Rng) -> Result<Self, CarloError> {
+        Ok(CurveMC { sweep_index: 0 })
+    }
+}
+
+#[test]
+fn test_run_finalizes_array_observables_element_preserving() {
+    let params = Params::new();
+    let config = RunConfig {
+        measurement_sweeps: 8,
+        thermalization_sweeps: 0,
+        binsize: 2,
+        base_seed: 42,
+        progress_interval: 0,
+        checkpoint_interval: 0,
+    };
+    let mut run: Run<CurveMC, Xoshiro256PlusPlus> =
+        Run::new(&params, TaskId::new(0), RunId::new(1), &config, 42)
+            .expect("Failed to create run");
+    run.run(config.measurement_sweeps);
+    let results = run.finalize(42);
+
+    // Scalar observable lands in the scalar map only.
+    assert!(results.get("LastSweep").is_some());
+
+    // Array observable keeps one estimate per element — the curve did not
+    // collapse to a single number.
+    let curve = results
+        .get_array("RobustnessCurve")
+        .expect("array observable");
+    assert_eq!(curve.shape(), &[3]);
+    assert!(results.get("RobustnessCurve").is_none());
+    for (element, scale) in curve.elements().iter().zip([1.0, 2.0, 4.0]) {
+        // Sweeps 1..=8 → mean of x is 4.5, so element means are 4.5 * scale.
+        assert!((element.mean - 4.5 * scale).abs() < 1e-12);
+        assert!(element.stderr > 0.0);
+    }
+
+    // The JSON round trip preserves the curve and its shape.
+    let back = carlo_rs::Results::from_json(&results.to_json().unwrap()).unwrap();
+    assert_eq!(back.get_array("RobustnessCurve").unwrap().shape(), &[3]);
+}

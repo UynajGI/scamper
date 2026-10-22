@@ -101,6 +101,27 @@ new counters while older checkpoints default them to zero.
 
 For convergence-driven warmup, `Scheduler::run_controlled` accepts an `AdaptiveRunControl`. The controller returns `ContinueAdaptation`, `BeginProduction`, `ContinueProduction`, or `Stop` after each completed sweep. This adds adaptive scheduling without changing the fixed-count `run_one` API or putting physics into the scheduler.
 
+## Array observables and provenance
+
+`Context::measure_array(name, &values)` records one vector sample per sweep (correlation
+profiles, robustness curves, survival probabilities). A later sample whose length disagrees
+returns `CarloError::ShapeMismatch` naming the observable — it is never silently truncated.
+At finalize time the `Run`/`Scheduler`/PT chains split measurements so that:
+
+- scalar observables land in `Results::estimates` (unchanged semantics);
+- array observables land in `Results::array_estimates` as `ArrayEstimate { shape, elements }`
+  with one independent `Estimate` (mean, stderr, per-element autocorrelation time) per
+  element.
+
+`Results::to_json` writes arrays under `array_observables` (omitted when empty, so
+scalar-only output is unchanged); `Results::from_json` round-trips the format and accepts
+legacy files. `Results::merge` combines arrays element-wise with the scalar weighting and
+skips observables whose shapes disagree across runs rather than flattening them.
+
+`Metadata::attributes` is a generic `BTreeMap<String, serde_json::Value>` for domain
+adapters to attach provenance (process policy, curve coordinates). Carlo.rs stores, merges,
+and round-trips these values without interpreting them; JSON omits the map when empty.
+
 ## Features
 
 | Feature | Description | Dependencies |
@@ -194,6 +215,7 @@ just bench
 | HDF5 checkpoint | ✓ | ✓ |
 | Jackknife resampling | ✓ | ✓ |
 | ResultTools (dataframe, read-back) | ✓ | ✓ |
+| Array observables (element-preserving) | ✓ | ✓ |
 | Complex observables | (via ResultTools) | Native support |
 | Progress bars | ✗ | ✓ |
 | Performance monitoring | ✗ | ✓ |

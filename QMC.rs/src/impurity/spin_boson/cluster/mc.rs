@@ -176,8 +176,10 @@ impl MonteCarlo for LongitudinalSpinBosonClusterQmc {
             "ClusterChiSzRaw",
             beta * observables.magnetization_s_z * observables.magnetization_s_z,
         );
-        ctx.measure_array("ClusterCorrelationSigmaZ", &observables.correlation_sigma_z);
-        ctx.measure_array("ClusterCorrelationSz", &observables.correlation_s_z);
+        ctx.measure_array("ClusterCorrelationSigmaZ", &observables.correlation_sigma_z)
+            .expect("ClusterCorrelationSigmaZ length changed mid-run");
+        ctx.measure_array("ClusterCorrelationSz", &observables.correlation_s_z)
+            .expect("ClusterCorrelationSz length changed mid-run");
         ctx.measure("ClusterKinkCount", observables.kink_count);
         ctx.measure(
             "ClusterTransverseFieldEnergy",

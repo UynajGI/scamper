@@ -64,6 +64,7 @@ fn test_save_json_with_metadata() {
         thermalization_sweeps: 50,
         measurement_sweeps: 500,
         n_tasks: 3,
+        attributes: std::collections::BTreeMap::new(),
     });
 
     let dir = tempfile::tempdir().unwrap();

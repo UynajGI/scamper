@@ -47,18 +47,24 @@ impl MonteCarlo for OccupationWorldlineQmc {
         ctx.measure("OccupationBosonNumber", obs.total_boson_number);
         ctx.measure("OccupationParity", obs.parity);
         ctx.measure("OccupationReducedSpinPurity", obs.reduced_spin_purity);
-        ctx.measure_array("OccupationModeNumber", &obs.mode_occupations);
-        ctx.measure_array("OccupationModeNumberSquared", &obs.mode_number_squared);
-        ctx.measure_array("OccupationModeFactorialMoment", &obs.mode_factorial_moments);
-        ctx.measure_array("OccupationModeG2Zero", &obs.mode_g2_zero);
+        ctx.measure_array("OccupationModeNumber", &obs.mode_occupations)
+            .expect("OccupationModeNumber length changed mid-run");
+        ctx.measure_array("OccupationModeNumberSquared", &obs.mode_number_squared)
+            .expect("OccupationModeNumberSquared length changed mid-run");
+        ctx.measure_array("OccupationModeFactorialMoment", &obs.mode_factorial_moments)
+            .expect("OccupationModeFactorialMoment length changed mid-run");
+        ctx.measure_array("OccupationModeG2Zero", &obs.mode_g2_zero)
+            .expect("OccupationModeG2Zero length changed mid-run");
         ctx.measure_array(
             "OccupationModeNumberCorrelations",
             &obs.mode_cross_correlations,
-        );
+        )
+        .expect("OccupationModeNumberCorrelations length changed mid-run");
         ctx.measure_array(
             "OccupationSpinBosonCovarianceZn",
             &obs.spin_boson_covariance_z_n,
-        );
+        )
+        .expect("OccupationSpinBosonCovarianceZn length changed mid-run");
         ctx.measure(
             "OccupationWorldlineChangeFraction",
             self.sampler.acceptance_fraction(),

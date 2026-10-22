@@ -42,6 +42,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "scheduler_bench"
 harness = false
 
+[[bench]]
+name = "array_finalize"
+harness = false
+
 [features]
 default = []
 hdf5 = ["dep:hdf5"]
