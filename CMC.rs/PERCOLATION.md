@@ -27,7 +27,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Static configuration and Bernoulli-law substrate | Experimental | F2 provisional API separates private activity storage from independent site/bond/mixed laws, validates probability domains and topology lengths, and samples allocation-free after preparation. The independently reviewed F3 analyzer/workspace and F4 observables build on this substrate; the layer remains Experimental until the platform merges into `dev`. |
 | Static site, bond, and mixed Bernoulli percolation on arbitrary owned or borrowed undirected graphs | Validated | All family-specific gates pass: F3 component analysis with reusable workspace, canonical identities, and multi-query crossing; F4 `ObservablePlan` observables and owned `StaticPercolationMC` with every PR #4 validation asset migrated, the zero-allocation adapter gate, and 16-seed z-scores; independent review passed. Production-ready once the branch merges into `dev`. |
 | Heterogeneous occupation probabilities | Validated | N1 promotes the F2 `ProbabilityField` substrate to the `StaticPercolationMC` adapter: `StaticLaw::site_heterogeneous`/`bond_heterogeneous`/`mixed_heterogeneous` own one validated `Probability` per vertex and/or per physical edge, with adapter-constructor domain validation and scheduler scheduling through `Run::from_parts()`. Gates passed: exact non-identically-distributed small-graph enumeration (independently reproduced), bitwise uniform and mixed-pure reductions, endpoint determinism, typed length/invalid-probability rejection, 16-seed scheduler z-scores for site/bond/mixed (enumeration and Poisson-binomial references), uniform-vs-heterogeneous Criterion comparison, and a 0-allocation heterogeneous adapter probe. Independent review passed; production on the `dev` merge. Network/domain facades over heterogeneous fields (random failure, degree observables) remain Not implemented (N2). |
-| Network random failure and degree-conditioned observables | Not implemented | No network facade, probability field, or original-degree profile. |
+| Network random failure and degree-conditioned observables | Experimental — awaiting independent review | N2 `RandomFailureMC` facade over the F2 uniform site law with an original-degree `NetworkProfile` and six C0 element-preserving degree arrays (`DegreeVertexCount`, `DegreeOccupied`, `ActiveFractionByDegree`, `GiantMembershipByDegree`, `DegreeFirstMoment`, `DegreeSecondMoment`); empty bins exact-zero with explicit occupancy, `V^3` exactness gate, 0-allocation probe. Gates: bitwise site-law reduction, independent-BFS enumeration z-scores on path/cycle/star/complete, relabeling invariance, empty-bin semantics, and literature anchors (Callaway et al. PRL 85, 5468 and Cohen et al. PRL 85, 4626; PDFs in `docs/ref/`). See the N2 section below. |
 | Targeted or adaptive attack and robustness curves | Not implemented | No removal process or vector-valued realization output. |
 | Directed static reachability, weak/strong components | Not implemented | `CsrLattice` is undirected; directedness is not a mode flag. |
 | Layered space-time directed percolation | Not implemented | No causal-layer process or survival/arrival profiles. |
@@ -1351,3 +1351,141 @@ output until C0; callers consume the borrowed `ScanCurve` directly. The
 `ScanEstimator` variance is scan-to-scan only. The benchmark's direct path is
 raw Bernoulli draws plus F3 analysis, not the full law/scheduler stack, so the
 speedup is indicative rather than a scheduler-level claim.
+
+## N2 random network failure and degree observables
+
+Random failure removes vertices independently with keep probability `q`
+(`RandomFailureMC`, `percolation/network/`). It is a domain facade over the
+F2 uniform site law — `sweep()` delegates to `SiteBernoulli`, so reduction to
+`StaticLaw::site(q)` is by construction and bitwise under one RNG stream —
+never a duplicate sampler. Scalar component observables reuse the F4
+[`ObservablePlan`] verbatim. Degree conditioning is always on **original**
+degree cached once in `NetworkProfile::from_graph` (self-loops contribute two
+incidences); residual-degree conditioning is a different process and is not
+offered here.
+
+### Degree arrays (C0 element-preserving output)
+
+Recorded per sample with shape `[max_degree + 1]`, indexed by original degree
+`k = 0 ..= max_degree`:
+
+| Name | Definition |
+|---|---|
+| `DegreeVertexCount[k]` | `n_k`: vertices of original degree `k` (constant) |
+| `DegreeOccupied[k]` | 1 when `n_k > 0`, else 0 (constant) |
+| `ActiveFractionByDegree[k]` | active degree-`k` vertices over `n_k` |
+| `GiantMembershipByDegree[k]` | degree-`k` vertices in the canonical largest component over `n_k` (F4 tie policy) |
+| `DegreeFirstMoment[k]` | `sum_{active v, deg k} s(v) / n_k` |
+| `DegreeSecondMoment[k]` | `sum_{active v, deg k} s(v)^2 / n_k` |
+
+`s(v)` is the size of `v`'s component. The conditional mean component size of
+a degree-`k` vertex — `S(k)` in Cohen et al. — is estimated by the ratio of
+ensemble means `DegreeFirstMoment / ActiveFractionByDegree`, never by a
+per-sample ratio (undefined when no degree-`k` vertex is active).
+
+**Empty-bin semantics**: degrees absent from the graph (`n_k = 0`) keep the
+full shape and record exactly `0.0` (never NaN, never skipped) in the four
+ratio arrays; `DegreeOccupied[k] == 0` and `DegreeVertexCount[k] == 0`
+identify them. Denominators are the constant `n_k`, so present bins are always
+defined — there is no per-sample undefined case.
+
+**Exactness gate**: degree second moments sum `s(v)^2` over vertices, bounded
+by `sum_c s_c^3 <= V^3`; the constructor rejects `V^3 > 2^53`
+(`V > 208_063`) exactly like the F4 moment gate rejects `V^2 > 2^53`.
+Winding observables are rejected (`WindingUnsupported`) — the facade carries
+no embedding.
+
+### Validation gates (roadmap §9 N2)
+
+All gates in `tests/physics/percolation_network.rs`:
+
+- **Site-law reduction**: 32 sweeps of `RandomFailureMC` produce
+  bitwise-identical vertex activity to `StaticPercolationMC::new(..,
+  StaticLaw::site(q), ..)` and to a raw `SiteBernoulli` law on
+  identically-seeded streams (star, `q = 0.61`).
+- **Hand-graph exact expectations**: path5, cycle6, star6, complete4 at
+  `keep in {0.3, 0.5, 0.7}` against exhaustive `2^V` subset enumeration whose
+  per-subset quantities come from an **independent adjacency-BFS reference**
+  (canonical-lowest largest-component identity, F4 susceptibility exclusion).
+  Susceptibility is compared as a conditional mean over defined samples
+  (`FiniteClusterSusceptibilityDefined` convention); a case where every
+  sample is undefined skips that gate loudly. 16 seeds x 600 sweeps
+  (verified at 64 seeds via `SCUTTLE_ZSCORE_SEEDS`), |z| < 4 per observable,
+  |mean z| < 2 per (graph, keep): first run max |z| = 2.02, all mean |z| < 0.6.
+- **Relabeling invariance**: star10 under the reversed labeling (statistical,
+  2000 sweeps): constant arrays (`DegreeVertexCount`, `DegreeOccupied`)
+  identical bitwise; every ratio array element and `GiantFraction` within
+  4 combined sigma.
+- **Empty bins**: star5 (degrees {4,1,1,1,1}) — full `[0..=4]` shape, bins
+  {0,2,3} exactly zero with zero stderr, occupancy markers correct.
+- **Literature anchors** (ER G(n,m) configuration graph, N = 100 000,
+  z = 2.5, empirical degree distribution):
+  - **Cohen et al., PRL 85, 4626 (2000)** (`docs/ref/Cohen_2000_PRL_internet_resilience.pdf`,
+    arXiv:cond-mat/0007048): measured `kappa = <k^2>/<k> = 3.5025` gives
+    `q_c = 1/(kappa-1) = 0.3996` against the ideal Poisson `0.4` (agreement
+    0.0004). Bracket: at `q_c - 0.03` the giant is extinguished
+    (`S = 0.0030`); at `q_c + 0.10` a giant exists (`S = 0.1857`) and matches
+    theory (below). Both points sit outside the finite-size rounding window
+    `~N^{-1/3} ~ 0.02`.
+  - **Callaway, Newman, Strogatz, Watts, PRL 85, 5468 (2000)**
+    (`docs/ref/Callaway_2000_PRL_network_robustness.pdf`,
+    arXiv:cond-mat/0007300): giant fraction `S = q(1 - G0(u))` with
+    `u = 1 - q + q G1(u)` (their Eq. 5) evaluated on the graph's own
+    empirical degree distribution. Measured vs theory:
+    `q=0.5`: 0.1857(1) vs 0.1861; `q=0.65`: 0.4261(1) vs 0.4259;
+    `q=0.8`: 0.6377(1) vs 0.6373 — every deviation `< 4 sigma + 0.006`
+    (actual deviations <= 0.0005).
+  - The platform's `FiniteClusterSusceptibility` (largest-excluded,
+    active-denominator) is deliberately **not** compared to Callaway et al.'s
+    `H0'(1)` mean cluster size, which uses a different convention
+    (unoccupied vertices contribute zero, no giant exclusion); conflating the
+    two would be a definitional error, not a validation.
+
+Reproduce with:
+
+```bash
+cargo test -p cmc-rs --test suite percolation_network
+SCUTTLE_ZSCORE_SEEDS=64 cargo test --release -p cmc-rs --test suite percolation_network
+cargo bench -p cmc-rs --bench percolation_network
+cargo bench -p cmc-rs --bench percolation_allocations --features allocation-probe
+```
+
+At 64 seeds every (graph, keep) gate stays inside |z| < 2 (max 1.98) with
+|mean z| <= 0.81.
+
+### Steady-state allocation gate
+
+`PERCOLATION_RANDOM_FAILURE_ALLOC` (allocation-probe bench): after warmup,
+`sweep + measure` (labels pass plus six degree arrays) performs **0**
+allocations per sample on all five benchmark topologies; scratch
+(`root_size`, degree counters, shared value buffer) is fully preallocated and
+refilled in place.
+
+### Criterion data
+
+`cargo bench -p cmc-rs --bench percolation_network` — 64 sweeps per iteration
+at `q = 0.5927` (V = 4096 for every topology; the facade also records the full
+`ObservablePlan::all` scalar set, the baseline records two scalars, so the
+ratio prices labels + degree arrays + scalars together):
+
+| Topology | `random_failure_degree` | `scalar_baseline` | Ratio |
+|---|---|---|---|
+| chain (E=4095) | 12.4 ms | 5.3 ms | 2.33x |
+| square (E=8064) | 12.7 ms | 7.4 ms | 1.71x |
+| cubic (E=11520) | 14.0 ms | 9.8 ms | 1.43x |
+| sparse-er (E=16384) | 22.9 ms | 17.7 ms | 1.29x |
+| power-law (E=16374) | 19.8 ms | 11.5 ms | 1.72x |
+
+The label materialization pass dominates the added cost; degree counting and
+the six array records are two more vertex-order passes over preallocated
+buffers.
+
+### Limitations
+
+N2 is a facade, not a process: it draws independent failure realizations and
+has no removal trajectory (that is N3, which now unblocks on C0 and records
+one vector realization per attack). There is no `FromParams` parameter schema
+and no boundary-query defaults; construct `RandomFailureMC::new` directly or
+through `Run::from_parts`. `DegreeSecondMoment` bounds graphs to
+`V <= 208_063` for exact f64 conversion. Adaptive/residual-degree
+conditioning is explicitly out of scope.

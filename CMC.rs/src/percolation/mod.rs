@@ -27,6 +27,7 @@ mod analyzer;
 mod carlo;
 mod configuration;
 mod law;
+mod network;
 mod observable;
 mod probability;
 mod query;
@@ -42,6 +43,9 @@ pub use analyzer::{
 pub use carlo::{StaticLaw, StaticPercolationError, StaticPercolationMC};
 pub use configuration::StaticConfiguration;
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
+pub use network::{
+    DegreeScratch, NetworkError, NetworkPercolationError, NetworkProfile, RandomFailureMC,
+};
 pub use observable::{ObservablePlan, ObservablePlanError, StaticObservable};
 pub use probability::{Probability, ProbabilityError, ProbabilityField};
 pub use query::{BoundaryQuery, BoundaryQueryError};

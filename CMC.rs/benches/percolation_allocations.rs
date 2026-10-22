@@ -8,8 +8,8 @@ use cmc_rs::{
     analyze, analyze_winding, reweight, scan_bond, scan_site, Bond, BondBernoulli,
     BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace, GraphView, MixedBernoulli,
     NewmanZiffWorkspace, ObservablePlan, PeriodicEmbedding, Probability, ProbabilityField,
-    ReweightWorkspace, ScanObservable, SiteBernoulli, StaticConfiguration, StaticLaw,
-    StaticObservable, StaticPercolationMC, UndirectedGraphView, WindingWorkspace,
+    RandomFailureMC, ReweightWorkspace, ScanObservable, SiteBernoulli, StaticConfiguration,
+    StaticLaw, StaticObservable, StaticPercolationMC, UndirectedGraphView, WindingWorkspace,
 };
 use percolation_support::{
     cases, sample_and_analyze, torus_cases, Case, ReferenceConfiguration, ReferenceMode, TorusCase,
@@ -677,12 +677,54 @@ fn report_winding_adapter_case(torus_case: &TorusCase) {
     );
 }
 
+/// N2 facade probe: `RandomFailureMC::sweep` + `measure` (labels pass plus
+/// six degree arrays) must be allocation-free in steady state under the same
+/// binsize discipline as the adapter probe.
+fn report_random_failure_case(case: &Case) {
+    let plan = ObservablePlan::all(Vec::new());
+    let mut facade =
+        RandomFailureMC::new(case.lattice.clone(), P_SITE, plan).expect("probe facade");
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0x4633_4144_4150),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        facade.sweep(&mut context);
+        facade.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            facade.sweep(&mut context);
+            facade.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    // 7 plan scalars + susceptibility indicator + 6 degree arrays.
+    let observable_count = 7 + 1 + 6;
+    eprintln!(
+        "PERCOLATION_RANDOM_FAILURE_ALLOC topology={} V={} E={} observables={} \
+         measured_samples={} allocations_per_sample={:.3} allocated_bytes_per_sample={:.3} \
+         peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        case.lattice.vertex_count(),
+        case.lattice.edge_count(),
+        observable_count,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
     let benchmark_cases = cases();
     for case in &benchmark_cases {
         report_law_case(case);
+        report_random_failure_case(case);
         for mode in ReferenceMode::ALL {
             report_component_case(case, mode);
         }

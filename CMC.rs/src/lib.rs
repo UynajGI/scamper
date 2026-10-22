@@ -131,8 +131,9 @@ pub use percolation::WorkspaceWindingCapacityAudit;
 pub use percolation::{
     analyze, analyze_winding, analyze_with_labels, reweight, scan_bond, scan_site, AnalysisError,
     AnalysisResult, BondBernoulli, BoundaryQuery, BoundaryQueryError, ComponentLabel,
-    ComponentSummary, ComponentWinding, ComponentWorkspace, EdgeActivity, MixedBernoulli,
-    NewmanZiffWorkspace, ObservablePlan, ObservablePlanError, Probability, ProbabilityField,
+    ComponentSummary, ComponentWinding, ComponentWorkspace, DegreeScratch, EdgeActivity,
+    MixedBernoulli, NetworkError, NetworkPercolationError, NetworkProfile, NewmanZiffWorkspace,
+    ObservablePlan, ObservablePlanError, Probability, ProbabilityField, RandomFailureMC,
     ReweightError, ReweightWorkspace, ReweightedEstimate, ScanCurve, ScanError, ScanEstimator,
     ScanMode, ScanObservable, ScanPoint, SiteBernoulli, StaticConfiguration, StaticLaw,
     StaticObservable, StaticPercolationError, StaticPercolationMC, VertexActivity, WindingError,
