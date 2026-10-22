@@ -549,3 +549,73 @@ fn test_metadata_attributes_merge_semantics() {
     let merged = Results::merge(&[merged, rc]);
     assert!(merged.metadata().attribute("policy").is_none());
 }
+
+#[test]
+fn test_merge_stderr_is_pooled_bin_variance() {
+    // Review follow-up (2026-10-22): merged stderr must equal the standard
+    // error of the pooled-bin weighted mean, Var = sum_i n_i s_i^2 / N^2
+    // with s_i^2 = stderr_i^2 * n_i. The pre-review formula divided by
+    // n_runs^2 and underestimated by sqrt(n_runs) for equal runs.
+    let run = |mean: f64, stderr: f64| {
+        let mut r = Results::new();
+        r.add(
+            "Energy",
+            Estimate {
+                mean,
+                stderr,
+                autocorr_time: 1.0,
+                n_bins: 100,
+            },
+        );
+        r
+    };
+
+    // Two equal runs: s_1^2 = 0.02^2*100, s_2^2 = 0.03^2*100.
+    // Var = (100*0.04 + 100*0.09) / 200^2 = 13/40000 -> stderr = sqrt(13)/200.
+    let merged = Results::merge(&[run(1.5, 0.02), run(1.6, 0.03)]);
+    let expected = (13.0_f64 / 40000.0).sqrt();
+    let est = merged.get("Energy").expect("Energy");
+    assert!(
+        (est.stderr - expected).abs() < 1e-12,
+        "merged stderr {} != pooled-bin {}",
+        est.stderr,
+        expected
+    );
+    // The old formula gave sqrt(0.13)/20 ~ 0.018028? No: it gave
+    // sqrt(13/100)/200*sqrt(200)/sqrt(200)... its value was
+    // sqrt(0.0013/4)/sqrt(2) — in any case strictly smaller; assert we
+    // are not below the correct value (regression direction guard).
+    assert!(est.stderr > 0.018 && est.stderr < 0.019);
+
+    // Single run: merged stderr is the run's own stderr, unchanged.
+    let merged = Results::merge(&[run(1.5, 0.02)]);
+    assert!((merged.get("Energy").unwrap().stderr - 0.02).abs() < 1e-12);
+
+    // Unequal bin counts weight correctly:
+    // Var = (400*0.02^2*400... = sum n_i * (stderr_i^2 n_i) / (500^2).
+    let mut a = Results::new();
+    a.add(
+        "Energy",
+        Estimate {
+            mean: 1.0,
+            stderr: 0.02,
+            autocorr_time: 1.0,
+            n_bins: 400,
+        },
+    );
+    let mut b = Results::new();
+    b.add(
+        "Energy",
+        Estimate {
+            mean: 2.0,
+            stderr: 0.05,
+            autocorr_time: 1.0,
+            n_bins: 100,
+        },
+    );
+    let merged = Results::merge(&[a, b]);
+    let expected = ((400.0 * (0.02_f64 * 20.0).powi(2)) + (100.0 * (0.05_f64 * 10.0).powi(2)))
+        / (500.0_f64).powi(2);
+    let expected = expected.sqrt();
+    assert!((merged.get("Energy").unwrap().stderr - expected).abs() < 1e-12);
+}

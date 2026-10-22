@@ -151,3 +151,33 @@ Unblocks vector-measurement adapters N3/D3/E2/E3/G2/G3 in CMC.rs.
   round-trips values. Omitted from JSON when empty (legacy files byte-compatible).
   `Results::merge` keeps agreeing attributes and drops conflicting ones with a warning.
 - **Tests:** round-trip (string + integer values), merge agreement/conflict semantics.
+
+## Independent review and follow-up fixes (2026-10-22)
+
+C0 passed independent review ([report](../docs/reviews/2026-10-22-c0-full-report.md));
+the reviewer hand-derived the per-element statistics, parsed a hand-written
+legacy-JSON fixture, and proved the pre-C0 release build silently
+zip-truncated mismatched array samples. Two review findings were fixed:
+
+### [x] C0.R1 — Merged stderr underestimated by sqrt(n_runs) (pre-existing, propagated by C0)
+- **Problem:** `Results::merge` computed the combined standard error as
+  `sqrt(sum_i s_i^2 / R^2 / N)`; the variance of the pooled-bin weighted mean
+  is `sum_i n_i s_i^2 / N^2`, so merging R equal runs reported error bars
+  sqrt(R) too small. Pre-dates C0 (scalar/complex merge), but C0 extended it
+  to `ArrayEstimate` elements — the curve outputs N3/D3/E2/E3/G2/G3 would
+  have inherited overconfident error bars.
+- **Fix:** `merge_weighted` now uses `sum_i n_i (stderr_i * sqrt(n_i))^2 / N^2`
+  (single-run and multi-run cases unify; single-run output is unchanged).
+  MPI/PT merged results now report correct, larger error bars. Regression
+  test `test_merge_stderr_is_pooled_bin_variance` asserts the exact formula
+  for equal and unequal bin counts.
+
+### [x] C0.R2 — Per-element tau included the partial bin
+- **Problem:** the scalar path estimates tau from completed bins only;
+  `finalize_array` included the normalized partial bin, so one outlier
+  sample could inflate tau (reviewer probe: 1.104 vs 1.0) and the
+  parity claim only held where both floored at 1.0.
+- **Fix:** `finalize_array` estimates tau from the completed-bin column and
+  keeps the partial bin for mean/stderr only — exact structural parity with
+  the scalar convention. Test `test_finalize_array_tau_ignores_partial_bin_like_scalar_path`
+  uses an outlier partial sample (mean moves, tau does not).

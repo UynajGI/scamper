@@ -169,10 +169,13 @@ impl Accumulator {
     ///
     /// Returns `None` for scalar-shaped accumulators. Every element gets an
     /// independent [`Estimate`] computed from its own bin column (completed
-    /// bins plus the normalized partial bin), including a per-element
-    /// variance-ratio autocorrelation time. This is the element-preserving
-    /// counterpart of [`Accumulator::finalize`], which collapses array bins
-    /// to one element-averaged scalar for legacy callers.
+    /// bins plus the normalized partial bin for the mean and stderr), with
+    /// the autocorrelation time estimated from the completed bins only —
+    /// exactly the convention of [`Accumulator::finalize`] for scalars, so
+    /// running one element through a scalar accumulator and through an array
+    /// accumulator yields identical statistics. This is the
+    /// element-preserving counterpart of `finalize`, which collapses array
+    /// bins to one element-averaged scalar for legacy callers.
     pub fn finalize_array(&self) -> Option<ArrayEstimate> {
         if self.shape.is_empty() {
             return None;
@@ -190,6 +193,9 @@ impl Accumulator {
                 columns[i].push(value);
             }
         }
+        // Completed-bin columns (before the partial bin) drive the
+        // autocorrelation estimate, mirroring `autocorr_time()`.
+        let completed: Vec<Vec<f64>> = columns.clone();
         if self.current_filling > 0 && !self.current_bin.is_empty() {
             let scale = 1.0 / self.current_filling as f64;
             for (i, column) in columns.iter_mut().enumerate() {
@@ -199,8 +205,9 @@ impl Accumulator {
 
         let elements = columns
             .iter()
-            .map(|column| {
-                let tau = variance_ratio_autocorr(column);
+            .zip(&completed)
+            .map(|(column, completed_column)| {
+                let tau = variance_ratio_autocorr(completed_column);
                 Estimate::from_bins_with_autocorr(column, tau)
             })
             .collect();

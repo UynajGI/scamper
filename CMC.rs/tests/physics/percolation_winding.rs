@@ -779,9 +779,14 @@ fn two_by_two_torus_enumeration_matches_reference_and_hand_checks() {
     // 8 bonds -> 256 configurations, each parity-checked inside.
     let (probability, mean_rank) = enumerated_wrapping_probability(2);
     eprintln!("2x2 bond torus: P(wrapping) = {probability}, mean largest rank = {mean_rank}");
-    // Exact rational: 256 configurations in total.
-    assert_eq!(probability * 256.0, (probability * 256.0).round());
-    assert!(probability > 0.0 && probability < 1.0);
+    // Exact regression anchors (review 2026-10-22): the fractions are
+    // exactly representable in f64, so a common-mode regression in the
+    // analyzer, the reference, or the builders cannot silently shift the
+    // published numbers. 187/256 and 252/256 were independently re-derived
+    // by two from-scratch brute-force implementations (DSU with unbounded
+    // cell offsets, and lifted BFS) during the W2 review.
+    assert_eq!(probability, 187.0 / 256.0);
+    assert_eq!(mean_rank, 252.0 / 256.0);
 
     // Hand check: the four horizontal bonds (one in-cell + one wrapping per
     // row) form two disjoint 2-cycles, each winding once around x. The two
@@ -828,10 +833,12 @@ fn two_by_two_torus_enumeration_matches_reference_and_hand_checks() {
 #[test]
 fn three_by_three_torus_enumeration_matches_reference() {
     // 18 bonds -> 262144 configurations, each parity-checked against the
-    // lift-BFS reference.
+    // lift-BFS reference. Exact anchors independently re-derived in the W2
+    // review (see the 2x2 note above): 186684/262144 and 259658/262144.
     let (probability, mean_rank) = enumerated_wrapping_probability(3);
     eprintln!("3x3 bond torus: P(wrapping) = {probability}, mean largest rank = {mean_rank}");
-    assert!(probability > 0.0 && probability < 1.0);
+    assert_eq!(probability, 186684.0 / 262144.0);
+    assert_eq!(mean_rank, 259658.0 / 262144.0);
 }
 
 // ── 16-seed z-scores against the enumerated 2x2 reference ────────────────

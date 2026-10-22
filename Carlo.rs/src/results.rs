@@ -395,27 +395,31 @@ fn merge_weighted(estimates: &[&Estimate]) -> Estimate {
         };
     }
 
-    // Weighted mean: sum(mean * n_bins) / total_bins
+    // Weighted mean: sum(mean * n_bins) / total_bins — the pooled-bin mean.
     let weighted_mean: f64 = estimates
         .iter()
         .map(|e| e.mean * e.n_bins as f64)
         .sum::<f64>()
         / total_bins as f64;
 
-    // Combined variance estimate
-    // For independent runs: variance_combined ≈ sum(var_i) / n_runs²
-    // Using stderr² = variance / n_bins
-    let combined_variance: f64 = if estimates.len() > 1 {
-        estimates
-            .iter()
-            .map(|e| (e.stderr * (e.n_bins as f64).sqrt()).powi(2))
-            .sum::<f64>()
-            / (estimates.len() as f64).powi(2)
-    } else {
-        estimates[0].stderr.powi(2) * estimates[0].n_bins as f64
-    };
+    // Variance of the pooled-bin mean for independent runs.
+    //
+    // With weights w_i = n_i / total_bins and run means of variance
+    // s_i^2 / n_i (s_i^2 = the run's per-bin variance, recovered as
+    // stderr_i^2 * n_i), Var(mean) = sum w_i^2 s_i^2 / n_i
+    // = sum n_i s_i^2 / total_bins^2. The pre-C0 code divided by
+    // n_runs^2 instead, underestimating merged stderr by sqrt(n_runs)
+    // for equal runs; corrected after independent review (2026-10-22).
+    let combined_variance: f64 = estimates
+        .iter()
+        .map(|e| {
+            let bins = e.n_bins as f64;
+            bins * (e.stderr * bins.sqrt()).powi(2)
+        })
+        .sum::<f64>()
+        / (total_bins as f64).powi(2);
 
-    let combined_stderr = combined_variance.sqrt() / (total_bins as f64).sqrt();
+    let combined_stderr = combined_variance.sqrt();
 
     Estimate {
         mean: weighted_mean,

@@ -853,3 +853,25 @@ fn random_failure_matches_callaway_cohen_predictions() {
         (above_mean - above_theory).abs()
     );
 }
+
+#[test]
+fn degree_moment_gate_rejects_beyond_exact_f64_bound() {
+    // Review follow-up (2026-10-22): V^3 must stay within the exact f64
+    // integer range because degree second moments sum s(v)^2 over vertices
+    // (sum_c s_c^3 <= V^3). 208063^3 = 9,007,091,372,906,047 <= 2^53 <
+    // 208064^3 = 9,007,221,244,166,144, so exactly V = 208064 is the first
+    // rejected size. Edgeless lattices make the construction cheap; the gate
+    // fires before any workspace is prepared.
+    let plan = ObservablePlan::all(Vec::new());
+
+    let boundary = cmc_rs::CsrLattice::from_edges(208_063, Vec::new());
+    assert!(RandomFailureMC::new(boundary, 0.5, plan.clone()).is_ok());
+
+    let rejected = cmc_rs::CsrLattice::from_edges(208_064, Vec::new());
+    match RandomFailureMC::new(rejected, 0.5, plan) {
+        Err(cmc_rs::NetworkPercolationError::InexactDegreeMoment { total_vertices }) => {
+            assert_eq!(total_vertices, 208_064)
+        }
+        _ => panic!("V = 208064 must be rejected by the exactness gate"),
+    }
+}

@@ -419,3 +419,43 @@ fn test_finalize_array_partial_bin_included_per_element() {
     let est = array.element(1).unwrap();
     assert!((est.mean - 17.0 / 3.0).abs() < 1e-12);
 }
+
+#[test]
+fn test_finalize_array_tau_ignores_partial_bin_like_scalar_path() {
+    // Review follow-up (2026-10-22): the scalar path estimates tau from
+    // completed bins only. Including the normalized partial bin in the
+    // per-element tau column let one outlier sample inflate var_rebin and
+    // spuriously raise tau (reviewer probe: 1.104 vs 1.0), so finalize_array
+    // now matches the scalar convention exactly. The partial bin still
+    // contributes to mean and stderr.
+    let mut acc = Accumulator::new(2);
+    let mut scalar = Accumulator::new(2);
+    // Completed-bin means alternate 0/1; the partial-bin sample is an
+    // outlier (500), which would dominate any variance that includes it.
+    for round in 0..4_u32 {
+        let value = f64::from(round % 2);
+        for _ in 0..2 {
+            acc.add_array(&[value, -value]).unwrap();
+            scalar.add(value);
+        }
+    }
+    acc.add_array(&[500.0, -500.0]).unwrap();
+    scalar.add(500.0);
+
+    let array = acc.finalize_array().expect("array accumulator");
+    let reference = scalar.finalize();
+    let element = array.element(0).unwrap();
+
+    // Exact parity with the scalar statistics on identical samples.
+    assert_eq!(element.autocorr_time, reference.autocorr_time);
+    assert!((element.mean - reference.mean).abs() < 1e-9);
+    assert!((element.stderr - reference.stderr).abs() < 1e-9);
+    assert_eq!(element.n_bins, reference.n_bins);
+
+    // The outlier partial sample is in the mean (not silently dropped)...
+    assert!(element.mean > 50.0);
+    // ...but does not leak into tau: the alternating completed bins leave
+    // the raw estimator at its floor, stored as 1.0 exactly as the scalar
+    // path reports it.
+    assert_eq!(element.autocorr_time, 1.0);
+}

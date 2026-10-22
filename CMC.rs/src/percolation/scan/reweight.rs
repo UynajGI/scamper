@@ -87,7 +87,7 @@ impl ReweightWorkspace {
         // normalization cancels in the weighted mean. This avoids one `exp`
         // per occupation count.
         let complement = 1.0 - probability;
-        let mode = (((trials + 1) as f64) * probability).floor() as usize;
+        let mode = ((trials.saturating_add(1) as f64) * probability).floor() as usize;
         let mode = mode.min(trials);
         self.weights[mode] = 1.0;
 

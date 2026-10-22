@@ -26,8 +26,8 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Directed topology capability sketch | Experimental | Separate outgoing/incoming signatures exist only crate-private with compile fixtures; no directed API is re-exported before D1 fixes arc identity and storage contracts. |
 | Static configuration and Bernoulli-law substrate | Experimental | F2 provisional API separates private activity storage from independent site/bond/mixed laws, validates probability domains and topology lengths, and samples allocation-free after preparation. The independently reviewed F3 analyzer/workspace and F4 observables build on this substrate; the layer remains Experimental until the platform merges into `dev`. |
 | Static site, bond, and mixed Bernoulli percolation on arbitrary owned or borrowed undirected graphs | Validated | All family-specific gates pass: F3 component analysis with reusable workspace, canonical identities, and multi-query crossing; F4 `ObservablePlan` observables and owned `StaticPercolationMC` with every PR #4 validation asset migrated, the zero-allocation adapter gate, and 16-seed z-scores; independent review passed. Production-ready once the branch merges into `dev`. |
-| Heterogeneous occupation probabilities | Validated | N1 promotes the F2 `ProbabilityField` substrate to the `StaticPercolationMC` adapter: `StaticLaw::site_heterogeneous`/`bond_heterogeneous`/`mixed_heterogeneous` own one validated `Probability` per vertex and/or per physical edge, with adapter-constructor domain validation and scheduler scheduling through `Run::from_parts()`. Gates passed: exact non-identically-distributed small-graph enumeration (independently reproduced), bitwise uniform and mixed-pure reductions, endpoint determinism, typed length/invalid-probability rejection, 16-seed scheduler z-scores for site/bond/mixed (enumeration and Poisson-binomial references), uniform-vs-heterogeneous Criterion comparison, and a 0-allocation heterogeneous adapter probe. Independent review passed; production on the `dev` merge. Network/domain facades over heterogeneous fields (random failure, degree observables) remain Not implemented (N2). |
-| Network random failure and degree-conditioned observables | Experimental — awaiting independent review | N2 `RandomFailureMC` facade over the F2 uniform site law with an original-degree `NetworkProfile` and six C0 element-preserving degree arrays (`DegreeVertexCount`, `DegreeOccupied`, `ActiveFractionByDegree`, `GiantMembershipByDegree`, `DegreeFirstMoment`, `DegreeSecondMoment`); empty bins exact-zero with explicit occupancy, `V^3` exactness gate, 0-allocation probe. Gates: bitwise site-law reduction, independent-BFS enumeration z-scores on path/cycle/star/complete, relabeling invariance, empty-bin semantics, and literature anchors (Callaway et al. PRL 85, 5468 and Cohen et al. PRL 85, 4626; PDFs in `docs/ref/`). See the N2 section below. |
+| Heterogeneous occupation probabilities | Validated | N1 promotes the F2 `ProbabilityField` substrate to the `StaticPercolationMC` adapter: `StaticLaw::site_heterogeneous`/`bond_heterogeneous`/`mixed_heterogeneous` own one validated `Probability` per vertex and/or per physical edge, with adapter-constructor domain validation and scheduler scheduling through `Run::from_parts()`. Gates passed: exact non-identically-distributed small-graph enumeration (independently reproduced), bitwise uniform and mixed-pure reductions, endpoint determinism, typed length/invalid-probability rejection, 16-seed scheduler z-scores for site/bond/mixed (enumeration and Poisson-binomial references), uniform-vs-heterogeneous Criterion comparison, and a 0-allocation heterogeneous adapter probe. Independent review passed; production on the `dev` merge. The N2 random-failure facade now builds on this substrate. |
+| Network random failure and degree-conditioned observables | Validated | N2 `RandomFailureMC` facade over the F2 uniform site law with an original-degree `NetworkProfile` and six C0 element-preserving degree arrays (`DegreeVertexCount`, `DegreeOccupied`, `ActiveFractionByDegree`, `GiantMembershipByDegree`, `DegreeFirstMoment`, `DegreeSecondMoment`); empty bins exact-zero with explicit occupancy, `V^3` exactness gate, 0-allocation probe. Gates: bitwise site-law reduction, independent-BFS enumeration z-scores on path/cycle/star/complete, relabeling invariance, empty-bin semantics, and literature anchors (Callaway et al. PRL 85, 5468 and Cohen et al. PRL 85, 4626; PDFs in `docs/ref/`). Independent review passed 2026-10-22 (kappa/q_c and the Callaway fixed points independently re-derived; star-graph observables hand-enumerated to exact fractions; V^3 boundary recomputed); see the N2 section below and `docs/reviews/`. |
 | Targeted or adaptive attack and robustness curves | Not implemented | No removal process or vector-valued realization output. |
 | Directed static reachability, weak/strong components | Not implemented | `CsrLattice` is undirected; directedness is not a mode flag. |
 | Layered space-time directed percolation | Not implemented | No causal-layer process or survival/arrival profiles. |
@@ -41,12 +41,13 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Generic real-q random-cluster model | Not implemented | No Sweeny or Chayes-Machta sampler. |
 | Boundary crossing between explicit vertex sets | Validated | F3 `BoundaryQuery` is validated for owned/borrowed generic undirected views, supports several queries in one component pass, and defines empty/overlap/dedup semantics; F4 migrates the full crossing test assets. The square left/right-column and chain endpoint defaults live in the `StaticPercolationMC` parameter schema; all other parameter-built topologies require explicit site sets. |
 | Periodic embedding capability (W1) | Experimental | Directed-incidence integer cell displacements exist as explicit recorded data: the `PeriodicEmbedding` capability (`topology/embedding.rs`) and the `LatticeEmbedding` table serve the pbc chain/square/hypercubic builders and the triangular builder, which record each displacement at bond emission and never infer it from `BondType` or vertex IDs. Independently reviewed; see the W1 section below. |
-| Periodic wrapping/winding analysis (W2) | Experimental | Winding-capable component analysis over the W1 displacements: `analyze_winding` (percolation/analyzer/winding.rs) runs one physical-edge pass of union-find with checked `i32` `Z^D` potentials, reports per-component winding rank and an echelon generating set (never only a Boolean), and feeds `Wrapping`/`WindingRank` plan observables on `StaticPercolationMC::with_embedding`; open/non-embedded wrapping requests are typed errors. Engineering gates green, awaiting independent review; see the W2 section below. Crossing is not wrapping. |
-| Newman-Ziff parameter scans (Z1) | Experimental — awaiting independent review | `scan_site`/`scan_bond` activate a uniformly random permutation and record the full occupation-count curve (component count, largest size, raw second moment, active edges); `reweight` turns one curve into scalar estimates at uniform `p` via binomial weights, and `ScanEstimator` reports scan-to-scan uncertainty. Zero allocations after `prepare`. Uniform site/bond only; no heterogeneous/mixed/deletion scans, no scheduler adapter or C0 vector output. See the Z1 section below. |
+| Periodic wrapping/winding analysis (W2) | Validated | Winding-capable component analysis over the W1 displacements: `analyze_winding` (percolation/analyzer/winding.rs) runs one physical-edge pass of union-find with checked `i32` `Z^D` potentials, reports per-component winding rank and an echelon generating set (never only a Boolean), and feeds `Wrapping`/`WindingRank` plan observables on `StaticPercolationMC::with_embedding`; open/non-embedded wrapping requests are typed errors. Engineering gates green and independent review passed 2026-10-22 (two from-scratch brute forces reproduced 187/256 and 186684/262144; potential and echelon algebra hand-verified; exact anchors now asserted); see the W2 section below and `docs/reviews/`. Crossing is not wrapping. |
+| Newman-Ziff parameter scans (Z1) | Validated | `scan_site`/`scan_bond` activate a uniformly random permutation and record the full occupation-count curve (component count, largest size, raw second moment, active edges); `reweight` turns one curve into scalar estimates at uniform `p` via binomial weights, and `ScanEstimator` reports scan-to-scan uncertainty. Zero allocations after `prepare`. Uniform site/bond only; no heterogeneous/mixed/deletion scans, no scheduler adapter. Independent review passed 2026-10-22 (reweight recurrence verified against the archived paper to 9.5e-14 at n=10^6; from-scratch flood-fill parity; speedup reproduced); see the Z1 section below and `docs/reviews/`. |
 
 At F0 no family was **Validated**. Since F4 passed independent review, the
-static family and boundary crossing are the first Validated rows; N1 adds the
-heterogeneous-probability family on the same production-conditioned basis.
+static family and boundary crossing were the first Validated rows; N1, W2,
+Z1, and N2 have since passed independent review on the same
+production-conditioned basis.
 Their production availability is conditioned on the branch merging into `dev`.
 
 ## Scientific definitions
@@ -1149,10 +1150,10 @@ Gold 6148 host, p_bond = 0.5, 2026-10-09):
 | square 64x64 V=4096, E=8192, D=2 | 119.1 us (68.8 Melem/s) | 270.9 us (30.2 Melem/s) | 381.9 us | 118.7 us | 387.4 us |
 | cubic 16x16x8 V=2048, E=6144, D=3 | 83.4 us (73.7 Melem/s) | 220.0 us (27.9 Melem/s) | 297.3 us | 84.4 us | 296.7 us |
 
-The winding scan costs ~2.3-2.6x the F3 scan per edge (potential
-bookkeeping, potential-aware path compression, basis folding), so an
-adapter requesting both analyses runs ~3.2-3.5x the plain adapter per
-sample; the winding-only path is strictly cheaper than F3+winding because
+The winding scan costs ~2.0-2.6x the F3 scan per edge (ring 1.96x through
+cubic 2.64x; potential bookkeeping, potential-aware path compression, basis
+folding), so an adapter requesting both analyses runs ~2.8-3.5x the plain
+adapter per sample (ring 2.78x through cubic 3.52x); the winding-only path is strictly cheaper than F3+winding because
 it fuses connectivity and winding into one scan. Reproduce with:
 
 ```bash
@@ -1330,8 +1331,10 @@ weights) is:
 | power-law (V=4096, E=16374) | site | 1,035,774 | 252.9 | 50.6 |
 | power-law | bond | 1,133,998 | 276.9 | 55.4 |
 
-The point buffer (48 bytes per point) dominates; capacity excludes struct
-headers, allocator metadata, and RSS effects. Reproduce with:
+The table above excerpts 8 of the 10 probe records (the power-law rows
+are omitted for space; they are part of the probe output). The point
+buffer (48 bytes per point) dominates; capacity excludes struct headers,
+allocator metadata, and RSS effects. Reproduce with:
 
 ```bash
 cargo test -p cmc-rs --test suite percolation_scan
@@ -1424,8 +1427,7 @@ All gates in `tests/physics/percolation_network.rs`:
     arXiv:cond-mat/0007048): measured `kappa = <k^2>/<k> = 3.5025` gives
     `q_c = 1/(kappa-1) = 0.3996` against the ideal Poisson `0.4` (agreement
     0.0004). Bracket: at `q_c - 0.03` the giant is extinguished
-    (`S = 0.0030`); at `q_c + 0.10` a giant exists (`S = 0.1857`) and matches
-    theory (below). Both points sit outside the finite-size rounding window
+    (`S = 0.0030`); at `q_c + 0.10` a giant exists (`S = 0.1851 ± 0.0001` vs theory 0.1855). Both points sit outside the finite-size rounding window
     `~N^{-1/3} ~ 0.02`.
   - **Callaway, Newman, Strogatz, Watts, PRL 85, 5468 (2000)**
     (`docs/ref/Callaway_2000_PRL_network_robustness.pdf`,
