@@ -93,9 +93,10 @@ pub use generalized::{
     WangLandauRefinement, WangLandauRunControl, WangLandauState, WangLandauTermination,
 };
 pub use lattice::graph::{
-    build_chain, build_chain_with_embedding, build_honeycomb, build_hypercubic,
-    build_hypercubic_with_embedding, build_kagome, build_square, build_square_with_embedding,
-    build_triangular, build_triangular_with_embedding, Bond, BondType, CsrLattice,
+    build_chain, build_chain_with_embedding, build_honeycomb, build_honeycomb_with_embedding,
+    build_hypercubic, build_hypercubic_with_embedding, build_kagome, build_kagome_with_embedding,
+    build_square, build_square_with_embedding, build_triangular, build_triangular_with_embedding,
+    Bond, BondType, CsrLattice,
 };
 pub use lattice::interaction::{
     ClusterAuxiliary, ClusterModel, ContinuousHeatBathable, Hamiltonian, HeatBathable,

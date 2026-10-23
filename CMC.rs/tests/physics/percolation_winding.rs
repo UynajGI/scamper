@@ -6,6 +6,7 @@
 use std::sync::OnceLock;
 
 use carlo_rs::{Context, FromParams, Params, Run, RunConfig, RunId, TaskId};
+use cmc_rs::lattice::graph::{build_honeycomb_with_embedding, build_kagome_with_embedding};
 use cmc_rs::{
     analyze, analyze_winding, build_chain_with_embedding, build_hypercubic_with_embedding,
     build_square, build_square_with_embedding, Bond, BondType, BoundaryQuery, ComponentWorkspace,
@@ -976,4 +977,124 @@ fn adversarial_displacement_tables_return_typed_overflow_errors() {
         .expect("magnitude gate rejects the adversarial table"),
         StaticPercolationError::EmbeddingMagnitude { .. }
     ));
+}
+
+// ── T3 honeycomb/kagome families ─────────────────────────────────────────
+
+/// Fully occupied honeycomb and kagome tori must wind in both independent
+/// directions at every legal size; the winding subgroup of a full torus is
+/// all of Z^2, so the echelon generating set is a basis (determinant ±1).
+/// Every case is parity-checked against the independent lift-BFS reference.
+#[test]
+fn honeycomb_and_kagome_full_tori_wind_both_axes() {
+    let mut workspace = WindingWorkspace::new();
+    for (lx, ly) in [(2, 2), (2, 3), (4, 2), (4, 3), (6, 4)] {
+        let (lattice, embedding) = build_honeycomb_with_embedding(lx, ly).expect("honeycomb torus");
+        let (vertices, edges) = all_active(&lattice);
+        let result = production(&lattice, &embedding, &vertices, &edges, &mut workspace);
+        let label = format!("honeycomb {lx}x{ly}");
+        assert_eq!(result.dimensions(), 2, "{label}");
+        assert_eq!(result.summary().component_count, 1, "{label}");
+        assert_eq!(result.summary().largest_component_size, lx * ly, "{label}");
+        assert_eq!(result.summary().largest_winding_rank, 2, "{label}");
+        let generators: Vec<[i32; 2]> = result
+            .generators(0)
+            .map(|generator| [generator[0], generator[1]])
+            .collect();
+        let determinant = generators[0][0] as i64 * generators[1][1] as i64
+            - generators[0][1] as i64 * generators[1][0] as i64;
+        assert_eq!(
+            determinant.abs(),
+            1,
+            "{label}: full-torus generators must span Z^2, got {generators:?}"
+        );
+        assert_matches_reference(&lattice, &embedding, &vertices, &edges, 2, &label);
+    }
+
+    for (lx, ly) in [(2, 2), (2, 3), (3, 2), (4, 3), (5, 4)] {
+        let (lattice, embedding) = build_kagome_with_embedding(lx, ly).expect("kagome torus");
+        let (vertices, edges) = all_active(&lattice);
+        let result = production(&lattice, &embedding, &vertices, &edges, &mut workspace);
+        let label = format!("kagome {lx}x{ly}");
+        assert_eq!(result.dimensions(), 2, "{label}");
+        assert_eq!(result.summary().component_count, 1, "{label}");
+        assert_eq!(
+            result.summary().largest_component_size,
+            3 * lx * ly,
+            "{label}"
+        );
+        assert_eq!(result.summary().largest_winding_rank, 2, "{label}");
+        let generators: Vec<[i32; 2]> = result
+            .generators(0)
+            .map(|generator| [generator[0], generator[1]])
+            .collect();
+        let determinant = generators[0][0] as i64 * generators[1][1] as i64
+            - generators[0][1] as i64 * generators[1][0] as i64;
+        assert_eq!(
+            determinant.abs(),
+            1,
+            "{label}: full-torus generators must span Z^2, got {generators:?}"
+        );
+        assert_matches_reference(&lattice, &embedding, &vertices, &edges, 2, &label);
+    }
+}
+
+/// Cutting every wrapping bond (each bond whose displacement is nonzero)
+/// leaves only in-cell bonds: every remaining cycle is contractible, so no
+/// component can wrap at any size. This includes the honeycomb `Lx = 2`
+/// doubled pairs, where exactly the wrapping half of each pair is cut —
+/// the `(edge, endpoint)` keyed table distinguishing physical bonds that
+/// endpoint data alone cannot.
+#[test]
+fn honeycomb_and_kagome_without_wrapping_bonds_do_not_wind() {
+    let mut workspace = WindingWorkspace::new();
+    for (lx, ly) in [(2, 2), (2, 3), (4, 3)] {
+        let (lattice, embedding) = build_honeycomb_with_embedding(lx, ly).expect("honeycomb torus");
+        let (vertices, mut edges) = all_active(&lattice);
+        for (edge_index, active) in edges.0.iter_mut().enumerate() {
+            let edge = lattice.edge_id(edge_index).expect("dense edge index");
+            let [source, _] = lattice.edge_endpoints(edge);
+            let wraps = !embedding
+                .edge_displacement(edge, source)
+                .expect("source endpoint")
+                .is_zero();
+            if wraps {
+                *active = false;
+            }
+        }
+        let result = production(&lattice, &embedding, &vertices, &edges, &mut workspace);
+        let label = format!("honeycomb {lx}x{ly} cut");
+        assert_eq!(result.summary().wrapping_component_count, 0, "{label}");
+        assert_eq!(result.summary().largest_winding_rank, 0, "{label}");
+        assert!(
+            result.components().iter().all(|info| info.rank() == 0),
+            "{label}: every component must be contractible"
+        );
+        assert_matches_reference(&lattice, &embedding, &vertices, &edges, 2, &label);
+    }
+
+    for (lx, ly) in [(2, 2), (3, 2), (4, 3)] {
+        let (lattice, embedding) = build_kagome_with_embedding(lx, ly).expect("kagome torus");
+        let (vertices, mut edges) = all_active(&lattice);
+        for (edge_index, active) in edges.0.iter_mut().enumerate() {
+            let edge = lattice.edge_id(edge_index).expect("dense edge index");
+            let [source, _] = lattice.edge_endpoints(edge);
+            let wraps = !embedding
+                .edge_displacement(edge, source)
+                .expect("source endpoint")
+                .is_zero();
+            if wraps {
+                *active = false;
+            }
+        }
+        let result = production(&lattice, &embedding, &vertices, &edges, &mut workspace);
+        let label = format!("kagome {lx}x{ly} cut");
+        assert_eq!(result.summary().wrapping_component_count, 0, "{label}");
+        assert_eq!(result.summary().largest_winding_rank, 0, "{label}");
+        assert!(
+            result.components().iter().all(|info| info.rank() == 0),
+            "{label}: every component must be contractible"
+        );
+        assert_matches_reference(&lattice, &embedding, &vertices, &edges, 2, &label);
+    }
 }

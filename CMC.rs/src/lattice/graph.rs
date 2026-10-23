@@ -627,87 +627,198 @@ fn triangular_bonds(
 
 /// 2D honeycomb lattice in brick-wall representation with periodic boundaries.
 ///
-/// No `_with_embedding` variant exists: this builder assembles a symmetric
-/// adjacency list, and `CsrLattice::from_adjacency` drops the per-bond
-/// construction direction while deduplicating to physical edges. On `lx = 2`
-/// the two horizontal bonds between a site pair carry different cell
-/// displacements that the emitted bond list can no longer distinguish, so
-/// recovering them would be guessing (W1 forbids that). A honeycomb embedding
-/// requires a builder that records displacements while emitting bonds.
+/// Site numbering is a public contract (the embedding builders and their
+/// tests rely on it): site `(x, y)` carries index `y * lx + x`, with `x`
+/// even/odd selecting the brick-wall sublattice. Every site has three
+/// neighbours, listed here in family order:
+///
+/// - right `(x + 1 mod lx, y)` — horizontal, [`BondType::HoneyX`];
+/// - left `(x + lx - 1 mod lx, y)` — horizontal, [`BondType::HoneyX`];
+/// - matched: `(x + 1 mod lx, y + 1 mod ly)` for even `x`,
+///   `(x + lx - 1 mod lx, y + ly - 1 mod ly)` for odd `x` — the inter-row
+///   bond, [`BondType::HoneyY`].
+///
+/// On `lx = 2` the right and left steps of one site reach the same
+/// neighbour, so every row carries a doubled horizontal bond pair; the two
+/// physical bonds keep distinct cell displacements
+/// (see [`build_honeycomb_with_embedding`]).
 pub fn build_honeycomb(lx: usize, ly: usize) -> CsrLattice {
+    let (n_sites, edges, _) = honeycomb_bonds(lx, ly, false);
+    CsrLattice::from_edges(n_sites, edges)
+}
+
+/// Honeycomb torus plus its periodic embedding; see
+/// [`build_hypercubic_with_embedding`] for the boundary semantics.
+///
+/// Returns exactly the lattice of [`build_honeycomb`] (pinned bit-identical
+/// by test) with a [`LatticeEmbedding`] whose per-bond fundamental-cell
+/// displacements were recorded at emission. A step moving `+1` along an axis
+/// from coordinate `c` crosses one fundamental-cell boundary iff `c + 1` is
+/// the axis length (displacement `+1`), a `-1` step crosses one iff `c == 0`
+/// (displacement `-1`), and otherwise the component is `0`. Within a
+/// doubled horizontal pair (`lx = 2`) the non-wrapping bond `(0, 0)` is
+/// emitted before the wrapping one `(-1, 0)`, which fixes the
+/// displacement-table row order inside parallel groups.
+pub fn build_honeycomb_with_embedding(
+    lx: usize,
+    ly: usize,
+) -> Result<(CsrLattice, LatticeEmbedding), EmbeddingError> {
+    let (n_sites, edges, displacements) = honeycomb_bonds(lx, ly, true);
+    let lattice = CsrLattice::from_edges(n_sites, edges);
+    let embedding = LatticeEmbedding::try_from_edge_displacements(&lattice, 2, &displacements)?;
+    Ok((lattice, embedding))
+}
+
+/// Shared honeycomb bond loop; see [`hypercubic_bonds`] for the
+/// displacement-tracking convention and [`build_honeycomb`] for the site
+/// numbering and neighbour families.
+///
+/// Each physical bond is emitted exactly once, from its smaller-index
+/// endpoint, visiting pairs in ascending `(source, target)` order — the order
+/// the historical `from_adjacency` BTreeMap produced, so the refactored plain
+/// builder stayed bit-identical and that order doubles as the
+/// displacement-table row order. Within one site the bonds sort by target; a
+/// stable sort keeps the family order for parallel pairs (right before left
+/// at `lx = 2`).
+fn honeycomb_bonds(
+    lx: usize,
+    ly: usize,
+    track_displacements: bool,
+) -> (usize, Vec<Bond>, Vec<i32>) {
     assert!(lx >= 2, "honeycomb lattice needs Lx >= 2");
     assert!(ly >= 2, "honeycomb lattice needs Ly >= 2");
     assert!(lx.is_multiple_of(2), "honeycomb lattice needs even Lx");
     let index = |x: usize, y: usize| y * lx + x;
-    let mut adjacency = vec![Vec::with_capacity(3); lx * ly];
 
+    let mut edges = Vec::with_capacity(3 * lx * ly / 2);
+    let mut displacements = Vec::new();
     for y in 0..ly {
         for x in 0..lx {
-            let matched = if x % 2 == 0 {
-                index((x + 1) % lx, (y + 1) % ly)
-            } else {
-                index((x + lx - 1) % lx, (y + ly - 1) % ly)
-            };
-            adjacency[index(x, y)].extend_from_slice(&[
-                index((x + 1) % lx, y),
-                index((x + lx - 1) % lx, y),
-                matched,
-            ]);
+            let site = index(x, y);
+            let mut candidates = [
+                (
+                    index((x + 1) % lx, y),
+                    [i32::from(x + 1 == lx), 0],
+                    BondType::HoneyX,
+                ),
+                (
+                    index((x + lx - 1) % lx, y),
+                    [-i32::from(x == 0), 0],
+                    BondType::HoneyX,
+                ),
+                if x.is_multiple_of(2) {
+                    (
+                        index((x + 1) % lx, (y + 1) % ly),
+                        [i32::from(x + 1 == lx), i32::from(y + 1 == ly)],
+                        BondType::HoneyY,
+                    )
+                } else {
+                    (
+                        index((x + lx - 1) % lx, (y + ly - 1) % ly),
+                        [-i32::from(x == 0), -i32::from(y == 0)],
+                        BondType::HoneyY,
+                    )
+                },
+            ];
+            candidates.sort_by_key(|&(target, _, _)| target);
+            for (target, [dx, dy], kind) in candidates {
+                if target > site {
+                    edges.push(Bond::new(site, target, kind, 1.0));
+                    if track_displacements {
+                        displacements.extend([dx, dy]);
+                    }
+                }
+            }
         }
     }
-
-    let mut lattice = CsrLattice::from_adjacency(&adjacency);
-    for edge in &mut lattice.edges {
-        edge.kind = if edge.source / lx == edge.target / lx {
-            BondType::HoneyX
-        } else {
-            BondType::HoneyY
-        };
-    }
-    lattice
+    (lx * ly, edges, displacements)
 }
 
 /// 2D kagome lattice (`3 × Lx × Ly` sites) with periodic boundaries.
 ///
-/// No `_with_embedding` variant exists, for the same reason as
-/// [`build_honeycomb`]: the symmetric-adjacency construction loses the
-/// per-bond direction, and on small cells distinct covering bonds collapse
-/// onto the same endpoint pair, so per-edge cell displacements cannot be
-/// attached without guessing.
+/// Site numbering is a public contract (the embedding builders and their
+/// tests rely on it): unit cell `(x, y)` hosts three sublattice sites, with
+/// sublattice `S` at index `S + 3 * (x + y * lx)`. Writing `S(x, y)` for
+/// sublattice `S` in cell `(x, y)`, the neighbours are:
+///
+/// - `A(x, y)`: `B(x, y)`, `C(x, y)`, `B(x - 1, y)`, `C(x, y - 1)`;
+/// - `B(x, y)`: `A(x, y)`, `C(x, y)`, `A(x + 1, y)`, `C(x - 1, y)`;
+/// - `C(x, y)`: `A(x, y)`, `B(x, y)`, `A(x, y + 1)`, `B(x + 1, y)`;
+///
+/// with cell coordinates taken mod `lx`/`ly`; every bond is
+/// [`BondType::Kagome`]. No parallel bonds arise for `Lx, Ly >= 2` (each
+/// site's four neighbours are distinct); the small-cell obstruction recorded
+/// in W1 was reconstructability — at `Lx = 2` the left/right cross families
+/// join the same sublattice pairs with swapped cells, so endpoint data alone
+/// cannot attribute which pair wraps. [`build_kagome_with_embedding`]
+/// records the attribution at emission instead.
 pub fn build_kagome(lx: usize, ly: usize) -> CsrLattice {
+    let (n_sites, edges, _) = kagome_bonds(lx, ly, false);
+    CsrLattice::from_edges(n_sites, edges)
+}
+
+/// Kagome torus plus its periodic embedding; see
+/// [`build_hypercubic_with_embedding`] for the boundary semantics and
+/// [`build_honeycomb_with_embedding`] for the displacement convention
+/// (identical here: ±1 exactly on the axis whose boundary the step crosses).
+pub fn build_kagome_with_embedding(
+    lx: usize,
+    ly: usize,
+) -> Result<(CsrLattice, LatticeEmbedding), EmbeddingError> {
+    let (n_sites, edges, displacements) = kagome_bonds(lx, ly, true);
+    let lattice = CsrLattice::from_edges(n_sites, edges);
+    let embedding = LatticeEmbedding::try_from_edge_displacements(&lattice, 2, &displacements)?;
+    Ok((lattice, embedding))
+}
+
+/// Shared kagome bond loop; see [`hypercubic_bonds`] for the
+/// displacement-tracking convention, [`build_kagome`] for the site numbering
+/// and neighbour families, and [`honeycomb_bonds`] for the emission-order
+/// contract (identical: each bond once, from its smaller endpoint, ascending
+/// `(source, target)`).
+fn kagome_bonds(lx: usize, ly: usize, track_displacements: bool) -> (usize, Vec<Bond>, Vec<i32>) {
     assert!(lx >= 2 && ly >= 2, "kagome lattice needs Lx,Ly >= 2");
-    let n_sites = 3 * lx * ly;
-    let mut adjacency = vec![Vec::with_capacity(4); n_sites];
     let index = |sublattice: usize, x: usize, y: usize| sublattice + 3 * (x + y * lx);
 
+    let mut edges = Vec::with_capacity(6 * lx * ly);
+    let mut displacements = Vec::new();
     for y in 0..ly {
         for x in 0..lx {
-            adjacency[index(0, x, y)].extend_from_slice(&[
-                index(1, x, y),
-                index(2, x, y),
-                index(1, (x + lx - 1) % lx, y),
-                index(2, x, (y + ly - 1) % ly),
-            ]);
-            adjacency[index(1, x, y)].extend_from_slice(&[
-                index(0, x, y),
-                index(2, x, y),
-                index(0, (x + 1) % lx, y),
-                index(2, (x + lx - 1) % lx, y),
-            ]);
-            adjacency[index(2, x, y)].extend_from_slice(&[
-                index(0, x, y),
-                index(1, x, y),
-                index(0, x, (y + 1) % ly),
-                index(1, (x + 1) % lx, y),
-            ]);
+            for sublattice in 0..3 {
+                let site = index(sublattice, x, y);
+                let mut candidates = match sublattice {
+                    0 => [
+                        (index(1, x, y), [0, 0]),
+                        (index(2, x, y), [0, 0]),
+                        (index(1, (x + lx - 1) % lx, y), [-i32::from(x == 0), 0]),
+                        (index(2, x, (y + ly - 1) % ly), [0, -i32::from(y == 0)]),
+                    ],
+                    1 => [
+                        (index(0, x, y), [0, 0]),
+                        (index(2, x, y), [0, 0]),
+                        (index(0, (x + 1) % lx, y), [i32::from(x + 1 == lx), 0]),
+                        (index(2, (x + lx - 1) % lx, y), [-i32::from(x == 0), 0]),
+                    ],
+                    _ => [
+                        (index(0, x, y), [0, 0]),
+                        (index(1, x, y), [0, 0]),
+                        (index(0, x, (y + 1) % ly), [0, i32::from(y + 1 == ly)]),
+                        (index(1, (x + 1) % lx, y), [i32::from(x + 1 == lx), 0]),
+                    ],
+                };
+                candidates.sort_by_key(|&(target, _)| target);
+                for (target, [dx, dy]) in candidates {
+                    if target > site {
+                        edges.push(Bond::new(site, target, BondType::Kagome, 1.0));
+                        if track_displacements {
+                            displacements.extend([dx, dy]);
+                        }
+                    }
+                }
+            }
         }
     }
-
-    let mut lattice = CsrLattice::from_adjacency(&adjacency);
-    for edge in &mut lattice.edges {
-        edge.kind = BondType::Kagome;
-    }
-    lattice
+    (3 * lx * ly, edges, displacements)
 }
 
 #[cfg(test)]
@@ -1162,5 +1273,533 @@ mod tests {
         assert_eq!(cube.offsets, plain_cube.offsets);
         assert_eq!(cube.neighbors, plain_cube.neighbors);
         assert_eq!(cube.edge_ids, plain_cube.edge_ids);
+    }
+
+    // ---- T3 honeycomb/kagome embeddings ----
+
+    #[test]
+    fn honeycomb_and_kagome_embedding_builders_reproduce_the_plain_lattices() {
+        let honeycomb_cases: [(usize, usize); 10] = [
+            (2, 2),
+            (2, 3),
+            (2, 4),
+            (4, 2),
+            (4, 3),
+            (4, 4),
+            (6, 2),
+            (6, 3),
+            (6, 5),
+            (8, 4),
+        ];
+        for (lx, ly) in honeycomb_cases {
+            let (lattice, _) = build_honeycomb_with_embedding(lx, ly).expect("honeycomb torus");
+            let plain = build_honeycomb(lx, ly);
+            assert_eq!(lattice.edges, plain.edges, "honeycomb {lx}x{ly} edges");
+            assert_eq!(lattice.n_sites, plain.n_sites, "honeycomb {lx}x{ly} sites");
+            assert_eq!(lattice.n_bonds, plain.n_bonds, "honeycomb {lx}x{ly} bonds");
+            assert_eq!(
+                lattice.offsets, plain.offsets,
+                "honeycomb {lx}x{ly} offsets"
+            );
+            assert_eq!(
+                lattice.neighbors, plain.neighbors,
+                "honeycomb {lx}x{ly} neighbors"
+            );
+            assert_eq!(
+                lattice.edge_ids, plain.edge_ids,
+                "honeycomb {lx}x{ly} edge ids"
+            );
+        }
+
+        let kagome_cases: [(usize, usize); 10] = [
+            (2, 2),
+            (2, 3),
+            (2, 4),
+            (3, 2),
+            (3, 3),
+            (3, 4),
+            (4, 2),
+            (4, 3),
+            (5, 3),
+            (6, 4),
+        ];
+        for (lx, ly) in kagome_cases {
+            let (lattice, _) = build_kagome_with_embedding(lx, ly).expect("kagome torus");
+            let plain = build_kagome(lx, ly);
+            assert_eq!(lattice.edges, plain.edges, "kagome {lx}x{ly} edges");
+            assert_eq!(lattice.n_sites, plain.n_sites, "kagome {lx}x{ly} sites");
+            assert_eq!(lattice.n_bonds, plain.n_bonds, "kagome {lx}x{ly} bonds");
+            assert_eq!(lattice.offsets, plain.offsets, "kagome {lx}x{ly} offsets");
+            assert_eq!(
+                lattice.neighbors, plain.neighbors,
+                "kagome {lx}x{ly} neighbors"
+            );
+            assert_eq!(
+                lattice.edge_ids, plain.edge_ids,
+                "kagome {lx}x{ly} edge ids"
+            );
+        }
+    }
+
+    #[test]
+    fn honeycomb_2x2_displacements_match_hand_derivation() {
+        let (lattice, embedding) = build_honeycomb_with_embedding(2, 2).expect("honeycomb torus");
+        assert_eq!(embedding.periodic_dimensions(), 2);
+        assert_eq!(lattice.n_edges(), 6);
+        // Sites are y*2+x. Both rows carry one doubled horizontal pair; the
+        // matched bonds are the two inter-row diagonals. Derived on paper
+        // from the documented families: right/left steps wrap only from
+        // x = 0 (left) or x = lx - 1 (right, never emitted at lx = 2); the
+        // odd matched step from y = 0 wraps y.
+        let expected: [(usize, usize, [i32; 2]); 6] = [
+            (0, 0, [0, 0]),  // 0 -> 1, right, in-cell
+            (1, 0, [-1, 0]), // 0 -> 1, left, wraps x (doubled pair)
+            (2, 0, [0, 0]),  // 0 -> 3, matched up-right
+            (3, 1, [0, -1]), // 1 -> 2, matched down-left, wraps y
+            (4, 2, [0, 0]),  // 2 -> 3, right, in-cell
+            (5, 2, [-1, 0]), // 2 -> 3, left, wraps x (doubled pair)
+        ];
+        for (edge_index, from, vector) in expected {
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, from),
+                vector.to_vec(),
+                "edge {edge_index} from site {from}"
+            );
+            let [source, target] =
+                lattice.edge_endpoints(lattice.edge_id(edge_index).expect("dense edge index"));
+            let other = if from == source.index() {
+                target.index()
+            } else {
+                source.index()
+            };
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, other),
+                vector.map(|component| -component).to_vec(),
+                "edge {edge_index} from the other endpoint must negate exactly"
+            );
+        }
+    }
+
+    #[test]
+    fn kagome_2x2_displacements_match_hand_derivation() {
+        let (lattice, embedding) = build_kagome_with_embedding(2, 2).expect("kagome torus");
+        assert_eq!(lattice.n_edges(), 24);
+        // Cells (x, y) host A/B/C at s + 3(x + 2y): 0-2, 3-5, 6-8, 9-11.
+        // Within-cell bonds never wrap; the only wrapping bonds are the
+        // x = 0 left steps of A and B (six sites -> but only the pairs whose
+        // smaller endpoint emits them) and the y = 0 down steps of A.
+        // Derived on paper from the documented neighbour lists.
+        let expected: [(usize, usize, [i32; 2]); 24] = [
+            (0, 0, [0, 0]),   // A(0,0)-B(0,0)
+            (1, 0, [0, 0]),   // A(0,0)-C(0,0)
+            (2, 0, [-1, 0]),  // A(0,0)-B(1,0), left, wraps x
+            (3, 0, [0, -1]),  // A(0,0)-C(0,1), down, wraps y
+            (4, 1, [0, 0]),   // B(0,0)-C(0,0)
+            (5, 1, [0, 0]),   // B(0,0)-A(1,0), right, in-cell at Lx = 2
+            (6, 1, [-1, 0]),  // B(0,0)-C(1,0), left, wraps x
+            (7, 2, [0, 0]),   // C(0,0)-B(1,0), right, in-cell at Lx = 2
+            (8, 2, [0, 0]),   // C(0,0)-A(0,1), up, in-cell at Ly = 2
+            (9, 3, [0, 0]),   // A(1,0)-B(1,0)
+            (10, 3, [0, 0]),  // A(1,0)-C(1,0)
+            (11, 3, [0, -1]), // A(1,0)-C(1,1), down, wraps y
+            (12, 4, [0, 0]),  // B(1,0)-C(1,0)
+            (13, 5, [0, 0]),  // C(1,0)-A(1,1), up, in-cell
+            (14, 6, [0, 0]),  // A(0,1)-B(0,1)
+            (15, 6, [0, 0]),  // A(0,1)-C(0,1)
+            (16, 6, [-1, 0]), // A(0,1)-B(1,1), left, wraps x
+            (17, 7, [0, 0]),  // B(0,1)-C(0,1)
+            (18, 7, [0, 0]),  // B(0,1)-A(1,1), right, in-cell
+            (19, 7, [-1, 0]), // B(0,1)-C(1,1), left, wraps x
+            (20, 8, [0, 0]),  // C(0,1)-B(1,1), right, in-cell
+            (21, 9, [0, 0]),  // A(1,1)-B(1,1)
+            (22, 9, [0, 0]),  // A(1,1)-C(1,1)
+            (23, 10, [0, 0]), // B(1,1)-C(1,1)
+        ];
+        for (edge_index, from, vector) in expected {
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, from),
+                vector.to_vec(),
+                "edge {edge_index} from site {from}"
+            );
+            let [source, target] =
+                lattice.edge_endpoints(lattice.edge_id(edge_index).expect("dense edge index"));
+            let other = if from == source.index() {
+                target.index()
+            } else {
+                source.index()
+            };
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, other),
+                vector.map(|component| -component).to_vec(),
+                "edge {edge_index} from the other endpoint must negate exactly"
+            );
+        }
+    }
+
+    #[test]
+    fn honeycomb_4x2_and_kagome_3x2_4x3_displacement_spot_checks() {
+        // Honeycomb 4x2, full table (12 bonds, lx >= 4 so nothing doubles):
+        // the only wrapping bonds are the left steps from x = 0 (one per row)
+        // and the odd matched steps from y = 0 (one per odd column).
+        let (lattice, embedding) = build_honeycomb_with_embedding(4, 2).expect("honeycomb torus");
+        assert_eq!(lattice.n_edges(), 12);
+        let expected: [(usize, usize, [i32; 2]); 12] = [
+            (0, 0, [0, 0]),
+            (1, 0, [-1, 0]), // 0 -> 3, left from x = 0
+            (2, 0, [0, 0]),  // 0 -> 5, matched up-right
+            (3, 1, [0, 0]),
+            (4, 1, [0, -1]), // 1 -> 4, matched down-left from y = 0
+            (5, 2, [0, 0]),
+            (6, 2, [0, 0]),  // 2 -> 7, matched up-right
+            (7, 3, [0, -1]), // 3 -> 6, matched down-left from y = 0
+            (8, 4, [0, 0]),
+            (9, 4, [-1, 0]), // 4 -> 7, left from x = 0
+            (10, 5, [0, 0]),
+            (11, 6, [0, 0]),
+        ];
+        for (edge_index, from, vector) in expected {
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, from),
+                vector.to_vec(),
+                "honeycomb 4x2 edge {edge_index}"
+            );
+        }
+
+        // Kagome 3x2: every wrapping bond asserted by endpoint pair (all
+        // pairs are unique). Left steps from x = 0 wrap x; the y = 0 down
+        // steps of A wrap y (three of them: one per column).
+        let (lattice, embedding) = build_kagome_with_embedding(3, 2).expect("kagome torus");
+        assert_eq!(lattice.n_edges(), 36);
+        for (a, b, vector) in [
+            (0usize, 7usize, [-1, 0]), // A(0,0)-B(2,0)
+            (9, 16, [-1, 0]),          // A(0,1)-B(2,1)
+            (1, 8, [-1, 0]),           // B(0,0)-C(2,0)
+            (10, 17, [-1, 0]),         // B(0,1)-C(2,1)
+            (0, 11, [0, -1]),          // A(0,0)-C(0,1)
+            (3, 14, [0, -1]),          // A(1,0)-C(1,1)
+            (6, 17, [0, -1]),          // A(2,0)-C(2,1)
+        ] {
+            let edge_index = bond_between(&lattice, a, b).expect("wrapping bond");
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, a),
+                vector.to_vec(),
+                "kagome 3x2 bond ({a},{b})"
+            );
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, b),
+                vector.map(|component| -component).to_vec(),
+                "kagome 3x2 bond ({a},{b}) reverse"
+            );
+        }
+
+        // 4x3 spot checks for both families.
+        let (lattice, embedding) = build_honeycomb_with_embedding(4, 3).expect("honeycomb torus");
+        for (a, b, vector) in [
+            (0usize, 3usize, [-1, 0]), // left from x = 0, row 0
+            (1, 8, [0, -1]),           // matched down-left from (1,0)
+            (3, 10, [0, -1]),          // matched down-left from (3,0)
+        ] {
+            let edge_index = bond_between(&lattice, a, b).expect("honeycomb 4x3 bond");
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, a),
+                vector.to_vec()
+            );
+        }
+        let (lattice, embedding) = build_kagome_with_embedding(4, 3).expect("kagome torus");
+        for (a, b, vector) in [
+            (0usize, 10usize, [-1, 0]), // A(0,0)-B(3,0)
+            (1, 11, [-1, 0]),           // B(0,0)-C(3,0)
+            (0, 26, [0, -1]),           // A(0,0)-C(0,2)
+        ] {
+            let edge_index = bond_between(&lattice, a, b).expect("kagome 4x3 bond");
+            assert_eq!(
+                displacement(&lattice, &embedding, edge_index, a),
+                vector.to_vec()
+            );
+        }
+    }
+
+    /// One directed incidence per documented neighbour-family step of every
+    /// site: `(site, target, displacement site -> target)`, with the target
+    /// recovered by mixed-radix decomposition of the endpoint IDs and the
+    /// displacement from wrapping cell arithmetic. This enumerates every
+    /// direction independently of the builder's once-per-bond emission.
+    fn honeycomb_directed_incidences(lx: usize, ly: usize) -> Vec<(usize, usize, [i32; 2])> {
+        let mut incidences = Vec::with_capacity(3 * lx * ly);
+        for site in 0..lx * ly {
+            let (x, y) = (site % lx, site / lx);
+            let families: [(isize, isize); 3] = [
+                (1, 0),
+                (-1, 0),
+                if x.is_multiple_of(2) {
+                    (1, 1)
+                } else {
+                    (-1, -1)
+                },
+            ];
+            for (step_x, step_y) in families {
+                let target = (y as isize + step_y).rem_euclid(ly as isize) as usize * lx
+                    + (x as isize + step_x).rem_euclid(lx as isize) as usize;
+                let dx = match step_x {
+                    1 => i32::from(x + 1 == lx),
+                    -1 => -i32::from(x == 0),
+                    _ => 0,
+                };
+                let dy = match step_y {
+                    1 => i32::from(y + 1 == ly),
+                    -1 => -i32::from(y == 0),
+                    _ => 0,
+                };
+                incidences.push((site, target, [dx, dy]));
+            }
+        }
+        incidences
+    }
+
+    /// Same independent enumeration for kagome, from the documented
+    /// neighbour lists of the three sublattices.
+    fn kagome_directed_incidences(lx: usize, ly: usize) -> Vec<(usize, usize, [i32; 2])> {
+        let decompose = |site: usize| (site % 3, (site / 3) % lx, site / (3 * lx));
+        let mut incidences = Vec::with_capacity(4 * 3 * lx * ly);
+        for site in 0..3 * lx * ly {
+            let (sublattice, x, y) = decompose(site);
+            // (target sublattice, step) pairs per sublattice.
+            let families: [(usize, isize, isize); 4] = match sublattice {
+                0 => [(1, 0, 0), (2, 0, 0), (1, -1, 0), (2, 0, -1)],
+                1 => [(0, 0, 0), (2, 0, 0), (0, 1, 0), (2, -1, 0)],
+                _ => [(0, 0, 0), (1, 0, 0), (0, 0, 1), (1, 1, 0)],
+            };
+            for (target_sublattice, step_x, step_y) in families {
+                let target = target_sublattice
+                    + 3 * ((y as isize + step_y).rem_euclid(ly as isize) as usize * lx
+                        + (x as isize + step_x).rem_euclid(lx as isize) as usize);
+                let dx = match step_x {
+                    1 => i32::from(x + 1 == lx),
+                    -1 => -i32::from(x == 0),
+                    _ => 0,
+                };
+                let dy = match step_y {
+                    1 => i32::from(y + 1 == ly),
+                    -1 => -i32::from(y == 0),
+                    _ => 0,
+                };
+                incidences.push((site, target, [dx, dy]));
+            }
+        }
+        incidences
+    }
+
+    #[test]
+    fn honeycomb_and_kagome_displacements_follow_builder_geometry() {
+        // Per (unordered pair, displacement normalized to the smaller
+        // endpoint), the independent enumeration counts one directed
+        // incidence per direction: two exact negations per physical bond,
+        // so every count is even and halves to the emission's table.
+        fn check(
+            lattice: &CsrLattice,
+            embedding: &LatticeEmbedding,
+            incidences: Vec<(usize, usize, [i32; 2])>,
+            label: &str,
+        ) {
+            let mut reference: BTreeMap<((usize, usize), [i32; 2]), usize> = BTreeMap::new();
+            for (site, target, vector) in incidences {
+                let key = (site.min(target), site.max(target));
+                let normalized = if site == key.0 {
+                    vector
+                } else {
+                    vector.map(|component| -component)
+                };
+                *reference.entry((key, normalized)).or_insert(0) += 1;
+            }
+
+            let mut produced: BTreeMap<((usize, usize), [i32; 2]), usize> = BTreeMap::new();
+            for edge_index in 0..lattice.n_edges() {
+                let [source, target] =
+                    lattice.edge_endpoints(lattice.edge_id(edge_index).expect("dense edge index"));
+                assert!(
+                    source.index() < target.index(),
+                    "{label}: emission must key bonds by ascending endpoints"
+                );
+                let forward = embedding
+                    .edge_displacement(
+                        lattice.edge_id(edge_index).expect("dense edge index"),
+                        source,
+                    )
+                    .expect("source endpoint");
+                let backward = embedding
+                    .edge_displacement(
+                        lattice.edge_id(edge_index).expect("dense edge index"),
+                        target,
+                    )
+                    .expect("target endpoint");
+                let vector: Vec<i32> = forward.iter().collect();
+                for (forward_component, backward_component) in forward.iter().zip(backward.iter()) {
+                    assert_eq!(
+                        backward_component, -forward_component,
+                        "{label} edge {edge_index}: reverse direction must negate exactly"
+                    );
+                }
+                assert_eq!(
+                    forward.is_zero(),
+                    vector.iter().all(|&component| component == 0),
+                    "{label} edge {edge_index}: is_zero convention"
+                );
+                *produced
+                    .entry(((source.index(), target.index()), [vector[0], vector[1]]))
+                    .or_insert(0) += 1;
+            }
+
+            assert_eq!(
+                produced.len(),
+                reference.len(),
+                "{label}: distinct (pair, displacement) entries"
+            );
+            for (key, &count) in &reference {
+                assert_eq!(
+                    count % 2,
+                    0,
+                    "{label} {key:?}: the two directions of a bond must negate exactly"
+                );
+                assert_eq!(
+                    produced.get(key).copied().unwrap_or(0),
+                    count / 2,
+                    "{label} {key:?}: displacement multiplicity"
+                );
+            }
+        }
+
+        for (lx, ly) in [
+            (2, 2),
+            (2, 3),
+            (2, 4),
+            (4, 2),
+            (4, 3),
+            (6, 3),
+            (6, 5),
+            (8, 4),
+        ] {
+            let (lattice, embedding) =
+                build_honeycomb_with_embedding(lx, ly).expect("honeycomb torus");
+            assert_eq!(
+                lattice.n_edges(),
+                3 * lx * ly / 2,
+                "honeycomb {lx}x{ly} edge count"
+            );
+            check(
+                &lattice,
+                &embedding,
+                honeycomb_directed_incidences(lx, ly),
+                "honeycomb",
+            );
+        }
+        for (lx, ly) in [
+            (2, 2),
+            (2, 3),
+            (2, 4),
+            (3, 2),
+            (3, 3),
+            (4, 3),
+            (5, 3),
+            (5, 4),
+            (6, 4),
+        ] {
+            let (lattice, embedding) = build_kagome_with_embedding(lx, ly).expect("kagome torus");
+            assert_eq!(
+                lattice.n_edges(),
+                6 * lx * ly,
+                "kagome {lx}x{ly} edge count"
+            );
+            check(
+                &lattice,
+                &embedding,
+                kagome_directed_incidences(lx, ly),
+                "kagome",
+            );
+        }
+    }
+
+    #[test]
+    fn honeycomb_and_kagome_small_cell_bond_content() {
+        // Honeycomb: exactly the lx = 2 rows double their horizontal pair
+        // (displacements (0,0) and (-1,0)); wrapping bonds are the ly left
+        // steps from x = 0 plus the lx/2 odd matched steps from y = 0.
+        for (lx, ly) in [(2, 2), (2, 3), (2, 4), (4, 2), (4, 3), (6, 5)] {
+            let (lattice, embedding) =
+                build_honeycomb_with_embedding(lx, ly).expect("honeycomb torus");
+            let mut pairs = std::collections::BTreeSet::new();
+            let mut doubled = 0usize;
+            let mut wrapping = 0usize;
+            for edge_index in 0..lattice.n_edges() {
+                let [source, target] =
+                    lattice.edge_endpoints(lattice.edge_id(edge_index).expect("dense edge index"));
+                let vector: Vec<i32> = embedding
+                    .edge_displacement(
+                        lattice.edge_id(edge_index).expect("dense edge index"),
+                        source,
+                    )
+                    .expect("source endpoint")
+                    .iter()
+                    .collect();
+                wrapping += usize::from(vector != vec![0, 0]);
+                if !pairs.insert((source.index(), target.index())) {
+                    doubled += 1;
+                }
+            }
+            let expected_doubled = if lx == 2 { ly } else { 0 };
+            assert_eq!(
+                lattice.n_edges(),
+                3 * lx * ly / 2,
+                "honeycomb {lx}x{ly} edge count"
+            );
+            assert_eq!(
+                lattice.n_edges() - pairs.len(),
+                expected_doubled,
+                "honeycomb {lx}x{ly} doubled horizontal pairs"
+            );
+            assert_eq!(doubled, expected_doubled);
+            assert_eq!(
+                wrapping,
+                ly + lx / 2,
+                "honeycomb {lx}x{ly} wrapping bonds (left steps + odd matched steps)"
+            );
+        }
+
+        // Kagome: no parallel bonds at any size >= 2 (each site's four
+        // neighbours are distinct); wrapping bonds are the A/B left steps
+        // from x = 0 (2*ly) plus the A down steps from y = 0 (lx) — at
+        // Lx = 2 these are exactly the collapsed cross-family bonds whose
+        // wrap could not be attributed from endpoints alone.
+        for (lx, ly) in [(2, 2), (2, 3), (3, 2), (3, 3), (4, 3), (5, 4)] {
+            let (lattice, embedding) = build_kagome_with_embedding(lx, ly).expect("kagome torus");
+            let mut pairs = std::collections::BTreeSet::new();
+            let mut wrapping = 0usize;
+            for edge_index in 0..lattice.n_edges() {
+                let [source, target] =
+                    lattice.edge_endpoints(lattice.edge_id(edge_index).expect("dense edge index"));
+                let vector: Vec<i32> = embedding
+                    .edge_displacement(
+                        lattice.edge_id(edge_index).expect("dense edge index"),
+                        source,
+                    )
+                    .expect("source endpoint")
+                    .iter()
+                    .collect();
+                wrapping += usize::from(vector != vec![0, 0]);
+                assert!(
+                    pairs.insert((source.index(), target.index())),
+                    "kagome {lx}x{ly} must not carry parallel bonds"
+                );
+            }
+            assert_eq!(
+                lattice.n_edges(),
+                6 * lx * ly,
+                "kagome {lx}x{ly} edge count"
+            );
+            assert_eq!(
+                wrapping,
+                2 * ly + lx,
+                "kagome {lx}x{ly} wrapping bonds (A/B left steps + A down steps)"
+            );
+        }
     }
 }
