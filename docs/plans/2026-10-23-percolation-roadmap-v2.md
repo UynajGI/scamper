@@ -114,9 +114,16 @@ Passage time to distance r, fluctuation χ(r) = Var(T_r), corridor
 geometry on Z^2. One realization = one C0 vector sample (time profile
 along the boundary). Gates: exact small-graph enumeration (all edge-weight
 assignments on a 4x4 corridor at 2-level weights, T_r vs brute-force
-Dijkstra); χ(r) growth bracket consistent with 1/2 ≤ β/(2ν) regime claims
-(statistical brackets per v1 W2/E-track convention); the ADH survey's
-collected bounds as context, never exact claims.
+Dijkstra). **Anchor quantities (ADH survey, archived
+`docs/ref/md/Auffinger_2017_50yrs_first_passage_percolation.md`): the
+variance scaling Var T(0,x) ~ ||x||^{2χ} with the rigorous bound
+0 <= χ(d) <= 1/2 (survey line ~1675, Alexander/Kesten) and the physicists'
+prediction χ = 1/3 in d = 2 (line ~1571; Open Question 13, line ~1784);
+the scaling relation χ = 2ξ − 1 (line ~158) as context.** Reproduce as
+statistical brackets ONLY — e.g. the measured growth exponent of Var(T_r)
+vs r on Z^2 corridors consistent with the (0, 1) open interval and never
+claimed against 1/3 — plus the subadditive time constant μ = lim_r T_r/r
+existing (bracket its convergence from above, T_r/r ≥ μ by subadditivity).
 
 ### F3: Shape theorem and geodesics (research-grade)
 The asymptotic shape μ(x); geodesic counting/aging. Requires F2 at scale
@@ -139,8 +146,17 @@ independence; bitwise draw contract.
 
 ### L2: Chemical-distance regimes
 Graph distance on the LRP cluster vs |x−y| in each Biskup regime:
-linear / stretched-exp / log scalings as statistical brackets on
-1D boxes. C0 vector output = distance profiles.
+statistical brackets on 1D boxes. **Anchor quantities (Biskup, archived
+`docs/ref/md/Biskup_2003_long_range_chemical_distance.md`): the main
+theorem D(x,y) = (log|x−y|)^{Δ+o(1)} for s ∈ (d,2d) with Δ⁻¹ =
+log₂(2d/s) (abstract/main theorem); s = d gives D_N = Θ(log N / log log N)
+(Eq. 1.9); s < d is the stochastic-dimension power-law regime (Eq. 1.8);
+s ≥ 2d returns to linear chemical distance with a positive time constant
+(the critical case s = 2d is explicitly not well understood — do NOT
+bracket it).** On d = 1 the regime boundaries fall at s = 1 and s = 2:
+bracket log^Δ growth inside (1,2) (Δ⁻¹ = log₂(2/s) checkable per s),
+sub-power behavior for s < 1, and linear-plus-constant for s > 2.
+C0 vector output = distance profiles.
 
 ### L3: Diameter transitions
 Box graph diameter vs s across the regime boundaries.
@@ -160,12 +176,25 @@ unchanged. Gates: two-point correlation function of the field matches the
 prescribed power law within CI; a = 0 reduces bitwise to iid Bernoulli.
 
 ### C2: Shifted thresholds
-p_c(a) on square/cubic vs Pruessner's tables (statistical brackets);
-cluster compactness (fractal dimension drift) observable.
+p_c(a) on square/cubic vs Pruessner's tables (statistical brackets).
+**Anchor values (Pruessner et al., archived
+`docs/ref/md/Pruessner_2018_correlated_thresholds.md`, Table ~1, 2D
+square, Euclidean): a=inf 0.592746 (the uncorrelated reference), a=3
+0.561406(4), a=2.5 0.556214(4), a=2 0.550143(5), a=1.75 0.546717(7),
+a=1.5 0.54299(1), a=1.25 0.53895(2), a=1 0.53452(4), a=0.75 0.5296(1),
+a=0.5 0.5239(3)** — bracket against the quoted uncertainties as
+tolerance bands, never exact claims; cluster compactness (fractal
+dimension drift) observable alongside.
 
 ### C3: Weinrib–Halperin map
 The extended Harris criterion a·ν_iid = 2 — verify the correlation-length
-exponent flips (ν = 1/a) only above the criterion, brackets across (a,d).
+exponent flips to **ν = 2/a** (Weinrib–Halperin long-range-correlated
+value) only BELOW the criterion, brackets across (a,d). Pruessner's own
+ν_a column shows exactly this on the 2D square lattice: ν = 4/3 (the
+uncorrelated value) down to a = 1.5, then 2/a takes over — 8/5 at a=1.25,
+2 at a=1, 8/3 at a=0.75, 4 at a=0.5 — i.e. the flip sits between a=1.5
+and a=1.25, consistent with a·ν_iid = (3/2)·(4/3) = 2. Reproduce the
+flip location and the two branches as statistical brackets.
 
 ## 6. Q track: generic-q random cluster
 
@@ -177,12 +206,20 @@ implementations compared (single-bond, ACES/union-find variants).
 Single-bond heat-bath updates at arbitrary real q on the shared F1
 topology: add/remove edge with the q-cluster-weight ratio; acceptance via
 the connected check (the union-find connectivity query cost is THE
-bottleneck — Geyer's whole point). Gates: exhaustive 2^E enumeration on
-small graphs against the exact FK weight `p^|A| (1-p)^{E-|A|} q^{k(A)}/Z`
-(computed with own union-find k(A); Z by full sum); q=1 reduces bitwise
-to R2; q=2 marginal statistics agree with R3's exposed draws; detailed
-balance argued; acceptance/connectivity cost benchmarked against Geyer's
-reported characteristics.
+bottleneck — Geyer's whole point). **Anchor formulas (Geyer, archived
+`docs/ref/md/Geyer_2015_sweeny_random_cluster.md`): heat-bath acceptance
+p_acc^HB(Δb, Δn) = q^{Δn} v^{Δb} / (1 + q^{Δn} v^{Δb}) (Eq. 4) with
+Metropolis min(1, q^{Δn} v^{Δb}) (Eq. 5) as the comparison variant; the
+acceptance ratio bound 1/2 <= pHB/pMH < 1, minimal 1/2 at criticality
+v = sqrt(q) in the percolation limit q -> 1; Δn ∈ {0,−1} on insertion
+(internal vs amalgamating) and {0,+1} on removal — the connectivity query
+that decides Δn is the documented cost center.** Gates: exhaustive 2^E
+enumeration on small graphs against the exact FK weight
+`p^|A| (1-p)^{E-|A|} q^{k(A)}/Z` (computed with own union-find k(A); Z by
+full sum); q=1 reduces bitwise to R2; q=2 marginal statistics agree with
+R3's exposed draws; detailed balance argued; the pHB/pMH ratio bound
+verified across (q, v); acceptance/connectivity cost benchmarked against
+Geyer's reported characteristics.
 
 ### Q2: Chayes–Machta for integer q
 Activate/put-to-sleep + per-component color resampling; agrees with Q1
