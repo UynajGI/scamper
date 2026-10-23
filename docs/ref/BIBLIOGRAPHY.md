@@ -26,6 +26,17 @@ result within its stated statistical convention.
 
 | G2 Achlioptas processes (transition continuity) | O. Riordan, L. Warnke, *Achlioptas Process Phase Transitions Are Continuous*, Science **335**, 1189-1191 (2012) | [pdf](Riordan_2012_Science_achlioptas_continuous.pdf) · [md](md/Riordan_2012_Science_achlioptas_continuous.md) · arXiv:1102.5306 | Theorems 1-2: for any merging (in particular any Achlioptas, incl. product-rule) l-vertex rule, the rescaled giant-component size `L1(G(m))/n` evolves continuously and `N_>=K(m) < L1(m) + eps*n` whp for every step m — no discontinuous jump; the paper also documents both candidate-sampling conventions ("from all possible edges [or] from those edges not present") the module exposes. The archived arXiv v3 is the extended Ann. Appl. Probab. 22, 1450-1464 version of the Science report | Product rule, m=2, without replacement, fixed sparse ER (mean degree 4): the finite-cluster susceptibility peak at the transition GROWS from N=2^12 to N=2^15 (well beyond 3-sigma separation; growth factor > 1.25) while the largest-component curve's max single-window jump in `S_max/N` stays below 0.5 and does not grow with N — the continuous-transition signature (PERCOLATION.md, G2) |
 
+## Roadmap v2 anchors (archived 2026-10-23, pre-implementation per the anchor-first rule)
+
+| Family | Paper | Local copy |
+|---|---|---|
+| F first-passage | A. Auffinger, M. Damron, J. Hanson, *50 years of first passage percolation*, AMS ULS 68 (2017) | [pdf](Auffinger_2017_50yrs_first_passage_percolation.pdf) · [md](md/Auffinger_2017_50yrs_first_passage_percolation.md) · arXiv:1511.03262 |
+| L long-range | M. Biskup, *On the scaling of the chemical distance in long-range percolation*, Ann. Probab. 32, 2938 (2004) | [pdf](Biskup_2003_long_range_chemical_distance.pdf) · [md](md/Biskup_2003_long_range_chemical_distance.md) · arXiv:math/0304418 |
+| Q generic-q | M. Geyer, *Efficient simulation of the random-cluster model*, J. Stat. Mech. (2015) P08010 | [pdf](Geyer_2015_sweeny_random_cluster.pdf) · [md](md/Geyer_2015_sweeny_random_cluster.md) · arXiv:1307.6647 |
+| C correlated | K. J. Schrenk et al., *Percolation with long-range correlated disorder*, PRE 88, 052102 (2013) | [pdf](Schrenk_2013_correlated_disorder_percolation.pdf) · [md](md/Schrenk_2013_correlated_disorder_percolation.md) · arXiv:1309.2994 |
+| C correlated | G. Pruessner et al., *Correlated percolation thresholds*, PRE 97, 062141 (2018) | [pdf](Pruessner_2018_correlated_thresholds.pdf) · [md](md/Pruessner_2018_correlated_thresholds.md) · arXiv:1708.02296 |
+| C review | A. A. Saberi, *Recent advances and open challenges in percolation*, EPJ B 89, 253 (2016) | [pdf](Saberi_2015_percolation_review.pdf) · [md](md/Saberi_2015_percolation_review.md) · arXiv:1404.5325 |
+
 ## Conversion
 
 `convert_to_md.py` converts new PDFs incrementally with PyMuPDF (any local

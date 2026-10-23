@@ -60,6 +60,36 @@ PAPERS = {
         "Phys. Rev. E 86, 061109 (2012)",
         "https://arxiv.org/abs/1209.4936",
     ),
+    "Auffinger_2017_50yrs_first_passage_percolation": (
+        "50 years of first passage percolation",
+        "AMS Univ. Lecture Series 68 (2017)",
+        "https://arxiv.org/abs/1511.03262",
+    ),
+    "Biskup_2003_long_range_chemical_distance": (
+        "On the scaling of the chemical distance in long-range percolation",
+        "Ann. Probab. 32, 2938 (2004)",
+        "https://arxiv.org/abs/math/0304418",
+    ),
+    "Geyer_2015_sweeny_random_cluster": (
+        "Efficient simulation of the random-cluster model",
+        "J. Stat. Mech. (2015) P08010",
+        "https://arxiv.org/abs/1307.6647",
+    ),
+    "Schrenk_2013_correlated_disorder_percolation": (
+        "Percolation with long-range correlated disorder",
+        "Phys. Rev. E 88, 052102 (2013)",
+        "https://arxiv.org/abs/1309.2994",
+    ),
+    "Pruessner_2018_correlated_thresholds": (
+        "Percolation thresholds and fractal dimensions for square/cubic lattices with correlated disorder",
+        "Phys. Rev. E 97, 062141 (2018)",
+        "https://arxiv.org/abs/1708.02296",
+    ),
+    "Saberi_2015_percolation_review": (
+        "Recent advances and open challenges in percolation",
+        "Eur. Phys. J. B 89, 253 (2016)",
+        "https://arxiv.org/abs/1404.5325",
+    ),
 }
 
 def main() -> int:
