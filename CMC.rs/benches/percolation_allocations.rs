@@ -1619,12 +1619,72 @@ fn report_first_passage_probe() {
     }
 }
 
+/// F2 probe: one corridor realization (law draw into the reusable weight
+/// slice + one F1 pass + profile copy) plus one estimator `add` must
+/// perform ZERO allocations in steady state — asserted, not merely
+/// printed, exactly like the F1 probe above (all buffers are reserved at
+/// `PassageSampler::new` / `PassageEstimator::new`, measured separately).
+fn report_first_passage_observables_probe() {
+    use cmc_rs::{EdgeWeightLaw, PassageEstimator, PassageGeometry, PassageSampler};
+    for (length, width) in [(64_usize, 16_usize), (128, 32)] {
+        let (construction_info, mut sampler, mut estimator) = {
+            let mut prepared = None;
+            let construction_info = measure(|| {
+                let geometry = PassageGeometry::corridor(length, width);
+                let sampler = PassageSampler::new(geometry).expect("probe sampler");
+                let estimator = PassageEstimator::new(width).expect("probe estimator");
+                prepared = Some((sampler, estimator));
+            });
+            let (sampler, estimator) = prepared.expect("probe must retain buffers");
+            (construction_info, sampler, estimator)
+        };
+        let law = EdgeWeightLaw::exponential(1.0);
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x0046_3246);
+        let mut realize_once = |sampler: &mut PassageSampler, estimator: &mut PassageEstimator| {
+            let profile = sampler.realize(law, &mut rng).expect("probe realization");
+            estimator.add(profile).expect("probe add");
+            std::hint::black_box(sampler.passage_time());
+        };
+        for _ in 0..8 {
+            realize_once(&mut sampler, &mut estimator);
+        }
+        let info = measure(|| {
+            for _ in 0..ALLOCATION_SAMPLES {
+                realize_once(&mut sampler, &mut estimator);
+            }
+        });
+        assert_eq!(
+            info.count_total, 0,
+            "first-passage realizations allocated {} times in steady state",
+            info.count_total
+        );
+        assert_eq!(
+            info.bytes_total, 0,
+            "first-passage realizations allocated {} bytes in steady state",
+            info.bytes_total
+        );
+        eprintln!(
+            "F2_OBSERVABLES_ALLOC corridor={length}x{width} V={} E={} measured_realizations={} \
+             construction_allocations={} construction_allocator_bytes={} \
+             allocations_per_realization={:.3} allocated_bytes_per_realization={:.3}",
+            sampler.geometry().lattice().n_sites,
+            sampler.geometry().total_edge_count(),
+            ALLOCATION_SAMPLES,
+            construction_info.count_total,
+            construction_info.bytes_total,
+            info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        );
+    }
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
     report_boolean_case();
     report_continuum_winding_case();
     report_first_passage_probe();
+    report_first_passage_observables_probe();
     let benchmark_cases = cases();
     for case in &benchmark_cases {
         report_law_case(case);

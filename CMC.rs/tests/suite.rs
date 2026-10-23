@@ -84,6 +84,8 @@ mod event_chain_eos;
 mod external_bonds;
 #[path = "physics/first_passage.rs"]
 mod first_passage;
+#[path = "physics/first_passage_observables.rs"]
+mod first_passage_observables;
 #[path = "physics/generalized_exact.rs"]
 mod generalized_exact;
 #[path = "physics/heat_bath_exact.rs"]

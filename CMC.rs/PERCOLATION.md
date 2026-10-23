@@ -52,6 +52,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Newman-Ziff parameter scans (Z1) | Validated | `scan_site`/`scan_bond` activate a uniformly random permutation and record the full occupation-count curve (component count, largest size, raw second moment, active edges); `reweight` turns one curve into scalar estimates at uniform `p` via binomial weights, and `ScanEstimator` reports scan-to-scan uncertainty. Zero allocations after `prepare`. Uniform site/bond only; no heterogeneous/mixed/deletion scans, no scheduler adapter. Independent review passed 2026-10-22 (reweight recurrence verified against the archived paper to 9.5e-14 at n=10^6; from-scratch flood-fill parity; speedup reproduced); see the Z1 section below and `docs/reviews/`. |
 | Heterogeneous Newman-Ziff reweighting (T2) | Validated | `reweight_heterogeneous` reweights one unchanged Z1 scan curve to a per-element probability field (Poisson-binomial weights, all log-space with a running-max rescale): the uniform-permutation prefix identity makes `sum_n C(N,n) w(A_n) f_n` an unbiased per-scan estimator and `sum_n C(N,n) w(A_n)` a unit-mass diagnostic with expectation exactly 1; uniform fields delegate to the Z1 binomial `reweight`. Gates: exact 2^N enumeration vs a test-local BFS reference (site/bond, U(0.3,0.8)-spread and bimodal 0.2/0.9 fields, max z 1.35 at R=3200); unit-mass and finiteness at N=10^4; L=64/128 graded-ramp cross-validation vs direct `SiteBernoulli` (max z 1.21); 1e-9 uniform reduction (pinned to <1e-8 at N=10^4); typed boundary/length rejections; asserted 0-allocation probe on five topologies. The estimator is heavy-tailed outside a documented envelope (`sqrt((N/4) Var(logit p))` of order one or below) and the 8-field Criterion speedup is below 1 on dense topologies (0.38-0.80x; 1.40x on sparse-er site) — spread fields belong to the N1 direct path; see the T2 section under Z1. Independent review passed 2026-10-22 (identity brute-forced over all permutations in exact rational arithmetic; the normalized-ratio bias independently confirmed and v1 shown structurally immune; a fully independent sampler/union-find cross-check at L=64 gave z=-0.18/-0.26; saturation documentation corrected as follow-up); see `docs/reviews/`. |
 | Weighted shortest-path layer (v2 F1) | Validated | Roadmap v2 §3 F1: `first_passage_run` + `FirstPassageWorkspace` (`percolation/first_passage.rs`) — single-source single-pass Dijkstra with a binary heap over any `UndirectedGraphView`, edge weights a caller-owned slice of one `f64` per physical edge in dense edge order (`lattice.edges[e].weight` for a `CsrLattice`; weights are data, redrawn per call for F2's passage-time fields). Explicit policies: heap keyed `(distance total_cmp, vertex id ascending)` — the id tie key makes the pop order total under ties (equal-distance settles and equal-cost predecessor choices are deterministic, not heap-implementation detail; the same tie discipline as the invasion frontier, and a 16-byte heap entry); zero weights ALLOWED (non-negativity is Dijkstra's requirement; zero-weight cycles correct); parallel edges are independent relaxations with the lighter bond winning (strict-improvement updates); unreachable = `f64::INFINITY` with reachability the derived `is_finite()`; optional predecessor vertex+edge arrays (`GeodesicTracking`, for F2/F3 geodesics) gated off by default. Typed rejections at validation time, before the workspace is touched: negative weight (edge named), NaN/±inf weight, wrong weight length, source domain, empty graph. Gates: parity vs a test-local independent Bellman-Ford over chains/cycles/trees/dense-ER multigraphs (parallel + zero-weight edges, U[0,1) and exact-zero fields) — 249 (graph, source) cases / 3440 vertex distances, bit-exact on unique-path and dyadic-weight families, 1e-12 relative elsewhere, 0 mismatches; hand-derived 9-vertex 11-edge multigraph (parallel pair lighter wins, zero-weight triangle, equal-cost tie observable through the predecessor, self-loop, disconnected sentinel) plus zero-weight ring and single-vertex cases; rejection-with-untouched-workspace; reused-vs-fresh workspace bitwise determinism (48 comparisons) with growth/shrink and same-size graph alternation; asserted 0-allocation 0-byte probe per single-source pass on six topologies incl. E = 64 V. Criterion (V=1e5/E=3e5 ER): early-exit Bellman-Ford 2.27x FASTER than the lazy-deletion Dijkstra on the small-diameter ER (recorded honestly, T2-style) while Dijkstra is 5.81x faster on a diameter-398 open 200x200 grid with random weights — the F2-relevant regime; doubling V at fixed degree 6 costs 2.6x while the working set fits cache, 3.2-3.3x at V=4e5 where the random-graph heap leaves L3 (throughput 3.35 M vertices/s at V=2.5e4 down to 0.78 M at V=4e5). Algorithm layer only — no MonteCarlo adapter, no scheduler integration (F2 builds observables on top); the Auffinger-Damron-Hanson FPP anchor applies from F2 on. Independent review passed 2026-10-23 (docs/reviews/2026-10-23-f1-review.md; 712 fresh randomized + 55 adversarial cases vs a deliberately opposite-tie (LIFO insertion-counter) own Dijkstra plus own SPFA and rotated-rounds Bellman-Ford: bitwise agreement everywhere — stronger than the committed 1e-12 policy; the tie test non-vacuous: 2,545 vertices took different-but-valid predecessors at identical distances; E+1 heap budget tight and never exceeded incl. adversarial chains; saturation, rejection isolation, and the bench trade-off independently reproduced — grid ratio re-measured 3.68x vs the committed 5.81x, same direction, both recorded). Follow-ups applied: the GeodesicTracking::Off rustdoc now states prepare clears predecessors unconditionally (the 'stale' wording was wrong); the v1/v2 F1 name collision disambiguated. |
+| First-passage observables (v2 F2) | Experimental | `percolation/first_passage_observables.rs` (roadmap v2 §3 F2) over the v2 F1 pass: `PassageGeometry::corridor(length, width)` (open (r+1) x w Z^2 box, source set = left column, target set = right column) and `PassageGeometry::segment(steps, margin, half_height)` (single origin, explicit target points along +x inside a reflection-symmetric box), each carrying one super-source vertex joined to the source set by structural zero-weight edges — ONE `first_passage_run` pass realizes the min over the source set exactly. `EdgeWeightLaw` (Exponential `w = -ln(1-u)/rate`, written `0.0 - ln(1-u)/rate` so `u = 0` yields `+0.0` never `-0.0`; Uniform `w = u`) under a bitwise draw contract: one `random::<f64>()` per box edge in dense `build_square` order, structural zeros consume no draws. `PassageSampler` (reusable weight slice + F1 workspace + profile buffer; `realize_with_weights` runs production on caller-owned fields — the exact-enumeration path), `PassageEstimator`/`PassageEstimate` (scalar mean/unbiased variance/SEM of `T_r` = min over the profile plus per-target profile mean/variance). One realization = ONE C0 vector sample: the full passage-time profile along the target boundary (w entries corridor, `steps.len()` segment); the scalar min is a derived accessor. Gates: exhaustive 2^E two-level dyadic {0.5, 1.0} enumeration vs a test-local Bellman-Ford over test-built topologies — 263,168 corridor assignments (919,552 profile entries bit-exact, incl. 128,272 tied-minimum assignments where the optimal path is non-unique: the profile entries are unique minima over path weights, degeneracy never changes content) plus 4,198,432 segment assignments, 0 mismatches; bitwise draw-contract replay (474 weight entries, both laws, both geometries); same-seed bitwise determinism incl. reseed-replays-chain-one on a history-laden sampler; SEM ~ 1/sqrt(N) (ratio 0.531, N = 128 vs 512). Physics brackets (ADH 2017 anchor, bracket language only): Var(T_r) growth on aspect-1 corridors (w = r, r in [8, 128], R = 600 per law) gives fitted chi = 0.2476 CI (0.2028, 0.2923) for Exp(1) and 0.2658 CI (0.2198, 0.3118) for U[0,1), both inside the rigorous open interval (0, 1/2) — never claimed against 1/3 (the effective exponent below 1/3 at these sizes is the documented small-r crossover); subadditivity `E[T_2r] <= 2 E[T_r]`, exact in expectation on reflection-symmetric segment boxes, holds with z = -10.41 / -13.57 / -15.10 / -10.35 at r = 8/16/32/64; the time-constant sequence mu(r) = E[T_r]/r = 0.5621(47) -> 0.5108(27) -> 0.4743(16) -> 0.4488(10) -> 0.4341(6) decreases and stabilizes (convergence from above, by subadditivity). Asserted 0-allocation 0-byte probe per realization (law draw + F1 pass + estimator add) on 64x16 and 128x32 corridors; 233 and 55 realizations/s at 64x64/128x128 aspect-1 corridors (debug test profile). No MonteCarlo adapter — F3's layer; see the F2 section below. |
 
 At F0 no family was **Validated**. Since F4 passed independent review, the
 static family and boundary crossing were the first Validated rows; N1, W2,
@@ -3916,3 +3917,164 @@ carrying rule — a modeling choice, not a physical asymmetry. The adapter
 owns its lattice (clone it per process); driving borrowed views means
 calling `invasion_run` directly.
 
+## F2 first-passage observables
+
+Roadmap v2 §3 F2 (Experimental). `percolation/first_passage_observables.rs`
+builds the FPP observables on the v2 F1 weighted shortest-path pass; the
+anchor is Auffinger-Damron-Hanson, *50 years of first-passage percolation*,
+AMS ULS 68 (2017) (archived, `docs/ref/`).
+
+### Observable definitions
+
+Two Z^2 source/target layouts, both on the open box (dense vertex
+`x + y*width`, the `build_square` row-major convention) plus ONE
+super-source vertex joined to every source-set vertex by structural
+zero-weight edges — one F1 pass from the super-source realizes
+`min over the source set` exactly (zero weights are legal Dijkstra
+inputs):
+
+- **Corridor** `PassageGeometry::corridor(length r, width w)`: source set
+  the left column x = 0, target set the right column x = r. The profile
+  has one entry per row: `T_y = min over paths from any left-column
+  vertex to (r, y)`.
+- **Segment** `PassageGeometry::segment(steps, margin, half_height)`: one
+  origin vertex, explicit target points `s in steps` along the +x row of
+  the origin, inside a box with symmetric longitudinal margin and
+  transversal half-height. One profile entry per step — the
+  point-to-point `T(0, x)` of the literature, several distances at once
+  in one box.
+
+One realization draws one weight per box edge (law below) and yields ONE
+C0 vector sample: the passage-time profile along the target boundary. The
+scalar passage time `T_r = min_y T_y` is a derived accessor, never the
+primary sample. Path degeneracy never reaches the observable — profile
+entries are unique minima over path weights — and tied minima across
+targets keep all entries (no row is singled out).
+
+**Weight laws and the bitwise draw contract.** `EdgeWeightLaw`:
+Exponential(rate) `w = -ln(1-u)/rate` (rate 1 is the classical model) and
+Uniform `w = u`, both transforms of one uniform draw `u in [0, 1)`. The
+contract: one `rng.random::<f64>()` per box edge in dense `build_square`
+order, then structural zeros consuming no draws. The exponential is
+written `0.0 - ln(1-u)/rate` so `u = 0` yields `+0.0` (never `-0.0`,
+which would pass F1 validation but bitwise-compare unequally against a
+naive `-x` replay). `PassageSampler::weights()` exposes the last slice
+(replay handle); `realize_with_weights` runs production on a caller-owned
+field (the exact-enumeration path — weights are data, exactly as in F1).
+
+**Estimator.** `PassageEstimator`/`PassageEstimate` (the `ScanEstimator`
+pattern plus vector accumulation): scalar mean, unbiased variance, and
+standard error of `T_r` across realizations, and per-target profile mean
+and variance. The fluctuation observable is the scalar sample variance.
+
+### Why subadditivity runs on segments, not corridors
+
+The anchor inequality `E[T_{2r}] <= 2 E[T_r]` is exact in expectation for
+the point-to-point passage time on the infinite lattice
+(geodesic concatenation + translation invariance). On a reflection-symmetric
+segment box the same argument is exact on a FINITE graph: the reflection
+about the box's center line swaps origin and 2r-target, fixes the
+r-target, and preserves the i.i.d. law, so `E T(0, re) = E T(re, 2re)` and
+concatenation gives the inequality with no boundary correction. The
+CORRIDOR observable instead carries entry/exit surface corrections (the
+free min over w rows on each side), so its `E[T_r]/r` converges to the
+cylinder constant from BELOW — the two families bracket complementary
+physics and both are exposed. The roadmap's alternative sphere-hitting
+formulation was not chosen: the sphere minimum does not satisfy the exact
+finite-box inequality, and a high-power gate could then fail honestly.
+
+### Validation gates (roadmap v2 §3 F2)
+
+All in `tests/physics/first_passage_observables.rs`; every statistical
+statement is a bracket, never an exact claim against 1/3.
+
+**Exact enumeration.** Two-level dyadic weights {0.5, 1.0} (every path
+sum exact in f64), ALL 2^E box-edge assignments, production profile vs a
+test-local Bellman-Ford over test-built topologies (edge order matched to
+production's dense order so one mask indexes the same edge in both):
+
+- Corridors 2x4 (E=17), 3x3 (E=17), 3x2 (E=10): 263,168 assignments,
+  919,552 profile entries, bit-exact, 0 mismatches. 128,272 assignments
+  have a tied profile minimum (non-unique optimal paths) — e.g. the
+  all-0.5 field makes every row attain `0.5 r` — and the profile content
+  is asserted in every one of them (the tie policy: values are unique
+  minima; no row wins).
+- Segments ([2] m0 h1, [2,3] m1 h0, [1,2] m1 h1): 4,198,432 assignments,
+  0 mismatches.
+- Production-vs-test topology pinned by sorted endpoint-pair multiset in
+  every geometry.
+
+**Draw-contract replay.** 474 weight entries reproduced bitwise from
+re-seeded streams (Exponential rates 1 and 2.5, Uniform; corridor and
+segment), structural zeros exact.
+
+**Determinism and error scaling.** Same seed -> bitwise-identical profiles
+on two samplers (2 laws x 50 corridor runs, 2 x 20 segment runs); a
+re-seeded stream reproduces chain one bitwise on a history-laden sampler
+(no workspace-state leak). SEM ratio N=512 vs N=128: 0.531, inside the
+1/sqrt(4) = 0.5 band (0.35, 0.65).
+
+**Fluctuation bracket (chi).** Aspect-1 corridors (w = r, so the
+transversal wandering `r^{2/3}` never meets the walls), r in
+{8, 16, 32, 64, 128}, R = 600 realizations per size per law; OLS fit of
+ln Var vs ln r with a t_{0.975}(df 3) CI on the slope/2:
+
+| law | fitted chi | 95% CI | R^2 |
+|---|---|---|---|
+| Exponential(1) | 0.2476 | (0.2028, 0.2923) | 0.9904 |
+| Uniform[0,1) | 0.2658 | (0.2198, 0.3118) | 0.9912 |
+
+Both CIs sit strictly inside the rigorous open interval (0, 1/2)
+(Kesten's bound; the survey's prediction chi = 1/3 in d = 2 is NOT
+claimed). The effective exponent sits below 1/3 at these sizes — the
+documented small-r crossover, not a disagreement; no larger-r rebracket
+was needed (the CI does not clip an endpoint).
+
+**Subadditivity bracket.** `E[T_{2r}] <= 2 E[T_r]` on reflection-symmetric
+segment boxes (margin = r, half-height = r), Exponential(1), per-target
+means from one box per pair:
+
+| r | N | mu_r = E[T_r]/r | mu_2r | diff | z |
+|---|---|---|---|---|---|
+| 8 | 1200 | 0.555571 | 0.510286 | -0.045286 ± 0.004350 | -10.41 |
+| 16 | 1200 | 0.510530 | 0.474303 | -0.036227 ± 0.002670 | -13.57 |
+| 32 | 1200 | 0.473845 | 0.450111 | -0.023733 ± 0.001572 | -15.10 |
+| 64 | 500 | 0.449508 | 0.433615 | -0.015894 ± 0.001535 | -10.35 |
+
+No apparent violation anywhere (all z strongly negative; the consistency
+threshold z < 3 never approached).
+
+**Time-constant sequence.** One fixed segment box (steps 8..128, margin
+64, half-height 64), N = 800: mu(r) = E[T_r]/r = 0.562055 ± 0.004709 ->
+0.510794 ± 0.002721 -> 0.474296 ± 0.001633 -> 0.448849 ± 0.000982 ->
+0.434147 ± 0.000602 — strictly decreasing with shrinking steps
+(convergence from above, as subadditivity demands) toward the box-family
+time constant (the literature's mu for Exp(1) weights on Z^2 is ~0.40;
+the finite-box and finite-r corrections keep the sequence above it,
+consistent, not claimed).
+
+**Allocation probe** (`benches/percolation_allocations.rs`,
+`F2_OBSERVABLES_ALLOC`, asserted): corridor 64x16 (V=1041, E=2015) and
+128x32 (V=4129, E=8127) — 0 allocations and 0 bytes per realization
+(law draw + F1 pass + profile copy + estimator add) over 128 measured
+realizations; construction (geometry + sampler + estimator) measured
+separately at 1077/4167 allocations (688,248 / 2,769,400 bytes).
+
+**Throughput** (eprintln-timed test, debug profile): aspect-1 corridors
+64x64 (V=4161, E=8255) 4,283 us/realization = 233 realizations/s;
+128x128 (V=16513, E=32895) 18,258 us/realization = 55 realizations/s.
+
+### Limitations
+
+Corridor fluctuation brackets use aspect-1 (w = r) geometry: at fixed
+narrow width the geodesic is width-constrained and Var(T_r) crosses over
+toward r^1 behavior, so width must scale with r (documented; the ladder
+does). The segment boxes truncate the infinite lattice; the margins
+(r longitudinal, r transversal) keep the truncation exponentially small
+in `(margin / r^{2/3})^2` but never zero — the subadditivity inequality
+itself is exact regardless (reflection), only the proximity to the
+infinite-lattice mu carries the correction. Exponential draws use the
+`-ln(1-u)` inverse transform (one transcendental per edge); a Ziggurat
+would be faster but is not needed at these throughputs. No MonteCarlo
+adapter and no scheduler integration — F3 (shape theorem, geodesic
+aging) builds on this layer next.

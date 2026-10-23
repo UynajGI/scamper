@@ -34,6 +34,7 @@ mod continuum_winding;
 mod directed;
 mod edwards_sokal;
 mod first_passage;
+mod first_passage_observables;
 mod law;
 mod network;
 mod observable;
@@ -72,6 +73,10 @@ pub use edwards_sokal::{AllActiveVertices, EdwardsSokalError, EdwardsSokalMC};
 pub use first_passage::{
     first_passage_run, FirstPassageError, FirstPassageOutcome, FirstPassageWorkspace,
     GeodesicTracking, NO_PREDECESSOR,
+};
+pub use first_passage_observables::{
+    EdgeWeightLaw, PassageEstimate, PassageEstimator, PassageGeometry, PassageObservablesError,
+    PassageSampler,
 };
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
 pub use network::{
