@@ -1431,10 +1431,109 @@ fn report_boolean_case() {
     );
 }
 
+/// T4 probe: repeated `analyze_winding` on a FIXED continuum pair graph and
+/// `ContinuumEmbedding` with re-drawn (toggled) edge activity must be
+/// allocation-free in steady state after one `WindingWorkspace::prepare`
+/// (same policy as the W2 torus probe). Construction — P1 pair enumeration
+/// plus the embedding derivation — is a per-realization transient like the
+/// `PairGraph` itself (the no-persistent-CSR rule), measured here for the
+/// record and never asserted zero.
+fn report_continuum_winding_case() {
+    use cmc_rs::{CandidatePairGraph, ContinuumEmbedding};
+    let count = 2048_usize;
+    let side = 64.0;
+    let cell = OrthorhombicCell::new([side, side]).expect("probe cell");
+    let cutoff = 1.0;
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x5434_434f);
+    let mut coordinates = Vec::with_capacity(count * 2);
+    for _ in 0..count {
+        coordinates.push(rng.random_range(0.0..side));
+        coordinates.push(rng.random_range(0.0..side));
+    }
+    let mut prepared = None;
+    let construction_info = measure(|| {
+        let graph = CandidatePairGraph::new(&coordinates, &cell, cutoff)
+            .expect("probe coordinates")
+            .pairs()
+            .expect("probe pairs");
+        let embedding = ContinuumEmbedding::from_pairs(graph.pairs(), &coordinates, &cell, cutoff)
+            .expect("probe embedding");
+        prepared = Some((graph, embedding));
+    });
+    let (graph, embedding) = prepared.expect("probe must retain the fixed pair graph");
+    let vertex_count = graph.vertex_count();
+    let edge_count = graph.edge_count();
+
+    let mut configuration = StaticConfiguration::new(vertex_count, edge_count);
+    let mut workspace = WindingWorkspace::new();
+    workspace
+        .prepare(vertex_count, 2)
+        .expect("probe winding workspace reservation");
+    let bond = BondBernoulli::new(probability(P_BOND).into());
+    for _ in 0..8 {
+        bond.sample(&graph, &mut configuration, &mut rng)
+            .expect("probe dimensions match");
+        std::hint::black_box(
+            analyze_winding(
+                &graph,
+                &embedding,
+                &configuration,
+                &configuration,
+                &mut workspace,
+            )
+            .expect("probe winding analysis"),
+        );
+    }
+    let capacity = workspace.capacity_audit();
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            bond.sample(&graph, &mut configuration, &mut rng)
+                .expect("probe dimensions match");
+            std::hint::black_box(
+                analyze_winding(
+                    &graph,
+                    &embedding,
+                    &configuration,
+                    &configuration,
+                    &mut workspace,
+                )
+                .expect("probe winding analysis"),
+            );
+        }
+    });
+    assert_eq!(
+        info.count_total, 0,
+        "steady-state continuum winding analysis allocated {} times on a fixed pair graph \
+         and embedding",
+        info.count_total
+    );
+    eprintln!(
+        "CONTINUUM_WINDING_ALLOC topology=poisson-2d N={} E={} cutoff={} measured_samples={} \
+         construction_allocations_per_realization={} \
+         construction_allocator_bytes_per_realization={} \
+         workspace_total_capacity_bytes={} workspace_bytes_per_vertex={:.3} \
+         allocations_per_sample={:.3} allocated_bytes_per_sample={:.3} \
+         peak_live_allocations={} peak_live_bytes={}",
+        vertex_count,
+        edge_count,
+        cutoff,
+        ALLOCATION_SAMPLES,
+        construction_info.count_total,
+        construction_info.bytes_total,
+        capacity.total_bytes(),
+        capacity.total_bytes() as f64 / vertex_count.max(1) as f64,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
     report_boolean_case();
+    report_continuum_winding_case();
     let benchmark_cases = cases();
     for case in &benchmark_cases {
         report_law_case(case);

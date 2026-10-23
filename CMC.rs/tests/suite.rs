@@ -64,6 +64,8 @@ mod continuous_cross_solver;
 mod continuous_spins;
 #[path = "physics/continuum_pairs.rs"]
 mod continuum_pairs;
+#[path = "physics/continuum_winding.rs"]
+mod continuum_winding;
 #[path = "physics/directed_analysis.rs"]
 mod directed_analysis;
 #[path = "physics/directed_process.rs"]

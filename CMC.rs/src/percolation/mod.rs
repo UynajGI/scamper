@@ -30,6 +30,7 @@ mod boolean;
 mod carlo;
 mod configuration;
 mod continuum;
+mod continuum_winding;
 mod directed;
 mod edwards_sokal;
 mod law;
@@ -59,6 +60,7 @@ pub use continuum::{
     candidate_pairs_from_configuration, candidate_pairs_with_cell_list, CandidatePairGraph,
     ContinuumError, PairGraph,
 };
+pub use continuum_winding::{ContinuumEmbedding, ContinuumWindingError};
 pub use directed::{
     analyze_strong_components, analyze_weak_components, reachable, DirectedAnalysisError,
     DpProcessError, DpSeedPolicy, LayeredDirectedPercolationMC, ReachabilityWorkspace,
