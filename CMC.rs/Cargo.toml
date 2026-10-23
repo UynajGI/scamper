@@ -103,6 +103,18 @@ harness = false
 name = "bootstrap_percolation"
 harness = false
 
+[[bench]]
+name = "continuum_pairs"
+harness = false
+
+[[bench]]
+name = "incremental_process"
+harness = false
+
+[[bench]]
+name = "external_bonds"
+harness = false
+
 [features]
 default = []
 allocation-probe = ["dep:allocation-counter"]

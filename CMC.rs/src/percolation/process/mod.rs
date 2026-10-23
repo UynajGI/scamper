@@ -7,6 +7,7 @@
 //! across realizations with zero steady-state allocation.
 
 mod bootstrap;
+mod incremental;
 mod kcore;
 
 use std::collections::TryReserveError;
@@ -14,6 +15,9 @@ use std::collections::TryReserveError;
 pub use bootstrap::{
     BootstrapDynamics, BootstrapError, BootstrapOutcome, BootstrapPercolationMC, BootstrapSeeds,
     BootstrapThreshold, BootstrapWorkspace,
+};
+pub use incremental::{
+    IncrementalError, IncrementalSummary, IncrementalUnionWorkspace, ProcessTrajectory,
 };
 pub use kcore::{
     kcore_decompose, CoreThresholds, KCoreError, KCoreMC, KCoreSummary, KCoreWorkspace,

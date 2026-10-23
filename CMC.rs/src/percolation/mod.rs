@@ -24,8 +24,10 @@
 
 mod activity;
 mod analyzer;
+mod bonds;
 mod carlo;
 mod configuration;
+mod continuum;
 mod directed;
 mod law;
 mod network;
@@ -42,8 +44,13 @@ pub use analyzer::{
     analyze, analyze_winding, analyze_with_labels, AnalysisError, AnalysisResult, ComponentWinding,
     WindingError, WindingResult, WindingSummary,
 };
+pub use bonds::{analyze_bonds, BondConfigurationError, BondSample, ExternalBondConfiguration};
 pub use carlo::{StaticLaw, StaticPercolationError, StaticPercolationMC};
 pub use configuration::StaticConfiguration;
+pub use continuum::{
+    candidate_pairs_from_configuration, candidate_pairs_with_cell_list, CandidatePairGraph,
+    ContinuumError, PairGraph,
+};
 pub use directed::{
     analyze_strong_components, analyze_weak_components, reachable, DirectedAnalysisError,
     DpProcessError, DpSeedPolicy, LayeredDirectedPercolationMC, ReachabilityWorkspace,
@@ -60,8 +67,9 @@ pub use observable::{ObservablePlan, ObservablePlanError, StaticObservable};
 pub use probability::{Probability, ProbabilityError, ProbabilityField};
 pub use process::{
     kcore_decompose, BootstrapDynamics, BootstrapError, BootstrapOutcome, BootstrapPercolationMC,
-    BootstrapSeeds, BootstrapThreshold, BootstrapWorkspace, CoreThresholds, KCoreError, KCoreMC,
-    KCoreSummary, KCoreWorkspace, NeighborCounters, ProcessError, ProcessQueue, StampFlags,
+    BootstrapSeeds, BootstrapThreshold, BootstrapWorkspace, CoreThresholds, IncrementalError,
+    IncrementalSummary, IncrementalUnionWorkspace, KCoreError, KCoreMC, KCoreSummary,
+    KCoreWorkspace, NeighborCounters, ProcessError, ProcessQueue, ProcessTrajectory, StampFlags,
 };
 pub use query::{BoundaryQuery, BoundaryQueryError};
 pub use scan::{

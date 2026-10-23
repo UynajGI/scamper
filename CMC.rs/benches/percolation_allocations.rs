@@ -1009,6 +1009,76 @@ fn report_bootstrap_case(case: &Case) {
     );
 }
 
+/// G1 probe: one complete incremental realization (reset, every edge
+/// activated, every vertex activated in a fresh random order — V + E
+/// accepted operations, each appending one trajectory entry) must be
+/// allocation-free in steady state on a reused workspace.
+fn report_incremental_case(case: &Case) {
+    use cmc_rs::{GraphView, IncrementalUnionWorkspace, UndirectedGraphView};
+    use rand::RngExt;
+    let vertices = case.lattice.vertex_count();
+    let edges = case.lattice.edge_count();
+    let mut workspace = IncrementalUnionWorkspace::new();
+    workspace
+        .prepare(vertices, edges)
+        .expect("probe workspace reservation");
+    let mut order: Vec<usize> = (0..vertices).collect();
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x00C1_6731);
+    let run_once = |workspace: &mut IncrementalUnionWorkspace,
+                    order: &mut Vec<usize>,
+                    rng: &mut Xoshiro256PlusPlus| {
+        workspace.reset();
+        for index in 0..edges {
+            let edge = case.lattice.edge_id(index).expect("dense edge index");
+            workspace
+                .activate_edge(&case.lattice, edge, index)
+                .expect("probe edge activation");
+        }
+        for index in (1..order.len()).rev() {
+            let swap_with = rng.random_range(0..=index);
+            order.swap(index, swap_with);
+        }
+        for (step, &vertex) in order.iter().enumerate() {
+            let vertex_id = case.lattice.vertex_id(vertex).expect("dense vertex index");
+            workspace
+                .activate_vertex(&case.lattice, vertex_id, step)
+                .expect("probe vertex activation");
+        }
+        std::hint::black_box(workspace.trajectory().summaries().last().copied());
+    };
+    for _ in 0..8 {
+        run_once(&mut workspace, &mut order, &mut rng);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            run_once(&mut workspace, &mut order, &mut rng);
+        }
+    });
+    // The substrate's core promise: zero allocations per operation after
+    // warmup — a silent regression must fail the probe, not merely print
+    // (same policy as the kcore/bootstrap probes).
+    assert_eq!(
+        info.count_total, 0,
+        "incremental realizations allocated {} times in steady state",
+        info.count_total
+    );
+    let ops = vertices + edges;
+    eprintln!(
+        "INCREMENTAL_PROCESS_ALLOC topology={} V={} E={} ops_per_realization={} \
+         measured_realizations={} allocations_per_realization={:.3} \
+         allocated_bytes_per_realization={:.3} peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        vertices,
+        edges,
+        ops,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
@@ -1021,6 +1091,7 @@ fn main() {
         report_directed_process_case(case);
         report_kcore_case(case);
         report_bootstrap_case(case);
+        report_incremental_case(case);
         for mode in ReferenceMode::ALL {
             report_component_case(case, mode);
         }

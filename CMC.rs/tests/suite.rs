@@ -58,6 +58,8 @@ mod connectivity;
 mod continuous_cross_solver;
 #[path = "physics/continuous_spins.rs"]
 mod continuous_spins;
+#[path = "physics/continuum_pairs.rs"]
+mod continuum_pairs;
 #[path = "physics/directed_analysis.rs"]
 mod directed_analysis;
 #[path = "physics/directed_process.rs"]
@@ -70,12 +72,16 @@ mod ergodicity;
 mod ergodicity_extended;
 #[path = "physics/event_chain_eos.rs"]
 mod event_chain_eos;
+#[path = "physics/external_bonds.rs"]
+mod external_bonds;
 #[path = "physics/generalized_exact.rs"]
 mod generalized_exact;
 #[path = "physics/heat_bath_exact.rs"]
 mod heat_bath_exact;
 #[path = "physics/hybrid_compositions.rs"]
 mod hybrid_compositions;
+#[path = "physics/incremental_process.rs"]
+mod incremental_process;
 #[path = "physics/input_validation.rs"]
 mod input_validation;
 #[path = "physics/kawasaki_exact.rs"]
