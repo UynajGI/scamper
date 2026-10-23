@@ -90,6 +90,11 @@ PAPERS = {
         "Eur. Phys. J. B 89, 253 (2016)",
         "https://arxiv.org/abs/1404.5325",
     ),
+    "Holme_2002_attack_vulnerability": (
+        "Attack vulnerability of complex networks",
+        "Phys. Rev. E 65, 056109 (2002)",
+        "https://arxiv.org/abs/cond-mat/0202410",
+    ),
 }
 
 def main() -> int:

@@ -36,6 +36,7 @@ result within its stated statistical convention.
 | C correlated | K. J. Schrenk et al., *Percolation with long-range correlated disorder*, PRE 88, 052102 (2013) | [pdf](Schrenk_2013_correlated_disorder_percolation.pdf) · [md](md/Schrenk_2013_correlated_disorder_percolation.md) · arXiv:1309.2994 |
 | C correlated | G. Pruessner et al., *Correlated percolation thresholds*, PRE 97, 062141 (2018) | [pdf](Pruessner_2018_correlated_thresholds.pdf) · [md](md/Pruessner_2018_correlated_thresholds.md) · arXiv:1708.02296 |
 | C review | A. A. Saberi, *Recent advances and open challenges in percolation*, EPJ B 89, 253 (2016) | [pdf](Saberi_2015_percolation_review.pdf) · [md](md/Saberi_2015_percolation_review.md) · arXiv:1404.5325 |
+| T1 adaptive attack | P. Holme, B. J. Kim, C. N. Yoon, S. K. Han, *Attack vulnerability of complex networks*, PRE 65, 056109 (2002) | [pdf](Holme_2002_attack_vulnerability.pdf) · [md](md/Holme_2002_attack_vulnerability.md) · arXiv:cond-mat/0202410 |
 
 ## Conversion
 

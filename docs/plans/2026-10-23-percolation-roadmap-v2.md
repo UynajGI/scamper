@@ -61,10 +61,18 @@ The roadmap v1 §9 N3 explicitly deferred "adaptive residual-degree attack
 degree after each removal; one trajectory = one C0 vector sample on the
 N3 adapter pattern. Gates: each step vs naive recomputation; monotone
 active count; tie policy explicit; per-step cost model documented (lazy
-priority-queue decrements vs full resort); anchor = same Cohen bracket
-machinery as N3 but with the adaptive order (literature: the many
-"adaptive attack" variants — select one with a stated analytic or careful
-simulation baseline at delivery time, anchor-first rule applies).
+priority-queue decrements vs full resort). **Anchor (archived
+2026-10-22): Holme, Kim, Yoon, Han, *Attack vulnerability of complex
+networks*, PRE 65, 056109 (2002), arXiv:cond-mat/0202410.** Quantity to
+reproduce (statistical bracket, never exact claim): on BA scale-free
+networks (their Fig. 7e configuration N=10^4, m0=5, m=3, ⟨k⟩≈6), the
+adaptive recalculated-degree attack (their "RD") suppresses the
+largest-component fraction S(N_rm/N) below the initial-degree attack
+("ID", the existing N3 order) through the late stage, both crossing zero
+earlier than random failure; RD ≈ ID in the early stage. Secondary
+context: the N3 Cohen κ-crossover machinery applied to the adaptive
+order. Their WS-model crossover (RD least harmful near N_rm/N ≈ 0.25)
+is noted but out of scope (no WS generator on the platform).
 
 ### T2: Heterogeneous Newman-Ziff reweighting
 Z1's binomial reweighting assumes uniform p. Scope: per-vertex /
@@ -211,6 +219,7 @@ acceptable adaptive-attack anchor is identified first.
 | L track | Biskup 2004 | `Biskup_2003_long_range_chemical_distance.pdf` |
 | Q track | Geyer 2015 | `Geyer_2015_sweeny_random_cluster.pdf` |
 | C track | Schrenk 2013 / Pruessner 2018 / Saberi 2016 | three files under `docs/ref/` |
+| T1 adaptive attack | Holme et al. 2002 (archived 2026-10-22) | `Holme_2002_attack_vulnerability.pdf` |
 
 Ten anchor papers across v1+v2; every physics claim keeps citing its
 archived source with the agreement numbers recorded in PERCOLATION.md.
