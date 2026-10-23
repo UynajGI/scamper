@@ -48,6 +48,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Periodic embedding capability (W1) | Experimental | Directed-incidence integer cell displacements exist as explicit recorded data: the `PeriodicEmbedding` capability (`topology/embedding.rs`) and the `LatticeEmbedding` table serve the pbc chain/square/hypercubic builders and the triangular builder, which record each displacement at bond emission and never infer it from `BondType` or vertex IDs. Independently reviewed; see the W1 section below. |
 | Periodic wrapping/winding analysis (W2) | Validated | Winding-capable component analysis over the W1 displacements: `analyze_winding` (percolation/analyzer/winding.rs) runs one physical-edge pass of union-find with checked `i32` `Z^D` potentials, reports per-component winding rank and an echelon generating set (never only a Boolean), and feeds `Wrapping`/`WindingRank` plan observables on `StaticPercolationMC::with_embedding`; open/non-embedded wrapping requests are typed errors. Engineering gates green and independent review passed 2026-10-22 (two from-scratch brute forces reproduced 187/256 and 186684/262144; potential and echelon algebra hand-verified; exact anchors now asserted); see the W2 section below and `docs/reviews/`. Crossing is not wrapping. |
 | Newman-Ziff parameter scans (Z1) | Validated | `scan_site`/`scan_bond` activate a uniformly random permutation and record the full occupation-count curve (component count, largest size, raw second moment, active edges); `reweight` turns one curve into scalar estimates at uniform `p` via binomial weights, and `ScanEstimator` reports scan-to-scan uncertainty. Zero allocations after `prepare`. Uniform site/bond only; no heterogeneous/mixed/deletion scans, no scheduler adapter. Independent review passed 2026-10-22 (reweight recurrence verified against the archived paper to 9.5e-14 at n=10^6; from-scratch flood-fill parity; speedup reproduced); see the Z1 section below and `docs/reviews/`. |
+| Heterogeneous Newman-Ziff reweighting (T2) | Experimental | `reweight_heterogeneous` reweights one unchanged Z1 scan curve to a per-element probability field (Poisson-binomial weights, all log-space with a running-max rescale): the uniform-permutation prefix identity makes `sum_n C(N,n) w(A_n) f_n` an unbiased per-scan estimator and `sum_n C(N,n) w(A_n)` a unit-mass diagnostic with expectation exactly 1; uniform fields delegate to the Z1 binomial `reweight`. Gates: exact 2^N enumeration vs a test-local BFS reference (site/bond, U(0.3,0.8)-spread and bimodal 0.2/0.9 fields, max z 1.35 at R=3200); unit-mass and finiteness at N=10^4; L=64/128 graded-ramp cross-validation vs direct `SiteBernoulli` (max z 1.21); 1e-9 uniform reduction; typed boundary/length rejections; asserted 0-allocation probe on five topologies. Experimental because the estimator is heavy-tailed outside a narrow envelope (roughly `sqrt((N/4) Var(logit p))` at most about 1) and the 8-field Criterion speedup is below 1 on dense topologies (0.38-0.80x; 1.40x on sparse-er site) — spread fields belong to the N1 direct path; see the T2 section under Z1. No independent review yet. |
 
 At F0 no family was **Validated**. Since F4 passed independent review, the
 static family and boundary crossing were the first Validated rows; N1, W2,
@@ -1351,14 +1352,141 @@ cargo bench -p cmc-rs --bench percolation_allocations --features allocation-prob
 
 ### Limitations
 
-Z1 is a core uniform-site/bond scan only. It has no heterogeneous
+Z1 is a core uniform-site/bond scan only. Its scan layer has no heterogeneous
 probabilities, mixed `(p_site, p_bond)` surface, deletion process, boundary
-crossing, wrapping, or targeted/network facade. There is no Carlo.rs
+crossing, wrapping, or targeted/network facade — heterogeneous probabilities
+enter as a reweight-layer extension (T2 below) over the unchanged uniform
+scan, never as a changed activation process. There is no Carlo.rs
 `MonteCarlo`/`FromParams` adapter and no vector `Results`/`ArrayEstimate`
 output until C0; callers consume the borrowed `ScanCurve` directly. The
 `ScanEstimator` variance is scan-to-scan only. The benchmark's direct path is
 raw Bernoulli draws plus F3 analysis, not the full law/scheduler stack, so the
 speedup is indicative rather than a scheduler-level claim.
+
+### T2: heterogeneous (Poisson-binomial) reweighting
+
+Status: **Experimental** (roadmap v2 §2 T2; no independent review yet).
+
+`reweight_heterogeneous(curve, field, observable, workspace)` reweights one
+Z1 scan curve — `scan_site`/`scan_bond` are untouched — to a heterogeneous
+Bernoulli field with one validated `Probability` per universe element
+(vertices for site curves, physical edges for bond curves). Because a
+uniformly random permutation's size-`n` prefix is a uniform `n`-subset,
+
+```text
+E_het[f] = sum_n C(N,n) * E_unif,n[ w * f ],
+w(A)     = prod_{i in A} p_i * prod_{j not in A} (1 - p_j),
+```
+
+so the per-scan raw estimator `sum_n C(N,n) w(A_n) f_n` is unbiased by
+linearity, and with `f = 1` it becomes `sum_n C(N,n) w(A_n)` whose
+expectation is exactly the total Poisson-binomial mass, 1 — returned as
+`HetReweightResult::unit_mass`, a self-diagnostic that must average to 1 over
+scans. The returned value is deliberately the **raw** sum, not a weighted
+average: the normalization fluctuates per scan under a heterogeneous field,
+and dividing by it would introduce a ratio-estimator bias (the uniform
+`reweight` normalizes only because its weights depend on `n` alone; uniform
+`ProbabilityField`s therefore delegate to it outright with `unit_mass = 1`).
+
+All arithmetic is log-space: `l_0 = sum_j ln(1 - p_j)`, entering element `e`
+adds `ln(p_e/(1 - p_e))` along `activation_order()`, and `log C(N,n)` grows
+by the `O(N)` recurrence from `logC(N,0) = 0` (an `ln(k)` table in
+`HetReweightWorkspace`, no `lgamma` or new dependency). A running-max
+log-sum-exp keeps every internal term in `(0, 1]` — positive terms, so no
+catastrophic cancellation, and `N = 16384` mid-range fields stay finite. The
+final `exp(l_max)` saturates only for log-mass excursions beyond
+`ln(f64::MAX) ~ 709.8`. Fields with entries `0.0`/`1.0` are typed rejections
+carrying the index — boundary fields are the N1 direct-sampling path, and no
+universe-splitting is attempted.
+
+**Variance envelope (the central caveat).** The per-scan values are
+heavy-tailed once the field spread times the universe size grows: the
+log-weight of a size-`N/2` prefix fluctuates across scans with standard
+deviation about `sqrt((N/4) * Var(logit p))`, so scan values behave roughly
+lognormally with that parameter. Measured coefficient of variation of the
+per-scan giant-fraction estimate on a column ramp field around `p_c` at
+`L = 64` (`N = 4096`): 0.29 at zero width (the uniform limit), 1.25 at
+half-width 0.012, 3.3 at 0.02, 45 at 0.09 — a bimodal half-0.2/half-0.9
+field already gives cv 2.7 at `N = 8` and is unusable at `N = 4096` (the
+measured wide-ramp cv there already exceeds 44, and the bimodal logit
+variance is ~70x larger still). Rule of thumb: the reweight path is competitive while
+`sqrt((N/4) Var(logit p))` stays of order one or below; beyond that use the
+N1 direct sampler, which keeps light-tailed estimates at any spread. The
+statistical gates below are parameterized inside that envelope by design.
+
+### T2 validation gates
+
+`tests/physics/percolation_scan_heterogeneous.rs` (5 tests) plus 7 unit
+tests in `reweight.rs` (hand-worked two-order weights, uniform delegation,
+constant-field reduction, typed rejections, workspace reuse/growth, empty
+curve):
+
+- **Exact enumeration (site N=8 seeded random graph, bond E=7 chain, R = 200
+  * `zscore_seed_count(16)` = 3200 default scans):** full 2^8/2^7 enumeration
+  under per-element weights with a test-local BFS reference (never production
+  union-find). Fields: deterministic U(0.3,0.8) spread and bimodal
+  half-0.2/half-0.9. All eight z-scores (two fields x two modes x
+  GiantFraction/RawSecondMoment) within |z| <= 4; recorded max |z| = 1.35
+  (bimodal site RawSecondMoment). Unit-mass z at the same settings:
+  -1.03..+1.32.
+- **Unit mass and finiteness:** the L=128 ramp field below at R = 400 gives
+  unit-mass mean 1.000539 +/- 0.015284 (z = +0.04 vs exactly 1); every
+  returned `value` and `unit_mass` is finite at `N = 10^4` (100x100 square)
+  for spread, bimodal, and constant fields over 4 seeds each.
+- **N1 cross-validation at scale (L = 64 and L = 128 open squares, site
+  scans):** clipped linear ramp fields in the column coordinate centered at
+  `p_c = 0.5927` with half-widths 0.004 (L=64) and 0.002 (L=128) — chosen
+  inside the variance envelope above. Reweighted (R = 400, seed bases
+  0x4845_5a32_0000 / 0x4845_5a33_0000) vs direct `SiteBernoulli` at the same
+  field (4096 samples, seed 0x4449_5200+side): L=64 z = -1.21 (giant
+  fraction, 0.27751 +/- 0.00608 vs 0.28509 +/- 0.00162) and -0.80 (raw
+  second moment); L=128 z = -0.65 and -0.68. All |z| <= 4.
+- **Uniform reduction:** an owned constant-valued field agrees with the v1
+  binomial `reweight` within 1e-9 relative across p in {0.1, 0.25, 0.5,
+  0.5927, 0.75, 0.9} on 4x4 square site and bond curves (the `Uniform`
+  variant delegates, so it matches bitwise).
+- **Typed rejections:** field length != trials, `p_i = 0` and `p_i = 1` with
+  the offending index in the error; NaN is unconstructible through
+  `Probability`.
+- **Allocation probe:** `HET_SCAN_ALLOC` records (5 topologies x site/bond,
+  128 post-warmup scan+reweight iterations) all assert **0 allocations and 0
+  bytes per realization**; retained capacity is two `f64` words per element
+  (log weights + ln table), e.g. 65,544 bytes site / 129,032 bytes bond on
+  the 4096-vertex square.
+
+### T2 performance
+
+Criterion group `nz_het` (same short-run configuration as the Z1 table,
+2026-10-22): one scan then reweighting at K = 8 graded fields vs 8 direct
+heterogeneous sampling runs (per-element draws + F3 analysis) at those
+fields, 64 replicas per iteration, `LargestComponentSize`:
+
+| Case | Scan + 8 het reweights | Direct, 8 fields | Direct / reweight |
+|---|---:|---:|---:|
+| square site (V=4096, E=8064) | 88.7 ms | 56.3 ms | 0.63x |
+| square bond (E=8064) | 152.4 ms | 62.7 ms | 0.41x |
+| cubic site (V=4096, E=11520) | 87.1 ms | 69.4 ms | 0.80x |
+| cubic bond (E=11520) | 215.2 ms | 81.4 ms | 0.38x |
+| sparse-ER site (V=4096, E=16384) | 93.9 ms | 131.6 ms | **1.40x** |
+| sparse-ER bond (E=16384) | 318.7 ms | 137.7 ms | 0.43x |
+
+Unlike the uniform Z1 reweight (17 probabilities, 1.8-4.7x speedups), the
+heterogeneous path pays two `ln` evaluations per universe element per call,
+so at K = 8 fields it only wins where the direct path is expensive relative
+to the scan universe — site scans on the sparsest topology. The advantage
+grows with the number of distinct fields queried per scan (the ln table is
+per workspace, and the per-call cost is field-dependent), and the variance
+envelope above — not timing — is what limits where the method applies.
+Times are point estimates, not CI thresholds.
+
+### T2 limitations
+
+One field per call, one observable per call (the curve is reusable). The
+estimator's variance envelope is the binding constraint (see the variance
+caveat); the unit-mass diagnostic detects envelope violations empirically
+(scan averages drifting from 1 or fluctuating wildly), but no automatic
+fallback to the N1 path exists — the caller chooses. No Carlo.rs adapter.
+Experimental until independent review.
 
 ## N2 random network failure and degree observables
 

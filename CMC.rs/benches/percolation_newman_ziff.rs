@@ -2,9 +2,9 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use cmc_rs::{
-    analyze, reweight, ComponentWorkspace, CsrLattice, EdgeActivity, EdgeId, GraphView,
-    NewmanZiffWorkspace, Probability, ReweightWorkspace, ScanObservable, UndirectedGraphView,
-    VertexActivity, VertexId,
+    analyze, reweight, reweight_heterogeneous, ComponentWorkspace, CsrLattice, EdgeActivity,
+    EdgeId, GraphView, HetReweightWorkspace, NewmanZiffWorkspace, Probability, ProbabilityField,
+    ReweightWorkspace, ScanObservable, UndirectedGraphView, VertexActivity, VertexId,
 };
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use rand::{RngExt, SeedableRng};
@@ -16,6 +16,7 @@ use percolation_support::{cases, Case};
 
 const P_COUNT: usize = 17;
 const REPLICAS: usize = 64;
+const HET_FIELD_COUNT: usize = 8;
 const SEED: u64 = 0x5CA9_2A11;
 
 #[derive(Clone, Copy)]
@@ -73,6 +74,25 @@ impl DirectOccupancy {
             Mode::Bond => {
                 for active in &mut self.bonds {
                     *active = rng.random::<f64>() < probability;
+                }
+            }
+        }
+    }
+
+    fn sample_heterogeneous(
+        &mut self,
+        probabilities: &[Probability],
+        rng: &mut Xoshiro256PlusPlus,
+    ) {
+        match self.mode {
+            Mode::Site => {
+                for (active, &probability) in self.sites.iter_mut().zip(probabilities) {
+                    *active = rng.random::<f64>() < probability.get();
+                }
+            }
+            Mode::Bond => {
+                for (active, &probability) in self.bonds.iter_mut().zip(probabilities) {
+                    *active = rng.random::<f64>() < probability.get();
                 }
             }
         }
@@ -262,12 +282,97 @@ fn bench_combined(criterion: &mut Criterion) {
     }
 }
 
+/// T2 heterogeneous comparison: one scan then reweighting at K graded fields
+/// vs K independent direct heterogeneous sampling runs at those fields (the
+/// N1-style path: per-element draws plus one component analysis each). The
+/// fields stay inside the reweighter's usable envelope (narrow ramps; see
+/// the `reweight_heterogeneous` variance caveat).
+fn bench_heterogeneous(criterion: &mut Criterion) {
+    for case in benchmark_cases() {
+        let (vertices, edges) = (case.lattice.vertex_count(), case.lattice.edge_count());
+        let mut group = criterion.benchmark_group(format!(
+            "nz_het/{}/V={vertices}/E={edges}/{HET_FIELD_COUNT}f/{REPLICAS}r",
+            case.name
+        ));
+        group.throughput(Throughput::Elements((HET_FIELD_COUNT * REPLICAS) as u64));
+        for mode in Mode::ALL {
+            let trials = match mode {
+                Mode::Site => vertices,
+                Mode::Bond => edges,
+            };
+            let fields: Vec<Vec<Probability>> = (0..HET_FIELD_COUNT)
+                .map(|field_index| {
+                    let center = 0.45 + 0.30 * field_index as f64 / (HET_FIELD_COUNT - 1) as f64;
+                    (0..trials)
+                        .map(|index| {
+                            let position = index as f64 / trials.max(1) as f64 - 0.5;
+                            Probability::new((center + 0.008 * position).clamp(0.01, 0.99))
+                                .expect("bench probability")
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let mut scan_workspace = NewmanZiffWorkspace::new();
+            scan_workspace.prepare(vertices, edges).unwrap();
+            let mut reweight_workspace = HetReweightWorkspace::new();
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(SEED);
+            group.bench_function(BenchmarkId::new("scan+reweight", mode.label()), |bencher| {
+                bencher.iter(|| {
+                    for _ in 0..REPLICAS {
+                        let curve = match mode {
+                            Mode::Site => {
+                                cmc_rs::scan_site(&case.lattice, &mut scan_workspace, &mut rng)
+                                    .unwrap()
+                            }
+                            Mode::Bond => {
+                                cmc_rs::scan_bond(&case.lattice, &mut scan_workspace, &mut rng)
+                                    .unwrap()
+                            }
+                        };
+                        for field in &fields {
+                            black_box(
+                                reweight_heterogeneous(
+                                    &curve,
+                                    &ProbabilityField::Borrowed(field),
+                                    ScanObservable::LargestComponentSize,
+                                    &mut reweight_workspace,
+                                )
+                                .unwrap(),
+                            );
+                        }
+                    }
+                });
+            });
+
+            let mut workspace = ComponentWorkspace::new();
+            let mut occupancy = DirectOccupancy::new(&case.lattice, mode);
+            let mut direct_rng = Xoshiro256PlusPlus::seed_from_u64(SEED);
+            group.bench_function(BenchmarkId::new("direct", mode.label()), |bencher| {
+                bencher.iter(|| {
+                    for field in &fields {
+                        for _ in 0..REPLICAS {
+                            occupancy.sample_heterogeneous(field, &mut direct_rng);
+                            let summary =
+                                analyze(&case.lattice, &occupancy, &occupancy, &[], &mut workspace)
+                                    .unwrap()
+                                    .summary();
+                            black_box(summary.largest_component_size);
+                        }
+                    }
+                });
+            });
+        }
+        group.finish();
+    }
+}
+
 criterion_group! {
     name = newman_ziff;
     config = Criterion::default()
         .sample_size(10)
         .warm_up_time(Duration::from_millis(100))
         .measurement_time(Duration::from_millis(250));
-    targets = bench_scan, bench_reweight, bench_direct, bench_combined
+    targets = bench_scan, bench_reweight, bench_direct, bench_combined, bench_heterogeneous
 }
 criterion_main!(newman_ziff);

@@ -19,8 +19,9 @@
 //! Z1 adds a separate core parameter-scan layer: [`scan_site`]/[`scan_bond`]
 //! activate one random permutation incrementally, [`reweight`] applies exact
 //! binomial weights to the resulting curve, and [`ScanEstimator`] aggregates
-//! independent scans. This is not a scheduler adapter and has no vector
-//! `Results` output until C0.
+//! independent scans. [`reweight_heterogeneous`] extends the same unchanged
+//! curves to per-element probability fields (T2). This is not a scheduler
+//! adapter and has no vector `Results` output until C0.
 
 mod activity;
 mod analyzer;
@@ -86,12 +87,13 @@ pub use process::{
 pub use query::{BoundaryQuery, BoundaryQueryError};
 pub use random_cluster::{ClusterQ, RandomClusterError, RandomClusterMC};
 pub use scan::{
-    reweight, scan_bond, scan_site, NewmanZiffWorkspace, ReweightError, ReweightWorkspace,
+    reweight, reweight_heterogeneous, scan_bond, scan_site, HetReweightResult,
+    HetReweightWorkspace, NewmanZiffWorkspace, ReweightError, ReweightWorkspace,
     ReweightedEstimate, ScanCurve, ScanError, ScanEstimator, ScanMode, ScanObservable, ScanPoint,
 };
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
-pub use scan::{ReweightCapacityAudit, WorkspaceScanCapacityAudit};
+pub use scan::{HetReweightCapacityAudit, ReweightCapacityAudit, WorkspaceScanCapacityAudit};
 pub use summary::ComponentSummary;
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]

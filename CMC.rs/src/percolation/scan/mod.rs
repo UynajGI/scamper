@@ -3,7 +3,8 @@
 //! Site and bond scans activate one uniformly random permutation
 //! incrementally and record the occupation-count curve; binomial reweighting
 //! turns one curve into scalar estimates at any uniform probability without a
-//! second sampling pass. Heterogeneous probabilities, mixed scans, deletion
+//! second sampling pass, and heterogeneous (Poisson-binomial) reweighting
+//! does the same for per-element probability fields. Mixed scans, deletion
 //! processes, and Carlo.rs result-vector output are outside this layer.
 
 mod newman_ziff;
@@ -17,7 +18,11 @@ pub use newman_ziff::{
 };
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
+pub use reweight::HetReweightCapacityAudit;
+#[cfg(feature = "allocation-probe")]
+#[doc(hidden)]
 pub use reweight::ReweightCapacityAudit;
 pub use reweight::{
-    reweight, ReweightError, ReweightWorkspace, ReweightedEstimate, ScanEstimator, ScanObservable,
+    reweight, reweight_heterogeneous, HetReweightResult, HetReweightWorkspace, ReweightError,
+    ReweightWorkspace, ReweightedEstimate, ScanEstimator, ScanObservable,
 };

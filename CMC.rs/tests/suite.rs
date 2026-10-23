@@ -138,6 +138,8 @@ mod percolation_network;
 mod percolation_network_input;
 #[path = "physics/percolation_scan.rs"]
 mod percolation_scan;
+#[path = "physics/percolation_scan_heterogeneous.rs"]
+mod percolation_scan_heterogeneous;
 #[path = "physics/percolation_winding.rs"]
 mod percolation_winding;
 #[path = "physics/percolation_zscore.rs"]

@@ -5,13 +5,13 @@ use std::mem::size_of;
 use allocation_counter::measure;
 use carlo_rs::{Context, MonteCarlo};
 use cmc_rs::{
-    analyze, analyze_winding, overlap_pairs, reweight, scan_bond, scan_site, AttackGrid,
-    AttackPolicy, Bond, BondBernoulli, BooleanPercolationMC, BorrowedUndirectedCsr, BoundaryQuery,
-    ComponentWorkspace, DegreeAttackMC, GraphView, MixedBernoulli, NewmanZiffWorkspace,
-    ObservablePlan, OrthorhombicCell, PeriodicEmbedding, PointProcess, Probability,
-    ProbabilityField, Radii, RandomFailureMC, ReweightWorkspace, ScanObservable, SiteBernoulli,
-    StaticConfiguration, StaticLaw, StaticObservable, StaticPercolationMC, UndirectedGraphView,
-    WindingWorkspace,
+    analyze, analyze_winding, overlap_pairs, reweight, reweight_heterogeneous, scan_bond,
+    scan_site, AttackGrid, AttackPolicy, Bond, BondBernoulli, BooleanPercolationMC,
+    BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace, DegreeAttackMC, GraphView,
+    HetReweightWorkspace, MixedBernoulli, NewmanZiffWorkspace, ObservablePlan, OrthorhombicCell,
+    PeriodicEmbedding, PointProcess, Probability, ProbabilityField, Radii, RandomFailureMC,
+    ReweightWorkspace, ScanObservable, SiteBernoulli, StaticConfiguration, StaticLaw,
+    StaticObservable, StaticPercolationMC, UndirectedGraphView, WindingWorkspace,
 };
 use percolation_support::{
     cases, sample_and_analyze, torus_cases, Case, ReferenceConfiguration, ReferenceMode, TorusCase,
@@ -236,6 +236,81 @@ fn run_scan_once(
     )
     .expect("probe reweight");
     std::hint::black_box(value);
+}
+
+/// T2 probe: one heterogeneous reweighting realization (site/bond scan plus
+/// one Poisson-binomial reweight at a per-element probability field) must be
+/// allocation-free in steady state after one prepare of each workspace
+/// (same policy as the kcore/bootstrap/incremental probes).
+fn report_heterogeneous_scan_case(case: &Case, mode: ReferenceMode) {
+    let trials = match mode {
+        ReferenceMode::Site => case.lattice.vertex_count(),
+        ReferenceMode::Bond => case.lattice.edge_count(),
+        ReferenceMode::Mixed => unreachable!("scan probe covers pure modes"),
+    };
+    let values: Vec<Probability> = (0..trials)
+        .map(|index| probability(if index % 2 == 0 { 0.35 } else { 0.75 }))
+        .collect();
+    let probability_field = ProbabilityField::Borrowed(&values);
+    let mut scan_workspace = NewmanZiffWorkspace::new();
+    let mut reweight_workspace = HetReweightWorkspace::new();
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4845_5A31);
+    let run_once = |scan_workspace: &mut NewmanZiffWorkspace,
+                    reweight_workspace: &mut HetReweightWorkspace,
+                    rng: &mut Xoshiro256PlusPlus| {
+        let curve = match mode {
+            ReferenceMode::Site => {
+                scan_site(&case.lattice, scan_workspace, rng).expect("probe site scan")
+            }
+            ReferenceMode::Bond => {
+                scan_bond(&case.lattice, scan_workspace, rng).expect("probe bond scan")
+            }
+            ReferenceMode::Mixed => unreachable!("scan probe covers pure modes"),
+        };
+        let result = reweight_heterogeneous(
+            &curve,
+            &probability_field,
+            ScanObservable::LargestComponentSize,
+            reweight_workspace,
+        )
+        .expect("probe heterogeneous reweight");
+        std::hint::black_box(result);
+    };
+    for _ in 0..ADAPTER_WARMUP {
+        run_once(&mut scan_workspace, &mut reweight_workspace, &mut rng);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            run_once(&mut scan_workspace, &mut reweight_workspace, &mut rng);
+        }
+    });
+    assert_eq!(
+        info.count_total, 0,
+        "heterogeneous reweight realizations allocated {} times in steady state",
+        info.count_total
+    );
+    let capacity = reweight_workspace.capacity_audit();
+    eprintln!(
+        "HET_SCAN_ALLOC topology={} mode={} V={} E={} field_entries={} measured_samples={} \
+         workspace_log_weights_bytes={} workspace_log_integers_bytes={} \
+         workspace_uniform_weights_bytes={} workspace_het_total_capacity_bytes={} \
+         allocations_per_sample={:.3} allocated_bytes_per_sample={:.3} \
+         peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        mode.label(),
+        case.lattice.vertex_count(),
+        case.lattice.edge_count(),
+        trials,
+        ALLOCATION_SAMPLES,
+        capacity.log_weights,
+        capacity.log_integers,
+        capacity.uniform,
+        capacity.total_bytes(),
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
 }
 
 fn report_topology_view_probe() {
@@ -1381,6 +1456,9 @@ fn main() {
         }
         for mode in [ReferenceMode::Site, ReferenceMode::Bond] {
             report_scan_case(case, mode);
+        }
+        for mode in [ReferenceMode::Site, ReferenceMode::Bond] {
+            report_heterogeneous_scan_case(case, mode);
         }
         for mode in ReferenceMode::ALL {
             report_heterogeneous_adapter_case(case, mode);
