@@ -74,9 +74,11 @@ pub const NO_PREDECESSOR: usize = usize::MAX;
 /// Whether a run also records the shortest-path tree.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum GeodesicTracking {
-    /// Distances only: the predecessor arrays are left untouched (their
-    /// contents are stale from the last tracking-on run and must not be
-    /// read).
+    /// Distances only: `prepare` rewrites every predecessor entry to
+    /// `NO_PREDECESSOR` before the pass, so the arrays read as empty
+    /// regardless of earlier runs (review follow-up: the previous
+    /// "stale from the last tracking-on run" wording was wrong —
+    /// preparation clears unconditionally).
     #[default]
     Off,
     /// Record predecessor vertex and physical edge per reached vertex

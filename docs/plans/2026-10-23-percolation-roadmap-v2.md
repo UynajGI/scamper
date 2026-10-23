@@ -103,11 +103,16 @@ Tables/appendices carry the standard exponents and bounds.
 
 ### F1: Weighted-shortest-path layer
 Dijkstra with a binary heap over the topology substrate (generic over
-`UndirectedGraphView`), reusing E1's `ProcessQueue`/counter discipline:
-edge weights from `Bond.weight`, one-pass single-source, reusable
-workspace, zero steady-state allocation. Gates: every dist vs Bellman–Ford
-reference on small graphs (exact); hand cases incl. zero-weight edges and
-parallel edges (min wins); typed non-finite/negative rejections.
+`UndirectedGraphView`): one-pass single-source, reusable workspace, zero
+steady-state allocation. (Delivered with its own id-tied `BinaryHeap`
+rather than E1's ProcessQueue — the id tie gives deterministic
+equal-distance settling and 16-byte heap entries; documented in the
+module rustdoc.) Edge weights are per-call slices over dense physical
+edges from `Bond.weight`; hand cases incl. zero-weight edges and parallel
+edges (min wins); typed non-finite/negative rejections. Gates: every
+dist vs Bellman–Ford reference on small graphs (exact); hand cases incl.
+zero-weight edges and parallel edges (min wins); typed non-finite/
+negative rejections.
 
 ### F2: FPP observables
 Passage time to distance r, fluctuation χ(r) = Var(T_r), corridor
@@ -246,8 +251,9 @@ requires archiving the 2D FK/Potts duality reference at T-time
 
 All four T-track residue stages are delivered AND independently reviewed:
 T1/T2 (2026-10-22) and T3/T4 (2026-10-23, reports in `docs/reviews/`)
-are Validated. The T track is closed; F1 (weighted-shortest-path layer)
-starts next, then L/C/Q in dependency order.
+are Validated. F1 is delivered and independently reviewed (PASS-with-
+follow-ups, 2026-10-23; doc-only follow-ups applied) — Validated. F2 is
+in development; then L/C/Q in dependency order.
 
 ## 9. Archived anchors for v2 (already in docs/ref/)
 
