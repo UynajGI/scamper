@@ -15,7 +15,9 @@
 //! (`cell_of_position`/`rebuild`) is defined only over orthorhombic side
 //! lengths, so accepting the wider trait would let callers supply a
 //! triclinic geometry the stencil search cannot support. Minimum-image
-//! displacements still flow through the [`crate::particle::SimulationCell`]
+//! geometry flows through the particle module's own metric
+//! (`OrthorhombicCell::distance_squared` over the
+//! [`crate::particle::SimulationCell`] displacement convention)
 //! trait methods on that concrete type. Supporting other cell shapes means
 //! generalizing the particle module's cell list first — out of P1/P2 scope
 //! (the roadmap's initial continuum scope is orthorhombic cells).
@@ -38,7 +40,9 @@
 //! order:
 //!
 //! 1. **Cell-major:** the outer loop visits packed cells in ascending
-//!    linear index (row-major over the `CellList` grid, axis 0 slowest).
+//!    linear index (row-major over the `CellList` grid, axis 0 fastest —
+//!    its strides make axis 0 the least significant; review follow-up
+//!    2026-10-23).
 //! 2. **Within-cell ascending:** for each cell, particles whose *own* cell
 //!    it is are visited in ascending particle index `i` (the first
 //!    endpoint), and each accepted partner `j > i` is emitted in ascending
@@ -58,16 +62,18 @@
 //!
 //! A pair is a candidate when its minimum-image squared distance is
 //! **`<=` the squared cutoff** (boundary-inclusive). The cutoff must be
-//! finite, positive, and at most half the shortest cell side
+//! finite, positive, and at most half the shortest cell side (at exactly
+//! half, two images of a pair can both be within range; the
+//! minimum-image tie picks one via round-half-away-from-zero and the
+//! unordered pair set stays well-defined — the pair qualifies via either
+//! image)
 //! (minimum-image limit, enforced by the reused `CellList`).
 //!
 //! Zero particles are rejected with a typed error rather than analyzed:
 //! a candidate-pair analysis of an empty coordinate buffer is almost
 //! certainly a caller bug, and the rejection makes that loud.
 
-use crate::particle::{
-    CellList, OrthorhombicCell, ParticleConfiguration, ParticleError, SimulationCell,
-};
+use crate::particle::{CellList, OrthorhombicCell, ParticleConfiguration, ParticleError};
 use crate::topology::{EdgeId, GraphView, Incidence, UndirectedGraphView, VertexId};
 
 /// Typed rejection of a continuum candidate-pair request.
@@ -401,10 +407,9 @@ fn enumerate_pairs<const D: usize>(
             }
             let origin = positions[first];
             for &second in &candidates[slot + 1..] {
-                let mut distance_squared = 0.0;
-                for component in cell.displacement(&origin, &positions[second]) {
-                    distance_squared += component * component;
-                }
+                // Borrow the particle module's own metric (review follow-up
+                // 2026-10-23): identical fold order, zero duplicated formula.
+                let distance_squared = cell.distance_squared(&origin, &positions[second]);
                 if distance_squared <= cutoff_squared {
                     pairs.push([first, second]);
                 }

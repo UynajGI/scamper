@@ -28,10 +28,12 @@ use crate::{EdgeId, UndirectedGraphView};
 /// A caller-supplied bond mask, ready for the shared analyzers.
 ///
 /// Construction pins the dimensions of the reference graph; the analyzer
-/// re-validates those dimensions against the graph it is actually given, so a
-/// configuration built for one graph and analyzed against another is a typed
-/// rejection ([`AnalysisError::EdgeActivityLength`] or
-/// [`AnalysisError::VertexActivityLength`]), never silent misuse. The mask is
+/// re-validates those dimensions against the graph it is actually given, so
+/// a configuration built for a graph of DIFFERENT dimensions is a typed
+/// rejection ([`AnalysisError::EdgeActivityLength`] /
+/// [`AnalysisError::VertexActivityLength`]). A same-dimension graph is
+/// instead reinterpreted positionally (the library-wide dense-ID contract,
+/// review follow-up 2026-10-23). The mask is
 /// borrowed, not copied: this is the zero-copy, zero-allocation path for
 /// researchers who already hold the bond draw.
 #[derive(Clone, Copy, Debug)]
@@ -305,6 +307,27 @@ impl fmt::Display for BondConfigurationError {
 }
 
 impl std::error::Error for BondConfigurationError {}
+
+/// Sparse bond activity: an owned sample is itself an edge-activity source.
+///
+/// Review follow-up 2026-10-23: closing the R3 friction — an SW/FK adapter
+/// can hand its `BondSample` straight to the analyzers without first
+/// materializing a dense mask (`O(log k)` membership per queried edge;
+/// pair with an all-active vertex source such as
+/// [`ExternalBondConfiguration`]'s vertex view or a fresh
+/// [`crate::StaticConfiguration`] for vertices only).
+impl EdgeActivity for BondSample {
+    fn edge_count(&self) -> usize {
+        // The dense edge domain is pinned at construction and re-validated
+        // by the analyzer against the graph; the sample's own domain is its
+        // stored `edges`.
+        self.edge_count
+    }
+
+    fn edge_active(&self, edge: crate::EdgeId) -> bool {
+        self.contains(edge)
+    }
+}
 
 #[cfg(test)]
 mod tests {

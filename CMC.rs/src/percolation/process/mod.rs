@@ -1,10 +1,13 @@
-//! E track: cascade-process primitives and adapters.
+//! Cascade and growth process primitives and adapters (E and G tracks).
 //!
 //! E1 shares allocation, queue, and counter primitives ONLY — there is
 //! deliberately no common "physical transition type" (roadmap §12): each
-//! process (E2 bootstrap, E3 k-core) defines its own state machine and
-//! borrows these reusable buffers. Everything is prepared once and reused
-//! across realizations with zero steady-state allocation.
+//! process (E2 bootstrap, E3 k-core, G1 incremental union) defines its own
+//! state machine and borrows these reusable buffers. Everything is prepared
+//! once and reused across realizations with zero steady-state allocation.
+//! Like the rest of the crate, dense IDs carry no graph provenance: a G1
+//! workspace prepared for one graph accepts indices from any other graph
+//! with the same (V, E) counts, positionally reinterpreted.
 
 mod bootstrap;
 mod incremental;
