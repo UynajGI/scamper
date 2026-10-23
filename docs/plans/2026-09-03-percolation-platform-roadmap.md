@@ -805,3 +805,34 @@ PR #4 carries the F0-F4 final architecture plus the in-branch N1 delivery as its
 provisional API it originally proposed is deleted in-branch (never merged, so
 no compatibility debt), and every applicable validation gate was migrated to
 the final API before the F4 review landed.
+
+## M6: Coverage Audit — 2026-10-23
+
+Final-state audit of the platform against this roadmap, performed on
+`feat/cmc-percolation` after all 27 development stages landed.
+
+### Domain matrix (CMC.rs/PERCOLATION.md)
+
+| Status | Rows | Notes |
+|---|---|---|
+| Validated | 16 | Independent review passed; production on the `dev` merge |
+| Integrator-verified | 5 | G2, G3, P2, R2, R3: all gates green and integrator-checked 2026-10-23 (hand computations, code audits, 47/47 tests); independent reviewer re-run recommended before the `dev` merge (checklist embedded in `docs/reviews/2026-10-23-final-round-reviews.md`) |
+| Experimental | 3 | Deliberate: F1 topology API, F2 configuration/law substrate, and W1 embedding remain provisional-until-merge BY DESIGN (the never-merged-API rule) — all three passed independent review and everything above is built on them |
+| Not implemented | 1 | Generic real-q random-cluster (Sweeny/Chayes-Machta) — explicitly a separate future plan per §15 |
+
+### Cross-module evidence
+
+- **Tests**: workspace 1322 passed, 0 failed (Carlo.rs 321+ incl. hdf5; CMC.rs suite + lib; QMC, MCMC, scamper all green). MPI suites green at np=2 (last run at the D3 round; carlo-framework nightly continues to monitor).
+- **Benchmarks**: 28 Criterion/allocation bench targets across the workspace; every production family reports throughput + zero-allocation probes with asserted counts (the kcore/bootstrap/invasion/achlioptas probes assert; the historical prints are retained in earlier reports).
+- **Literature provenance**: 11 bibliography rows, 9 arXiv PDFs archived under `docs/ref/` with Markdown conversions (`convert_to_md.py`, incremental); every physics claim in PERCOLATION.md cites its archived anchor with the agreement numbers recorded. Pre-arXiv classics (Tarjan 1972, Wilkinson-Willemsen 1983, Edwards-Sokal 1988, Swendsen-Wang 1987, Fortuin-Kasteleyn 1972) are noted where no PDF can exist and replaced by definitional/exhaustive anchors.
+- **Reviews**: 13 reports under `docs/reviews/` — 22 stages carry independent reviewer verdicts; the final five carry the integrator-verification record with the honest weaker-independence caveat.
+- **Code surface**: the percolation module is 16,064 lines across the layered architecture (topology → activity/law → analyzer → observables → adapters), with the process/continuum/bonds/random-cluster/edwards-sokal extensions composed on the shared substrate rather than forking it.
+
+### Definition-of-done residue
+
+- The five integrator-verified stages have not had a *fresh-eyes* reviewer re-run since their delivery commit; the embedded checklist exists for exactly this and is the one recommended pre-merge action.
+- Adaptive residual-degree attack (roadmap §9 N3 tail), heterogeneous Newman-Ziff scans, honeycomb/kagome embeddings, generic real q, and continuum winding remain Not implemented by design and are the natural next-roadmap items.
+- PR #4 remains the delivery vehicle: the provisional API deleted in-branch, all validation assets migrated to the final API (verified across F4/N1/N2/N3/D1-D3/E2-E3/R1-R3 gate suites).
+
+**Milestone M6 status: complete.** The platform is ready for the
+independent-review re-run of the final five stages and the `dev` merge.
