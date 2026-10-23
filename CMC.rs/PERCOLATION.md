@@ -53,6 +53,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Heterogeneous Newman-Ziff reweighting (T2) | Validated | `reweight_heterogeneous` reweights one unchanged Z1 scan curve to a per-element probability field (Poisson-binomial weights, all log-space with a running-max rescale): the uniform-permutation prefix identity makes `sum_n C(N,n) w(A_n) f_n` an unbiased per-scan estimator and `sum_n C(N,n) w(A_n)` a unit-mass diagnostic with expectation exactly 1; uniform fields delegate to the Z1 binomial `reweight`. Gates: exact 2^N enumeration vs a test-local BFS reference (site/bond, U(0.3,0.8)-spread and bimodal 0.2/0.9 fields, max z 1.35 at R=3200); unit-mass and finiteness at N=10^4; L=64/128 graded-ramp cross-validation vs direct `SiteBernoulli` (max z 1.21); 1e-9 uniform reduction (pinned to <1e-8 at N=10^4); typed boundary/length rejections; asserted 0-allocation probe on five topologies. The estimator is heavy-tailed outside a documented envelope (`sqrt((N/4) Var(logit p))` of order one or below) and the 8-field Criterion speedup is below 1 on dense topologies (0.38-0.80x; 1.40x on sparse-er site) — spread fields belong to the N1 direct path; see the T2 section under Z1. Independent review passed 2026-10-22 (identity brute-forced over all permutations in exact rational arithmetic; the normalized-ratio bias independently confirmed and v1 shown structurally immune; a fully independent sampler/union-find cross-check at L=64 gave z=-0.18/-0.26; saturation documentation corrected as follow-up); see `docs/reviews/`. |
 | Weighted shortest-path layer (v2 F1) | Validated | Roadmap v2 §3 F1: `first_passage_run` + `FirstPassageWorkspace` (`percolation/first_passage.rs`) — single-source single-pass Dijkstra with a binary heap over any `UndirectedGraphView`, edge weights a caller-owned slice of one `f64` per physical edge in dense edge order (`lattice.edges[e].weight` for a `CsrLattice`; weights are data, redrawn per call for F2's passage-time fields). Explicit policies: heap keyed `(distance total_cmp, vertex id ascending)` — the id tie key makes the pop order total under ties (equal-distance settles and equal-cost predecessor choices are deterministic, not heap-implementation detail; the same tie discipline as the invasion frontier, and a 16-byte heap entry); zero weights ALLOWED (non-negativity is Dijkstra's requirement; zero-weight cycles correct); parallel edges are independent relaxations with the lighter bond winning (strict-improvement updates); unreachable = `f64::INFINITY` with reachability the derived `is_finite()`; optional predecessor vertex+edge arrays (`GeodesicTracking`, for F2/F3 geodesics) gated off by default. Typed rejections at validation time, before the workspace is touched: negative weight (edge named), NaN/±inf weight, wrong weight length, source domain, empty graph. Gates: parity vs a test-local independent Bellman-Ford over chains/cycles/trees/dense-ER multigraphs (parallel + zero-weight edges, U[0,1) and exact-zero fields) — 249 (graph, source) cases / 3440 vertex distances, bit-exact on unique-path and dyadic-weight families, 1e-12 relative elsewhere, 0 mismatches; hand-derived 9-vertex 11-edge multigraph (parallel pair lighter wins, zero-weight triangle, equal-cost tie observable through the predecessor, self-loop, disconnected sentinel) plus zero-weight ring and single-vertex cases; rejection-with-untouched-workspace; reused-vs-fresh workspace bitwise determinism (48 comparisons) with growth/shrink and same-size graph alternation; asserted 0-allocation 0-byte probe per single-source pass on six topologies incl. E = 64 V. Criterion (V=1e5/E=3e5 ER): early-exit Bellman-Ford 2.27x FASTER than the lazy-deletion Dijkstra on the small-diameter ER (recorded honestly, T2-style) while Dijkstra is 5.81x faster on a diameter-398 open 200x200 grid with random weights — the F2-relevant regime; doubling V at fixed degree 6 costs 2.6x while the working set fits cache, 3.2-3.3x at V=4e5 where the random-graph heap leaves L3 (throughput 3.35 M vertices/s at V=2.5e4 down to 0.78 M at V=4e5). Algorithm layer only — no MonteCarlo adapter, no scheduler integration (F2 builds observables on top); the Auffinger-Damron-Hanson FPP anchor applies from F2 on. Independent review passed 2026-10-23 (docs/reviews/2026-10-23-f1-review.md; 712 fresh randomized + 55 adversarial cases vs a deliberately opposite-tie (LIFO insertion-counter) own Dijkstra plus own SPFA and rotated-rounds Bellman-Ford: bitwise agreement everywhere — stronger than the committed 1e-12 policy; the tie test non-vacuous: 2,545 vertices took different-but-valid predecessors at identical distances; E+1 heap budget tight and never exceeded incl. adversarial chains; saturation, rejection isolation, and the bench trade-off independently reproduced — grid ratio re-measured 3.68x vs the committed 5.81x, same direction, both recorded). Follow-ups applied: the GeodesicTracking::Off rustdoc now states prepare clears predecessors unconditionally (the 'stale' wording was wrong); the v1/v2 F1 name collision disambiguated. |
 | First-passage observables (v2 F2) | Validated | `percolation/first_passage_observables.rs` (roadmap v2 §3 F2) over the v2 F1 pass: `PassageGeometry::corridor(length, width)` (open (r+1) x w Z^2 box, source set = left column, target set = right column) and `PassageGeometry::segment(steps, margin, half_height)` (single origin, explicit target points along +x inside a reflection-symmetric box), each carrying one super-source vertex joined to the source set by structural zero-weight edges — ONE `first_passage_run` pass realizes the min over the source set exactly. `EdgeWeightLaw` (Exponential `w = -ln(1-u)/rate`, written `0.0 - ln(1-u)/rate` so `u = 0` yields `+0.0` never `-0.0`; Uniform `w = u`) under a bitwise draw contract: one `random::<f64>()` per box edge in dense `build_square` order, structural zeros consume no draws. `PassageSampler` (reusable weight slice + F1 workspace + profile buffer; `realize_with_weights` runs production on caller-owned fields — the exact-enumeration path), `PassageEstimator`/`PassageEstimate` (scalar mean/unbiased variance/SEM of `T_r` = min over the profile plus per-target profile mean/variance). One realization = ONE C0 vector sample: the full passage-time profile along the target boundary (w entries corridor, `steps.len()` segment); the scalar min is a derived accessor. Gates: exhaustive 2^E two-level dyadic {0.5, 1.0} enumeration vs a test-local Bellman-Ford over test-built topologies — 263,168 corridor assignments (919,552 profile entries bit-exact, incl. 128,272 tied-minimum assignments where the optimal path is non-unique: the profile entries are unique minima over path weights, degeneracy never changes content) plus 4,198,432 segment assignments, 0 mismatches; bitwise draw-contract replay (474 weight entries, both laws, both geometries); same-seed bitwise determinism incl. reseed-replays-chain-one on a history-laden sampler; SEM ~ 1/sqrt(N) (ratio 0.531, N = 128 vs 512). Physics brackets (ADH 2017 anchor, bracket language only): Var(T_r) growth on aspect-1 corridors (w = r, r in [8, 128], R = 600 per law) gives fitted chi = 0.2476 CI (0.2028, 0.2923) for Exp(1) and 0.2658 CI (0.2198, 0.3118) for U[0,1), both inside the rigorous open interval (0, 1/2) — never claimed against 1/3 (the effective exponent below 1/3 at these sizes is the documented small-r crossover); subadditivity `E[T_2r] <= 2 E[T_r]`, exact in expectation on reflection-symmetric segment boxes, holds with z = -10.41 / -13.57 / -15.10 / -10.35 at r = 8/16/32/64; the time-constant sequence mu(r) = E[T_r]/r = 0.5621(47) -> 0.5108(27) -> 0.4743(16) -> 0.4488(10) -> 0.4341(6) decreases and stabilizes (convergence from above, by subadditivity). Asserted 0-allocation 0-byte probe per realization (law draw + F1 pass + estimator add) on 64x16 and 128x32 corridors; 233 and 55 realizations/s at 64x64/128x128 aspect-1 corridors (debug test profile). No MonteCarlo adapter — F3's layer. Independent review passed 2026-10-24 (docs/reviews/2026-10-24-f2-review.md): the reviewer's own Floyd-Warshall over their own geometry and edge order ran 21.3M assignments INCLUDING the literal 4x4 corridor (2^24, 67.1M profile comparisons, 8.15M tied-minima, 0 mismatches) and non-dyadic weight families; the draw contract reproduced against a from-scratch xoshiro256++ (10,000 draws bit-equal, -0.0 bits confirmed); chi reproduced within 0.13sigma with an independent pipeline; the reflection subadditivity argument given a coupling proof and pinned pointwise (0 violations in 40,000 fields, max rel diff 6.3e-16); statistics machinery verified (t-CI df=3, SEM slope -0.5008). Follow-up: construction-cost figures marked machine-dependent (both measurements recorded). |
+| Long-range power-law edge law (L1) | Experimental | `percolation/long_range.rs` (roadmap v2 §4 L1): Biskup's long-range edge law `p = min(1, beta * r^{-s})` (archived Biskup 2004 md; the explicit power-law member of `p_xy = |x-y|^{-s+o(1)}`) on a finite box of Z^d — `LongRangeBox` (per-dimension sides, row-major dense indices, ℓ1 distance: integer-exact, ℓ2-equivalent so Biskup's s-vs-d-vs-2d regime statements transfer, and equal to ℓ2 in d=1), the finite-box restriction of the infinite-measure law (pairs with BOTH endpoints in the box; boundary effects confined to the box surface). Consideration order lexicographic (x,y), x<y dense; RNG draw contract: ONE uniform f64 per pair in ascending order (saturated and near-zero pairs included), occupied iff u < min(1, beta r^-s) — `pair_probability` is the pinned bitwise expression; `min(1,.)` saturates beta>=1 nearest neighbors surely (u<1 always) and beta>=r^s shells; beta*r^-s never overflows past beta (r^-s in (0,1]). One realization = one G1 `IncrementalUnionWorkspace` construction over a zero-materialization complete pair view: all vertices activated at step coordinate 0 (G2 convention), each occupied pair activated at step = 1-based ADDED-EDGE COUNT (the process coordinate; realized count random); trajectory steps exactly [0;n]+[1..=m]. `long_range_run` RNG-free core + `LongRangePercolationMC` adapter recording ONE C0 vector sample (`LongRangeLargestSize`, fixed shape, G3 final-value padding) + scalars (AddedEdges/ComponentCount/SecondMoment). Typed rejections: empty box, zero side, negative/non-finite beta or s, wrong-length or out-of-[0,1] uniform fields, zero steps. Gates: bit-adjacent threshold replay from both sides (28 pairs x 3 combos) pinning law + pair order; per-pair frequency z-scores + pooled Pearson chi-square on 1x8 (3 laws) and 4x4 boxes, 600 realizations (max |z| 3.54; chi2 33.3/36.0/23.2/110.2 vs criticals 57.0/57.0/46.9/173.7) + joint-occupancy independence z in [-2.26, 1.96]; closed-form E[deg(center)] z-gates at s<1, s=1, s>2 (z = -0.41/-0.59/0.66, R=4000); bitwise same-seed replay + adapter-vs-manual-order parity; per-step parity vs independent union-find (773 steps) + final structure vs flood fill (30 configs); saturation regimes (r=1 always at beta>=1 across 3 laws x 40 seeds, 38 saturated pairs at beta=4/s=1, complete graph at beta=1e6, beta=0 empty, singleton box). Asserted 0-allocation probe; Criterion-less eprintln throughput below. See the L1 section. |
 
 At F0 no family was **Validated**. Since F4 passed independent review, the
 static family and boundary crossing were the first Validated rows; N1, W2,
@@ -4079,3 +4080,163 @@ would be faster but is not needed at these throughputs. No MonteCarlo
 adapter and no scheduler integration — F3 (shape theorem, geodesic
 aging) builds on this layer next.
 
+## L1 long-range power-law edge law
+
+Status: **Experimental** — all stage-L1 gates pass 2026-10-23; independent
+review pending (v2 roadmap stage L1).
+
+### Contract: Biskup's edge law on a finite box
+
+The anchor (archived
+`docs/ref/md/Biskup_2003_long_range_chemical_distance.md`) defines
+long-range percolation through independent bond variables with
+`p_xy = |x-y|^{-s+o(1)}`, `|.|` any norm equivalent to ℓ2 (~line 134:
+"for definiteness, we can take |.| to be the usual ℓ2-norm; however, any
+other equivalent norm will do"), and works with the explicit
+representative `p_xy = 1 - exp{-β(1+|x-y|)^-s}` (Eq. 1.7). Stage L1
+realizes the explicit power-law member of that family,
+`p(r) = min(1, beta * r^{-s})` (first-order equivalent to Eq. 1.7 at
+small `beta r^{-s}`), on a finite box of Z^d; the Biskup regime structure
+(s versus d and 2d) is the L2/L3 target, not claimed here.
+
+Every semantic choice is explicit:
+
+- **Norm: ℓ1** (`LongRangeBox::distance`, a `usize`). Integer-exact (the
+  occupation probability depends on floating rounding only through one
+  `powf`), equivalent to Biskup's ℓ2 so the regime statements transfer,
+  and identical to ℓ2 in d = 1, the stage-L1 target dimension.
+- **Box and boundary**: `LongRangeBox::new(&sides)` builds a product of
+  per-dimension side lengths (each >= 1; vertex/pair counts must fit a
+  usize — typed rejections). The pair universe is every unordered pair of
+  DISTINCT box vertices — the finite-box restriction of the
+  infinite-measure law: no edge leaves the box, each pair keeps the same
+  `p(r)`, and boundary effects are confined to the box surface (a vertex
+  at depth k misses exactly the partners the infinite lattice would offer
+  beyond it).
+- **Consideration order**: lexicographic by dense (x, y), x < y —
+  ascending pair index (`pair_index`/`pair_endpoints` are inverses; dense
+  order is coordinate-lexicographic order).
+- **Draw contract** (bitwise reproducible on one platform): one uniform
+  `f64` per pair in ascending pair order — saturated and near-zero pairs
+  included, nothing skipped. The pair at index k is occupied iff
+  `uniforms[k] < pair_probability(r, beta, s) = min(1, beta * r^(-s))`
+  (the pinned expression; same-platform replay mirrors its bits).
+- **Saturation**: `p = 1` exactly when `beta * r^{-s} >= 1` — in
+  particular every r = 1 pair is surely occupied at `beta >= 1` (`u < 1`
+  holds for every uniform in `[0,1)`), and a huge beta saturates every
+  pair within radius `beta^{1/s}` (the complete graph in the limit).
+  With `beta` finite, `s >= 0`, `r >= 1` the factor `r^{-s}` lies in
+  `(0, 1]`, so the product never overflows past beta and no (s, d)
+  combination is rejected. `beta = 0` (empty graph) and `s = 0`
+  (distance-independent `min(1, beta)`) are legal but degenerate.
+- **Process coordinate**: one realization activates all `n` box vertices
+  first (dense ascending, step coordinate 0 — the G2 convention; the
+  fixed vertex set is the stage) and then every occupied pair in
+  consideration order with step coordinate the 1-based ADDED-EDGE COUNT.
+  The realized count is random; the trajectory steps are exactly
+  `[0; n] ++ [1..=m]`, one `IncrementalSummary` per accepted operation.
+
+### API
+
+- `long_range_run(box, beta, s, uniforms, workspace)`: the RNG-free core.
+  `uniforms` is one `f64` per pair in consideration order, each finite
+  and in `[0, 1]` (typed rejections otherwise; rejections leave the
+  workspace untouched). The workspace is re-prepared idempotently.
+  Returns a `LongRangeOutcome` (added edges, final component count,
+  largest size, raw second moment); the workspace exposes
+  `occupied_pairs()` (consideration order), `component_size(vertex)`, and
+  the driven G1 `substrate()`.
+- `LongRangeBox`: `new(&sides)`, `sides()`, `dimension()`, `vertices()`,
+  `pairs()`, `vertex_index(coords)`, `coordinates(index)`, `distance`,
+  `pair_index` / `pair_endpoints`, `pair_probability(distance, beta, s)`
+  (the contract expression).
+- `LongRangeWorkspace`: `prepare(vertices, pairs)` / `reset()` /
+  accessors; `LongRangePercolationMC::new(box, beta, s, steps)` with
+  `realize(rng)` and the Carlo.rs adapter (`sweep` + `measure`).
+
+### C0 recording
+
+One realization is ONE element-preserving vector sample plus scalars (the
+G3 padding convention for random-length growth): `LongRangeLargestSize`
+has fixed length `steps`, entry i = largest component size after the
+(i+1)-th added edge, entries past the realized length repeat the final
+value (1 when nothing was added); the scalars `LongRangeAddedEdges`,
+`LongRangeComponentCount`, `LongRangeSecondMoment` carry the true values.
+Configure `thermalization_sweeps = 0`; realizations are i.i.d.
+
+### Validation gates
+
+`tests/physics/long_range.rs` (8 tests):
+
+- **Threshold replay (law + pair order)**: for each of the 28 pairs of a
+  1x8 box, three (beta, s) laws: a uniform bit-adjacent BELOW the
+  recomputed `min(1, beta r^{-s})` occupies exactly that pair (all other
+  uniforms 1.0, which never occupy — the strict `<` at the saturation
+  boundary), one bit-adjacent ABOVE does not; the pair-order pin is that
+  the tailored uniform sits at index k. `p` also cross-checked against
+  the direct `beta / r^s` reading (relative < 1e-12).
+- **Law frequencies + independence**: per-pair occupancy over 600
+  realizations on 1x8 at (0.8, 0.5), (0.3, 1.0), (2.5, 1.7) — the last
+  with 7 saturated pairs (asserted ALWAYS occupied) — and on 4x4 at
+  (0.5, 1.2) exercising the 2D ℓ1 distance. Max per-pair |z| = 2.50 /
+  3.54 / 2.59 / 2.25 (all < 5); pooled Pearson chi-square 33.3 / 36.0 /
+  23.2 / 110.2 against df = 28 / 28 / 21 / 120, Wilson-Hilferty critical
+  (alpha = 0.001) 57.0 / 57.0 / 46.9 / 173.7. Joint-occupancy
+  independence probes (3 pair-of-pairs per box) z in [-2.26, 1.96]
+  against the exact product law.
+- **Degree moments vs the LRP measure**: closed-form
+  `E[deg(x)] = sum_{y != x} min(1, beta |x-y|^{-s})` (summed explicitly
+  and cross-checked against the d=1 hand shell formula) vs the empirical
+  mean center degree on 1x16, R = 4000, s < 1 / s = 1 / s > 2 laws:
+  E = 6.7115 / 1.5932 / 0.6415, z = -0.41 / -0.59 / 0.66 (all < 4).
+- **Bitwise draw contract**: same seed twice reproduces history,
+  occupied pairs, trajectory steps and summaries bitwise; the adapter
+  replay equals a manual one-f64-per-pair draw through the RNG-free core
+  (the documented order pinned); different seeds differ; the C0 padding
+  convention verified entry-by-entry against the substrate trajectory.
+- **Trajectory parity**: 6 (box, law) configs x 5 seeds — 773 added-edge
+  steps checked against a test-local independent union-find (all six
+  summary fields, per step), the vertex stage checked entry-by-entry,
+  steps == `[0; n] ++ [1..=m]`, and 30 final structures checked against a
+  test-local flood fill (component count, largest size and canonical
+  identity, second moment, `component_size` for every vertex, occupied
+  set equality).
+- **Saturation**: r = 1 pairs ALWAYS occupied at beta >= 1 (three laws x
+  40 seeds); the 38 pairs with r <= 4 at (beta=4, s=1) always occupied
+  (40 seeds); beta = 1e6, s = 2 gives the complete 1x8 graph every time
+  (28 edges, 1 component, second moment 64); beta = 0 adds nothing; a
+  1x1 box has an empty pair universe.
+- **Typed rejections**: 13 refusal cases (empty box, zero side, negative
+  / NaN / ±inf beta, negative / NaN / inf s, wrong-length uniform field,
+  uniform out of [0,1] three ways, zero steps) — each leaving the last
+  valid realization untouched.
+- **Throughput report** (eprintln-timed test, debug profile): below.
+
+### Allocation probe
+
+`report_long_range_case` in `benches/percolation_allocations.rs`
+(`LONG_RANGE_PROCESS_ALLOC`, asserted): 1x256 (32,640 pairs), 1x512
+(130,816 pairs), and 16x16 (32,640 pairs) boxes — 0.000 allocations and
+0.000 bytes per realization (uniform draw + per-pair decision + G1
+substrate drive + C0 compression + measurement) over 128 measured
+realizations each.
+
+### Throughput
+
+(eprintln-timed test, debug profile, beta = 0.8, s = 1.0): 1x256 —
+8,229 us/realization = 122 boxes/s (3.97M pair decisions/s); 1x512 —
+32,154 us/realization = 31 boxes/s (4.07M pair decisions/s).
+
+### Limitations
+
+The trajectory vertex-stage activations cost an O(n^2) incidence scan on
+the pair view (the substrate's `activate_vertex` semantics); at the
+current box sizes this is a small constant next to the pair loop, but a
+much larger box would want a specialized substrate entry point. The law
+is the pure power-law member of Biskup's family — Eq. 1.7's
+`1 - exp{-beta(1+r)^-s}` is NOT offered (first-order equivalent at small
+`beta r^{-s}`; the difference is a documentation choice, not an
+approximation inside the code). L2 chemical-distance regimes and L3
+diameter transitions are future stages; no percolation (infinite-cluster)
+claim is made on finite boxes — the observable set is component
+structure only.

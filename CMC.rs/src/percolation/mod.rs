@@ -36,6 +36,7 @@ mod edwards_sokal;
 mod first_passage;
 mod first_passage_observables;
 mod law;
+mod long_range;
 mod network;
 mod observable;
 mod probability;
@@ -79,6 +80,10 @@ pub use first_passage_observables::{
     PassageSampler,
 };
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
+pub use long_range::{
+    long_range_run, LongRangeBox, LongRangeError, LongRangeOutcome, LongRangePercolationMC,
+    LongRangeWorkspace,
+};
 pub use network::{
     csr_from_edge_list, AttackGrid, AttackPolicy, DegreeAttackMC, DegreeScratch,
     DuplicateEdgePolicy, EdgeListSpec, NetworkError, NetworkInputError, NetworkPercolationError,

@@ -106,6 +106,8 @@ mod kcore_percolation;
 mod lattice_exact;
 #[path = "physics/long_convergence.rs"]
 mod long_convergence;
+#[path = "physics/long_range.rs"]
+mod long_range;
 #[path = "physics/molecule_equilibrium.rs"]
 mod molecule_equilibrium;
 #[path = "physics/molecule_external_field.rs"]

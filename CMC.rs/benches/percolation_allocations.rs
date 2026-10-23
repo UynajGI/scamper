@@ -1685,6 +1685,7 @@ fn main() {
     report_continuum_winding_case();
     report_first_passage_probe();
     report_first_passage_observables_probe();
+    report_long_range_case();
     let benchmark_cases = cases();
     for case in &benchmark_cases {
         report_law_case(case);
@@ -1780,4 +1781,58 @@ fn report_residual_attack_case(case: &Case) {
         info.count_max,
         info.bytes_max,
     );
+}
+
+/// L1 probe: one complete long-range realization (uniform draw over the
+/// pair universe + per-pair power-law decision + G1 substrate drive + C0
+/// compression + measurement) must be allocation-free in steady state —
+/// the uniforms, history, occupied list, and substrate are reserved at
+/// construction. Asserts zero (same policy as the G1/G2/G3 probes).
+fn report_long_range_case() {
+    use cmc_rs::{LongRangeBox, LongRangePercolationMC};
+    for (label, sides) in [
+        ("chain-1d-256", &[256_usize][..]),
+        ("chain-1d-512", &[512_usize][..]),
+        ("square-2d-16x16", &[16_usize, 16_usize][..]),
+    ] {
+        let box_ = LongRangeBox::new(sides).expect("probe box");
+        let mut process = LongRangePercolationMC::new(box_, 0.8, 1.0, 64).expect("probe process");
+        let mut context = Context::new_with_binsize(
+            Xoshiro256PlusPlus::seed_from_u64(0x004C_6741),
+            0,
+            ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+        );
+        for _ in 0..ADAPTER_WARMUP {
+            process.sweep(&mut context);
+            process.measure(&mut context);
+        }
+        let info = measure(|| {
+            for _ in 0..ALLOCATION_SAMPLES {
+                process.sweep(&mut context);
+                process.measure(&mut context);
+                std::hint::black_box(&mut context);
+            }
+        });
+        assert_eq!(
+            info.count_total, 0,
+            "long-range realizations allocated {} times in steady state",
+            info.count_total
+        );
+        // LongRangeLargestSize array + three scalars.
+        let observable_count = 4;
+        eprintln!(
+            "LONG_RANGE_PROCESS_ALLOC topology={} sides={sides:?} V={} pairs={} \
+             observables={} measured_realizations={} allocations_per_realization={:.3} \
+             allocated_bytes_per_realization={:.3} peak_live_allocations={} peak_live_bytes={}",
+            label,
+            process.geometry().vertices(),
+            process.geometry().pairs(),
+            observable_count,
+            ALLOCATION_SAMPLES,
+            info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.count_max,
+            info.bytes_max,
+        );
+    }
 }
