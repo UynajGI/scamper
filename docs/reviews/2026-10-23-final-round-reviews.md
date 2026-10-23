@@ -21,10 +21,14 @@
 
 ## Notes (G2)
 
-- The 13.1σ claim vs my 64.5σ recomputation from the same reported
-  numbers: both reject "no growth" overwhelmingly; the agent likely
-  propagated peak-location uncertainty rather than naive per-run stderr.
-  The gate passes under either model. Recorded for transparency.
+- [CORRECTED by the independent reviewer, 2026-10-23] The integrator's
+  64.5σ recomputation above was ITSELF in error: the reported ±16.3/±116.0
+  are already standard errors of the mean, and dividing them by sqrt(n) a
+  second time produced the inflated z. The test's own error model (SEM of
+  per-realization peaks, combined in quadrature: sqrt(16.3² + 116.0²) =
+  117.1) gives exactly the reported 13.1σ, which is correct — not a
+  peak-location model and not conservative. The stage was right; this
+  note is retained with the correction so the mistake does not propagate.
 
 ## Follow-ups applied in this commit
 
@@ -76,3 +80,31 @@ The two over-broad statements (test comment + PERCOLATION.md) qualified to
 the correct bound "extent ≥ L − 2 r_max, safe at this gate's radii
 (c ≈ 0.006 L)" — no functional change; the bracket gate is unaffected.
 P2 promoted to Validated.
+
+
+---
+
+## ADDENDUM 3 — independent review of G2 and R2 (post-reset)
+
+| Stage | Independent verdict | Reviewer's independent confirmation |
+|---|---|---|
+| G2 Achlioptas | **PASS WITH NOTES** | Hand trace of a 5-edge product m=2 process verified exactly (incl. self-loop scoring and both tie policies); an independent from-scratch contract driver written from the module-doc spec matched production BITWISE on 60/60 configurations (toy/chain/square x product/sum x both sampling x both ties x seeds, incl. steps/null_steps); the m=1 Fisher-Yates reduction mechanism confirmed by code read AND by the reviewer's own permutation implementation; the anchor's error model resolved (13.1σ is the correct SEM-combination — and the reviewer caught that the INTEGRATOR's earlier 64.5σ recomputation was itself an error, corrected in the note above); null-step public semantics audited (occupied winners compete, record added:false, leave the summary bit-identical) |
+| R2 random-cluster q=1 | **PASS** | Exhaustive FK identity on the reviewer's OWN 4-edge triangle+pendant fixture (chosen so k(A) is not a function of |A|): all 16 weights both ways ≤ 2.8e-17, Z(p,1)=1 to 2.2e-16, heterogeneous Z=1 also by independent binomial convolution — with the reviewer's own first-pass hand slip caught by their machine cross-check, demonstrating the reference discipline; delegation audit confirmed (zero rng calls; heterogeneous path routes through the same sample_mask kernel); q≠1 rejection cites the roadmap; the 16-seed z-gate's even/odd disjoint RNG streams verified and re-run green at 48 seeds; the BondSample exposure path round-tripped on 20 draws |
+
+### Follow-ups applied
+
+- The integrator's mistaken 64.5σ note corrected in place (retained with
+  the correction so the record stays honest).
+- Notes recorded without action: N2 (a hypothetical release-mode
+  pool-invariant violation would loop rather than error — unreachable
+  under the verified draw contract, debug_assert-guarded); N3 (the anchor
+  covers process-RNG variance on one fixed graph per N, not graph-to-graph
+  resampling — immaterial at 13σ vs a 3σ gate); N4 (AchlioptasGrid::At
+  positive runs unexercised); N5 (the two "independent paths" share the
+  F2 draw kernel BY DESIGN — that is the delegation claim; independence
+  lives in the analysis plumbing and RNG streams).
+
+**G2 and R2 promoted to Validated. With this addendum every v1 roadmap
+stage is delivered and independently reviewed (or Experimental-by-design
+having passed review, or explicitly Not implemented): the v1 percolation
+platform is complete.**
