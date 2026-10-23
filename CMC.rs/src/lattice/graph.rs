@@ -1385,10 +1385,12 @@ mod tests {
         let (lattice, embedding) = build_kagome_with_embedding(2, 2).expect("kagome torus");
         assert_eq!(lattice.n_edges(), 24);
         // Cells (x, y) host A/B/C at s + 3(x + 2y): 0-2, 3-5, 6-8, 9-11.
-        // Within-cell bonds never wrap; the only wrapping bonds are the
-        // x = 0 left steps of A and B (six sites -> but only the pairs whose
-        // smaller endpoint emits them) and the y = 0 down steps of A.
-        // Derived on paper from the documented neighbour lists.
+        // Within-cell bonds never wrap; the wrapping bonds are exactly six:
+        // the x = 0 left steps of A (A(0,y)-B(1,y)) and of B
+        // (B(0,y)-C(1,y)) for y in 0..2, plus the y = 0 down steps of A
+        // (A(0,0)-C(0,1), A(1,0)-C(1,1)) — matching the 2*ly + lx closed
+        // form at lx = ly = 2. Hand-derived on paper from the documented
+        // neighbour lists before any assertion.
         let expected: [(usize, usize, [i32; 2]); 24] = [
             (0, 0, [0, 0]),   // A(0,0)-B(0,0)
             (1, 0, [0, 0]),   // A(0,0)-C(0,0)

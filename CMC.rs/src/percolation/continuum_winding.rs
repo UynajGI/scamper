@@ -72,14 +72,18 @@
 //! the one actual physical connection and `n` records exactly how many
 //! boundaries that connection crosses; the winding subgroup computed from
 //! these vectors is then the winding of the cluster as a geometric object in
-//! the torus (in particular, winding around axis `c` implies a
-//! BFS-unwrapped extent `>= L_c` on that axis — the direction pinned by the
-//! T4 validation gates). Once `r_max >= L_c / 2` on some axis, two images of
+//! the torus. Winding is logically independent of per-representative
+//! unwrapped extent, in both directions: a compact cycle can wind with all
+//! representatives inside an extent strictly below `L_c` (particles at
+//! `1, 3, 5, 7, 9` in a box of `10` wind with extent `8`), and a tree
+//! tendril can extent-span without any cycle — crossing is not wrapping,
+//! and wrapping does not imply crossing either. Once `r_max >= L_c / 2` on some axis, two images of
 //! the same pair can both lie within cutoff: the pair graph records ONE edge
 //! whose two geometric crossings are distinct, and the minimum-image tie
 //! silently selects one. Integer winding remains a well-defined cochain, but
 //! it no longer describes a definite physical connection — sub-ulp coordinate
-//! noise at the tie can flip verdicts — so the regime is rejected outright.
+//! noise at the tie can flip verdicts (the independent review demonstrated
+//! `0 -> -1 -> +1` under `1e-15` noise at the tie) — so the regime is rejected outright.
 //! (P1's cell list accepts `r_max = L_min / 2` exactly, the minimum-image tie;
 //! this contract is deliberately stricter and documents why.)
 //!
@@ -87,7 +91,7 @@
 //!
 //! Construction is a per-realization transient like the [`PairGraph`]
 //! itself: two owned vectors (`[usize; 2]` endpoints plus one `i32` per axis
-//! per edge — `24 + 4 D` bytes per edge) reserved once and dropped with the
+//! per edge — `16 + 4 D` bytes per edge) reserved once and dropped with the
 //! analysis. Lookups are O(1) table reads; steady-state winding analysis on a
 //! fixed pair graph and embedding allocates nothing (the T4 probe in
 //! `benches/percolation_allocations.rs`).

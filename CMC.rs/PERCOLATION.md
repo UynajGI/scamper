@@ -39,7 +39,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Invasion percolation | Integrator-verified | G3 `invasion_run` + `InvasionWorkspace` + `InvasionPercolationMC` (`percolation/process/invasion.rs`, roadmap §13): frozen per-realization threshold fields (site: one `f64` per vertex; bond: one per physical edge, NaN/infinity typed rejections) grown from explicit duplicate-free seeds through a **binary-heap minimum-threshold frontier** (`total_cmp` then lowest dense ID — the explicit tie policy; `-0.0 < +0.0` are distinct keys, not a tie). Explicit stop policies (`GrowAll`, `FirstSpanning{from,to}` checked after planting and after every accepted step, `Steps(n)` with zero legal) and an optional Wilkinson-Willemsen trapping rule (explicit exit set; invadable iff connected to an un-invaded exit through the defending phase; trapped sites retire permanently — monotone, DFS with early exit). Site mode queues a site once carrying its first invader's edge; bond mode queues boundary edges and discards stale pops; parallel edges are independent entries, self-loops never enter. Every accepted operation drives the G1 substrate with invasion times as the step coordinate. The invasion graph is a forest (one tree per seed) by construction — verified. With UNIQUE thresholds, non-trapping bond invasion accepts exactly the Prim growth order (single seed: Prim from the seed, terminal tree = the unique MST of the seed's component; `k` seeds: Prim from a virtual super-root joined to the seeds; `Steps(n)` = the exact prefix) — verified against independent test-side Prim AND Kruskal. Records ONE C0 vector sample (`InvasionThresholdOrder`, fixed shape, final-threshold padding) + scalars (`InvasionAcceptedTotal`/`InvasionInvadedVertices`/`InvasionMaxAcceptedThreshold`). Gates: hand-worked multigraph (parallel + self-loop) sequence/frontier/tree in both modes against a full-frontier-scan reference; 576+-realization heap-vs-scan parity (continuous and tie-dense thresholds, multiseed, all stop policies, both components graphs, trapping); forest invariants via independent union-find replay; BFS-verified spanning steps; bitwise adapter draw contract; asserted 0-allocation probe on five topologies; Criterion steps/s below. Wilkinson-Willemsen (1983) predates arXiv (Tarjan precedent — no archivable PDF; the trapping rule and the Prim/MST identity are verified against independent in-repo implementations, anchored by the archived Sweeney & Middleton PRE 88, 032129 (2013) statement of the correspondence). See the G3 section. |
 | Particle candidate-pair adapter (P1) | Validated | `percolation/continuum.rs` borrows the particle module's coordinates, `OrthorhombicCell` minimum-image geometry, and `CellList` stencil search (nothing duplicated, nothing modified there) to enumerate candidate pairs `(i, j)`, `i < j`, boundary-inclusive `|displacement| <= cutoff`, in a documented cell-major canonical order. The output is an ephemeral owned `PairGraph` (vertex count + pair `Vec`, `UndirectedGraphView` with derived incidences) that exists for one F3 analysis pass and is dropped — the deliberate transient counterpart to the roadmap's ban on a persistent per-snapshot CSR. Zero-copy `candidate_pairs_from_configuration` and validated prepared-list `candidate_pairs_with_cell_list` entry points serve equilibrium-simulation callers. Gates: exhaustive all-pairs parity in 2D/3D, exact-boundary inclusivity, periodic-image pairs, determinism, lattice and generic translation invariance, F3-vs-independent-BFS summary and label parity, typed rejections, throughput record; Criterion data below. |
 | Continuum/Boolean percolation | Validated | `percolation/boolean.rs` (P2): overlapping disks/spheres in orthorhombic periodic cells with `Radii` (monodisperse or finite-polydisperse, typed validation) and a `PointProcess` sampler (binomial fixed count; Poisson with a documented chunked-Knuth draw contract) plus the equilibrium **measurement** path — caller-supplied coordinates analyzed by `overlap_pairs`/`overlap_pairs_from_configuration` or a frozen `BooleanPercolationMC::measuring` adapter that never resamples. Overlap pairs compose P1 at the maximum contact cutoff `2 r_max` with an in-place per-pair filter `d^2 <= (r_i + r_j)^2` (inclusive, squared, no epsilon; monodisperse radii pass through unfiltered — bit-identical criterion), feeding the F3 analyzer through an ephemeral `OverlapGraph`. Gates: all-pairs overlap parity 2D/3D polydisperse, translation/permutation/periodic-representative invariance, zero-radius and fully-overlapping limits, Poisson count mean/variance CI gates (direct and through the adapter), frozen-configuration zero-variance remeasurement, bitwise per-seed determinism, and the 2D disk covered-fraction threshold bracket `eta_c = 1.12808737(6)` (Mertens & Moore 2012, archived) crossing 1/2 inside `(eta_c/1.15, 1.15 eta_c)` — a statistical bracket, never exact. |
-| Continuum winding analysis (T4) | Experimental | `percolation/continuum_winding.rs`: `ContinuumEmbedding::from_pairs` derives one integer `Z^D` cell vector per P1 `PairGraph` / P2 `OverlapGraph` physical edge — `n_c = round((d_c - r_c)/L_c)` from the particle module's minimum-image displacement `d` and the raw in-buffer delta `r`, under a documented tolerance (dimensionless `1e-9`; fractional, non-finite, or `> 2e9` ratios are the typed `NonIntegerCellOffset`, edge and axis named — never silent rounding or saturation) — and implements `PeriodicEmbedding`, so the unchanged W2 `analyze_winding` accepts continuum configurations; reverse queries negate exactly through the lazy `DirectedDisplacement`. Load-bearing typed precondition, the offending axis named: `cutoff < L_c/2` strictly on every axis (below it the minimum image is the unique physical connection and `n` is its boundary count; beyond it a pair can be within cutoff through two images, making integer winding well-defined but physically ambiguous). Gates: exact negation + independent recomputation over 515,079 edges / 1,222,184 axis entries in 2D and 3D (0 disagreements); hand-derived 1D/2D tables incl. a boundary-exact ring winding once and wrap-edge trees that do not wind; the P2 physics gate — 80 Poisson Boolean-model configurations (20 seeds x spanning/sub x {2D eta 1.5/0.7, 3D eta 0.6/0.15}), 259,168 particles, 50,484 components, winding rank and wraps agreeing EXACTLY component-by-component with a test-local BFS unfolding (zero disagreements, zero spanning-without-wrapping events; spanning wraps 20/20, sub wraps 0/20); precondition boundary (P1 accepts the `L/2` tie, T4 rejects it, just-under works end to end); public-construction tolerance rejections; 0-allocation steady-state probe with per-realization construction accounting. Discharges the v1 W-track note (see the T4 section). |
+| Continuum winding analysis (T4) | Validated | `percolation/continuum_winding.rs`: `ContinuumEmbedding::from_pairs` derives one integer `Z^D` cell vector per P1 `PairGraph` / P2 `OverlapGraph` physical edge — `n_c = round((d_c - r_c)/L_c)` from the particle module's minimum-image displacement `d` and the raw in-buffer delta `r`, under a documented tolerance (dimensionless `1e-9`; fractional, non-finite, or `> 2e9` ratios are the typed `NonIntegerCellOffset`, edge and axis named — never silent rounding or saturation) — and implements `PeriodicEmbedding`, so the unchanged W2 `analyze_winding` accepts continuum configurations; reverse queries negate exactly through the lazy `DirectedDisplacement`. Load-bearing typed precondition, the offending axis named: `cutoff < L_c/2` strictly on every axis (below it the minimum image is the unique physical connection and `n` is its boundary count; beyond it a pair can be within cutoff through two images, making integer winding well-defined but physically ambiguous — the review demonstrated verdict flips under 1e-15 noise at the tie). Gates: exact negation + independent recomputation over 515,079 edges / 1,222,184 axis entries in 2D and 3D (0 disagreements); hand-derived 1D/2D tables; the P2 physics gate — 80 Poisson Boolean-model configurations (20 seeds x spanning/sub x {2D eta 1.5/0.7, 3D eta 0.6/0.15}), 259,068 particles, 50,484 components, winding rank and wraps agreeing EXACTLY component-by-component with a test-local BFS unfolding; winding and extent-spanning census-counted as independent in both directions (0 events at these densities); precondition boundary (P1 accepts the `L/2` tie, T4 rejects it, just-under works end to end); public-construction tolerance rejections; 0-allocation steady-state probe with per-realization construction accounting. Independent review passed 2026-10-23 (a third arithmetic convention over 1,156 fresh configs / 1.8M edges: zero disagreements; gauge invariance over 241k checks; 47 fresh-seed configs / 10,586 components: zero verdict disagreements; the review's Major — an overstrong extent-implication assertion in a gate — corrected as follow-up by census-counting both independence directions and pinning the hand-ring counterexample in a regression test). Discharges the v1 W-track note; see `docs/reviews/`. |
 | External bond-configuration analysis (R1) | Validated | Decoupled analysis contract of the R track: an `ExternalBondConfiguration` borrows a caller-supplied bond mask (one `bool` per physical edge) and feeds the shared F3 `analyze`/`analyze_with_labels` and W2 `analyze_winding` as both activity sources (all vertices active, edges per mask), with the `analyze_bonds` one-call convenience and an owned `BondSample` open-edge record for future sampler exposure. Analysis is deliberately sampler-agnostic; gates and bench below. |
 | FK/random-cluster q=1 | Validated | R2 validates the exact q = 1 collapse (the FK measure `p^{\|A\|} (1-p)^{E-\|A\|} q^{k(A)}/Z` becomes the product Bernoulli measure because `1^{k(A)} = 1` and `Z(p,1) = 1`) configuration by configuration: exhaustive 2^E enumeration on a 5-edge chain-ish graph and a 6-edge self-loop/parallel multigraph (uniform and heterogeneous p, per-configuration weight equality, Z = 1, observable-mean identity), bitwise delegation identity to `BondBernoulli`, and multi-seed z-scores of `RandomClusterMC` (Bernoulli delegate → R1 external-mask analysis) versus the `StaticPercolationMC` bond path at matched p on a square lattice. `q ≠ 1` is a typed roadmap-citing rejection. Delivered in-branch on `feat/cmc-percolation`. |
 | FK q=2 Edwards-Sokal/Swendsen-Wang | Validated | R3 `EdwardsSokalMC` (roadmap §15): an owned-`CsrLattice` Swendsen-Wang/Edwards-Sokal adapter whose `sweep()` performs the conditional FK bond draw `p_e = 1 - exp(-2 beta J_e)` on same-spin edges (ferromagnetic `J_e > 0` typed-rejected otherwise) and exposes that ACTUAL draw as an R1 `BondSample`; the following `measure()` runs the shared F3 analyzer on that same sample through the F4 `ObservablePlan`. Frozen-spins mode reduces the sweep to the pure conditional draw for exact enumeration. Gates: frozen-spin bond-subset enumeration vs the product Bernoulli law with bitwise RNG-contract replay; partition-function agreement `Z_Ising = exp(beta sum J_e) * sum_s sum_A p^{|A|}(1-p)^{E-|A|}` (exhaustive over spins and bond subsets, incl. a parallel+self-loop multigraph, own union-find `k(A)`, independent brute-force Ising reference); `P_FK(i ~ j) = <s_i s_j>` on a proper ES chain (z-score gates, both sides vs exact and vs each other); worm-representation (even/two-defect subgraph, tanh weights) cross-checks at the observable level only — the worm's even subgraph is not FK and is never relabeled. Edwards-Sokal (1988)/Swendsen-Wang (1987) pre-date arXiv (no archivable PDFs; Tarjan precedent) — the exact double-sum identities are the anchors. Delivered in-branch. |
@@ -48,7 +48,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Boundary crossing between explicit vertex sets | Validated | F3 `BoundaryQuery` is validated for owned/borrowed generic undirected views, supports several queries in one component pass, and defines empty/overlap/dedup semantics; F4 migrates the full crossing test assets. The square left/right-column and chain endpoint defaults live in the `StaticPercolationMC` parameter schema; all other parameter-built topologies require explicit site sets. |
 | Periodic embedding capability (W1) | Experimental | Directed-incidence integer cell displacements exist as explicit recorded data: the `PeriodicEmbedding` capability (`topology/embedding.rs`) and the `LatticeEmbedding` table serve the pbc chain/square/hypercubic builders and the triangular builder, which record each displacement at bond emission and never infer it from `BondType` or vertex IDs. Independently reviewed; see the W1 section below. |
 | Periodic wrapping/winding analysis (W2) | Validated | Winding-capable component analysis over the W1 displacements: `analyze_winding` (percolation/analyzer/winding.rs) runs one physical-edge pass of union-find with checked `i32` `Z^D` potentials, reports per-component winding rank and an echelon generating set (never only a Boolean), and feeds `Wrapping`/`WindingRank` plan observables on `StaticPercolationMC::with_embedding`; open/non-embedded wrapping requests are typed errors. Engineering gates green and independent review passed 2026-10-22 (two from-scratch brute forces reproduced 187/256 and 186684/262144; potential and echelon algebra hand-verified; exact anchors now asserted); see the W2 section below and `docs/reviews/`. Crossing is not wrapping. |
-| Honeycomb/kagome periodic embeddings (T3) | Experimental | Roadmap v2 §2 T3 W-track tail: `build_honeycomb_with_embedding` / `build_kagome_with_embedding` (pbc only) restructure both builders to a shared bond-emission pass (`honeycomb_bonds`/`kagome_bonds`) so plain and embedding variants share one construction and cannot drift — plain-builder parity pinned bit-identical across 10 sizes per family (edges, adjacency arrays, bond kinds) — recording each bond's fundamental-cell displacement at emission, including the honeycomb `Lx = 2` doubled horizontal pairs carrying `(0,0)` and `(-1,0)` and the kagome `Lx = 2` cross-family wraps that endpoint data alone cannot attribute. Gates: hand-derived 2x2 tables (6 + 24 bonds, asserted in both directions), 4x2/3x2/4x3 spot checks, independent neighbour-family re-derivation over size sweeps (exact negation, `is_zero`, per-pair displacement multiplicity), bond-content closed forms (doubled pairs, wrapping-bond counts), and W2 winding integration — fully occupied tori rank 2 with determinant-±1 generators matching the lift-BFS reference; wrapping-bond cuts never wind. Site numbering documented as a public contract in the builder rustdoc. Experimental pending review; see the T3 section. |
+| Honeycomb/kagome periodic embeddings (T3) | Validated | Roadmap v2 §2 T3 W-track tail: `build_honeycomb_with_embedding` / `build_kagome_with_embedding` (pbc only) restructure both builders to a shared bond-emission pass (`honeycomb_bonds`/`kagome_bonds`) so plain and embedding variants share one construction and cannot drift — plain-builder parity pinned bit-identical in-repo across sizes per family, and pre-refactor parity verified externally by the review — recording each bond's fundamental-cell displacement at emission, including the honeycomb `Lx = 2` doubled horizontal pairs carrying `(0,0)` and `(-1,0)`; kagome never has parallel bonds (algebraic: a repeated neighbour needs `lx|1` or `ly|1`; its `Lx=2` obstruction was a covering-image attribution ambiguity, not multiplicity). Gates: hand-derived 2x2 tables (6 + 24 bonds, asserted in both directions), spot checks at 4x2/3x2/4x3, independent neighbour-family re-derivation over size sweeps (exact negation, `is_zero`, per-pair displacement multiplicity), bond-content closed forms (doubled pairs, wrapping-bond counts), and W2 winding integration — fully occupied tori rank 2 with determinant-±1 generators matching the lift-BFS reference; wrapping-bond cuts never wind. Site numbering documented as a public contract in the builder rustdoc. The delivered gate set subsumes the roadmap's W1-style plaquette/cocycle gates (the winding-rank and generator checks over the hand tables are strictly stronger). Independent review passed 2026-10-23 (hand tables re-derived from the rustdoc alone before reading the tests; an own generator exact at all 25 swept sizes; the pre-T3 builders run verbatim via a path dependency — bit-identical; adversarial winding configurations); see the T3 section and `docs/reviews/`. |
 | Newman-Ziff parameter scans (Z1) | Validated | `scan_site`/`scan_bond` activate a uniformly random permutation and record the full occupation-count curve (component count, largest size, raw second moment, active edges); `reweight` turns one curve into scalar estimates at uniform `p` via binomial weights, and `ScanEstimator` reports scan-to-scan uncertainty. Zero allocations after `prepare`. Uniform site/bond only; no heterogeneous/mixed/deletion scans, no scheduler adapter. Independent review passed 2026-10-22 (reweight recurrence verified against the archived paper to 9.5e-14 at n=10^6; from-scratch flood-fill parity; speedup reproduced); see the Z1 section below and `docs/reviews/`. |
 | Heterogeneous Newman-Ziff reweighting (T2) | Validated | `reweight_heterogeneous` reweights one unchanged Z1 scan curve to a per-element probability field (Poisson-binomial weights, all log-space with a running-max rescale): the uniform-permutation prefix identity makes `sum_n C(N,n) w(A_n) f_n` an unbiased per-scan estimator and `sum_n C(N,n) w(A_n)` a unit-mass diagnostic with expectation exactly 1; uniform fields delegate to the Z1 binomial `reweight`. Gates: exact 2^N enumeration vs a test-local BFS reference (site/bond, U(0.3,0.8)-spread and bimodal 0.2/0.9 fields, max z 1.35 at R=3200); unit-mass and finiteness at N=10^4; L=64/128 graded-ramp cross-validation vs direct `SiteBernoulli` (max z 1.21); 1e-9 uniform reduction (pinned to <1e-8 at N=10^4); typed boundary/length rejections; asserted 0-allocation probe on five topologies. The estimator is heavy-tailed outside a documented envelope (`sqrt((N/4) Var(logit p))` of order one or below) and the 8-field Criterion speedup is below 1 on dense topologies (0.38-0.80x; 1.40x on sparse-er site) — spread fields belong to the N1 direct path; see the T2 section under Z1. Independent review passed 2026-10-22 (identity brute-forced over all permutations in exact rational arithmetic; the normalized-ratio bias independently confirmed and v1 shown structurally immune; a fully independent sampler/union-find cross-check at L=64 gave z=-0.18/-0.26; saturation documentation corrected as follow-up); see `docs/reviews/`. |
 
@@ -958,10 +958,16 @@ consumes it is Experimental, awaiting review (see the W2 section below).
   (see the T3 section below): both builders were restructured from
   symmetric-adjacency assembly to direct bond emission with recorded
   displacements, removing the W1 deferral reason — `from_adjacency` dropped
-  the per-bond construction direction while deduplicating, and on small
-  cells (honeycomb `Lx = 2` double horizontal bonds; kagome `Lx = 2`
-  collapsed covering bonds) distinct displacements mapped to
-  indistinguishable physical bonds, so recovering them would be guessing.
+  the per-bond construction direction while deduplicating. The small-cell
+  obstruction is now understood precisely (T3 review, algebraically
+  verified): honeycomb `Lx = 2` genuinely DOUBLES horizontal bonds (two
+  distinct physical bonds per pair with displacements `(0,0)` and
+  `(-1,0)`), while kagome never has parallel bonds — its `Lx = 2`
+  obstruction was a covering-image ATTRIBUTION ambiguity (the wrap pair
+  `{A(0,y), B(1,y)}` and the non-wrap pair `{A(1,y), B(0,y)}` are distinct
+  endpoint pairs whose displacements cannot be told apart from endpoints
+  alone), not bond multiplicity. Post-hoc displacement inference from
+  either would be guessing; emission-time recording removes the need.
 
 ### Validation gates
 
@@ -3203,7 +3209,7 @@ result in a [`PeriodicEmbedding`] table:
 - `ContinuumEmbedding` implements `PeriodicEmbedding` (`edge_count` for
   pre-pairing), so the unchanged `analyze_winding(graph, embedding, ...)`
   runs on continuum configurations. Construction is a per-realization
-  transient like the `PairGraph` itself (`24 + 4D` bytes per edge);
+  transient like the `PairGraph` itself (`16 + 4D` bytes per edge);
   steady-state analysis on a fixed graph and embedding allocates nothing.
 
 ### Validation gates
@@ -3227,17 +3233,21 @@ rejections, gauge re-wrapping) plus `tests/physics/continuum_winding.rs`:
 - **P2 independent reference (the physics gate):** 80 Poisson Boolean-model
   configurations — 20 seeds x {spanning, sub-spanning} x {2D (L=40, mean
   N=2500, eta 1.5 / 0.7 against eta_c ~ 1.128), 3D (L=15, mean N=4000,
-  eta 0.6 / 0.15 against eta_c ~ 0.34)} — 259,168 particles, 50,484
+  eta 0.6 / 0.15 against eta_c ~ 0.34)} — 259,068 particles, 50,484
   components. Reference: a test-local BFS unfolding (float minimum-image
   accumulation along BFS tree edges, a division-form image, no production
   cell call) with the winding subgroup generated by the cycle sums of the
   non-tree edges; extent-based spanning (max-min unwrapped coordinate
   `>= L - tol`) recorded alongside. Every component: production rank ==
-  reference rank and wraps == (reference rank > 0), zero disagreements;
-  every wound axis has unwrapped extent `>= L` (the exact direction of the
-  extent criterion); zero spanning-without-wrapping events (the tree
-  -tendril exception the one-way implication allows — counted, expected
-  and observed zero at these densities). Spanning regimes wrap in 20/20
+  reference rank and wraps == (reference rank > 0), zero disagreements.
+  Winding and extent-spanning are logically independent in BOTH directions
+  (review follow-up 2026-10-23: the boundary-exact hand ring winds with
+  extent 8 < 10, and the review found 3/20 fresh small-box configurations
+  with winding-but-not-spanning components — the previous claim that
+  winding implies extent `>= L` held only by luck of these far-from-
+  threshold densities): both events are census-counted, never asserted;
+  at these densities spanning-without-wrapping and
+  wrapping-without-spanning both read 0. Spanning regimes wrap in 20/20
   configurations each; sub-spanning regimes wrap 0/20.
 - **Precondition boundary:** a cutoff of exactly `L_x/2` on a `[4, 10]`
   box is rejected naming axis 0 although P1's cell list accepts the tie;
@@ -3264,10 +3274,29 @@ direct-call, like F3's exact-analysis path); `analyze_winding`'s adapter
 magnitude gate is not applied to continuum embeddings because each vector
 is bounded by construction to `|n| <= 2e9` with small physical values.
 
+Independent review passed 2026-10-23
+(`docs/reviews/2026-10-23-t4-continuum-winding-review.md`): a third
+arithmetic convention (own `rem_euclid` minimum image) over 1,156 fresh
+randomized configurations / 1,831,913 edges with zero disagreements and
+proven tie-unreachability at legal cutoffs; negation exact to `+-2e9`
+with clean rejection beyond; gauge invariance over 90 re-wrap trials /
+241,230 checks; 47 fresh-seed configurations / 10,586 components with
+zero verdict disagreements against an independent BFS unfolding; the
+`L/2` double-image ambiguity demonstrated (`0 -> -1 -> +1` under `1e-15`
+noise). The review's one Major — the gate asserting `winding implies
+extent >= L`, false in general (the hand ring itself: rank 1, extent
+8.5; 3/20 fresh small-box configs) — was corrected as a follow-up: both
+independence directions are now census-counted, the hand ring is pinned
+as the compact-wrapping counterexample in a regression test, the census
+total was corrected to 259,068, and the per-edge footprint to
+`16 + 4D` bytes. Production verdicts were correct everywhere; the
+finding was an overstrong gate claim, not an engine defect.
+
 ## T3 honeycomb and kagome periodic embeddings
 
-Status: **Experimental** (roadmap v2 §2 T3, the W1 builder-coverage tail;
-engineering gates below all green; independent review pending).
+Status: **Validated** (roadmap v2 §2 T3, the W1 builder-coverage tail;
+independent review passed 2026-10-23 — see the end of this section and
+`docs/reviews/2026-10-23-t3-embeddings-review.md`).
 
 ### The construction decision
 
@@ -3282,8 +3311,11 @@ consume the same emission, so plain and with-embedding construction cannot
 drift by design. Each physical bond is emitted exactly once, from its
 smaller-index endpoint, visiting pairs in ascending `(source, target)`
 order — the order `from_adjacency`'s BTreeMap produced historically, so the
-refactored plain builders stayed bit-identical (pinned by test), and that
-order doubles as the displacement-table row order.
+refactored plain builders stayed bit-identical: the in-repo test pins
+plain-vs-embedding equality, and the historical pre-refactor parity was
+verified out-of-repo by the independent review (which ran the verbatim
+pre-T3 builders from `2a9165f` against production — bit-identical at all
+25 swept sizes). That same order doubles as the displacement-table row order.
 
 ### Documented coordinate schemes (public contracts)
 
@@ -3372,6 +3404,25 @@ only for the periodic builders (`Lx, Ly >= 2`, honeycomb `Lx` even), the
 plain builders' domains. No new benchmarks: the emission replaces the
 adjacency assembly with the same asymptotic work, and the W1 storage note
 (`16 + 4D` bytes per edge, O(1) lookups) covers the tables.
+
+Independent review passed 2026-10-23
+(`docs/reviews/2026-10-23-t3-embeddings-review.md`, verdict PASS, zero
+blockers/majors): the hand tables were re-derived from the rustdoc alone
+BEFORE reading the tests (all rows matched); an independently written
+generator (lifted coordinates, own division-form wrap arithmetic) matched
+production exactly per bond, in emission order, at all 25 swept sizes;
+the pre-T3 builders were run verbatim via a path dependency and produced
+bit-identical lattices; the no-parallel-bonds claim was proven
+algebraically (a repeated neighbour requires `lx|1` or `ly|1`) and the
+covering-image reinterpretation of the W1 kagome note endorsed; winding
+was re-verified with an own lift-BFS on ten fresh sizes plus adversarial
+cut configurations (single-axis rank 1, wrapping-cut rank 0). Doc-only
+follow-ups applied: the W1 bullet now states the honeycomb-doubles /
+kagome-attribution-ambiguity distinction correctly, the parity wording
+distinguishes the in-repo pin from the externally verified historical
+parity, the subsumption of the roadmap's W1-style plaquette/cocycle gates
+is stated, and one garbled kagome test comment was rewritten against the
+asserted table.
 
 ## G1 incremental component process
 

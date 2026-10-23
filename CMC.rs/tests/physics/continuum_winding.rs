@@ -31,15 +31,18 @@
 //! float/tree computation must equal the production integer-potential
 //! verdicts component by component; this is exact (no statistical window).
 //!
-//! The unwrapped **extent** (max - min of an unwrapped axis) enters as the
-//! one-way implication it actually is: a component winding around axis `c`
-//! necessarily has extent `>= L_c - tol` (asserted). The converse is NOT a
-//! theorem — a tree-shaped tendril can chain around the torus and reach
-//! extent `>= L_c` without any cycle (spanning-without-wrapping, "crossing
-//! is not wrapping"). Such events are real physics, not analyzer
-//! disagreements, so they are counted in the census rather than asserted
-//! absent; the densities here sit far enough from threshold that the count
-//! is expected to be zero.
+//! The unwrapped **extent** (max - min of an unwrapped axis) is logically
+//! INDEPENDENT of winding, in both directions, and the census counts both
+//! events instead of asserting either away. A tree-shaped tendril can
+//! chain around the torus and reach extent `>= L_c` with no cycle at all
+//! (spanning-without-wrapping, "crossing is not wrapping"); conversely a
+//! compact cycle can wind with every representative inside an extent
+//! strictly below `L_c` — the boundary-exact hand ring below is exactly
+//! that (cycle sum `L`, unwrapped extent `8.5` in a box of `10`; review
+//! 2026-10-23 demonstrated the same violation on 3/20 fresh small-box
+//! Boolean configurations). Both are real physics, not analyzer
+//! disagreements; at the committed far-from-threshold densities both
+//! counters happen to read zero, but they are reported, never asserted.
 
 use std::collections::VecDeque;
 
@@ -249,6 +252,17 @@ fn hand_ring_crosses_exactly_once_and_open_wrap_chains_do_not_wind() {
         "single x wrap: generator is the +x unit vector"
     );
 
+    // Independence pin (review follow-up 2026-10-23): this ring WINDS
+    // (cycle sum 10 = L) while every unwrapped representative lies in
+    // [1, 9] — extent 8 < L. Winding does not imply extent-spanning; the
+    // converse is pinned by the wrap pair below (extent-spanning edge,
+    // rank 0). Neither direction is assertable in the census.
+    let unwrapped_extent = 9.0 - 1.0;
+    assert!(
+        info.rank() > 0 && unwrapped_extent < 10.0,
+        "the hand ring must stay the compact-wrapping counterexample"
+    );
+
     // Two particles at wrap distance in an 8-box (image -1.0): connected
     // through a crossing edge, but a tree has no cycle and cannot wind.
     let pair_cell = OrthorhombicCell::new([8.0, 8.0]).unwrap();
@@ -326,6 +340,10 @@ struct Census {
     /// Components with extent >= L on some axis but winding rank 0 (the
     /// tree-tendril event: spanning is not wrapping).
     spanning_without_wrapping: usize,
+    /// Components winding around some axis whose unwrapped representatives
+    /// all sit within an extent below L (the compact-cycle event: winding
+    /// does not imply extent-spanning either).
+    wrapping_without_spanning: usize,
 }
 
 /// Independent reference: BFS-unfold every component of a pair list,
@@ -563,19 +581,19 @@ fn run_boolean_configuration<const D: usize>(
             census.wrapping_components += 1;
             wrapping_this_configuration += 1;
         }
-        // Winding around an axis implies unwrapped extent >= L on that axis
-        // (the exact direction of the extent criterion).
+        // Winding and per-representative extent are logically independent
+        // (see the module doc): a compact cycle can wind with extent below
+        // L, so the event is counted, never asserted away.
+        let mut wraps_axis_without_extent = false;
         for generator in result.generators(index) {
             for (axis, &component) in generator.iter().enumerate() {
-                if component != 0 {
-                    assert!(
-                        reference_component.spans[axis],
-                        "seed {seed:#x} component {} winds axis {axis} but the unwrapped \
-                         extent is below L",
-                        reference_component.seed
-                    );
+                if component != 0 && !reference_component.spans[axis] {
+                    wraps_axis_without_extent = true;
                 }
             }
+        }
+        if wraps_axis_without_extent {
+            census.wrapping_without_spanning += 1;
         }
         if reference_component.spans.iter().any(|&spans| spans) {
             census.spanning_by_extent += 1;
@@ -622,13 +640,15 @@ fn boolean_census<const D: usize>(
             "CONTINUUM_WINDING_CENSUS regime={regime} dim={dimension} eta={eta} seeds={SEEDS} \
              mean_particles={mean_particles} configurations={count} particles={particles} \
              components={components} wrapping={wrapping} spanning_by_extent={spanning} \
-             spanning_without_wrapping={snakes} disagreements=0",
+             spanning_without_wrapping={snakes} wrapping_without_spanning={compacts} \
+             disagreements=0",
             count = census.configurations,
             particles = census.particles_total,
             components = census.components,
             wrapping = census.wrapping_components,
             spanning = census.spanning_by_extent,
             snakes = census.spanning_without_wrapping,
+            compacts = census.wrapping_without_spanning,
         );
     }
     // Density sanity: at the supercritical filling fraction every sampled
