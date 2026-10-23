@@ -33,6 +33,7 @@ mod continuum;
 mod continuum_winding;
 mod directed;
 mod edwards_sokal;
+mod first_passage;
 mod law;
 mod network;
 mod observable;
@@ -68,6 +69,10 @@ pub use directed::{
     WeakComponentSummary, WeakComponentWorkspace,
 };
 pub use edwards_sokal::{AllActiveVertices, EdwardsSokalError, EdwardsSokalMC};
+pub use first_passage::{
+    first_passage_run, FirstPassageError, FirstPassageOutcome, FirstPassageWorkspace,
+    GeodesicTracking, NO_PREDECESSOR,
+};
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
 pub use network::{
     csr_from_edge_list, AttackGrid, AttackPolicy, DegreeAttackMC, DegreeScratch,

@@ -132,7 +132,7 @@ pub use percolation::WorkspaceWindingCapacityAudit;
 pub use percolation::{
     analyze, analyze_bonds, analyze_strong_components, analyze_weak_components, analyze_winding,
     analyze_with_labels, candidate_pairs_from_configuration, candidate_pairs_with_cell_list,
-    csr_from_edge_list, invasion_run, kcore_decompose, overlap_pairs,
+    csr_from_edge_list, first_passage_run, invasion_run, kcore_decompose, overlap_pairs,
     overlap_pairs_from_configuration, reachable, reweight, reweight_heterogeneous, scan_bond,
     scan_site, AchlioptasError, AchlioptasGrid, AchlioptasProcessMC, AchlioptasRule,
     AchlioptasStepRecord, AllActiveVertices, AnalysisError, AnalysisResult, AttackGrid,
@@ -143,7 +143,8 @@ pub use percolation::{
     ComponentSummary, ComponentWinding, ComponentWorkspace, ContinuumEmbedding, ContinuumError,
     ContinuumWindingError, CoreThresholds, DegreeAttackMC, DegreeScratch, DirectedAnalysisError,
     DpProcessError, DpSeedPolicy, DuplicateEdgePolicy, EdgeActivity, EdgeListSpec, EdgeUniverse,
-    EdwardsSokalError, EdwardsSokalMC, ExternalBondConfiguration, HetReweightResult,
+    EdwardsSokalError, EdwardsSokalMC, ExternalBondConfiguration, FirstPassageError,
+    FirstPassageOutcome, FirstPassageWorkspace, GeodesicTracking, HetReweightResult,
     HetReweightWorkspace, IncrementalError, IncrementalSummary, IncrementalUnionWorkspace,
     InvasionError, InvasionMode, InvasionOutcome, InvasionPercolationMC, InvasionStop,
     InvasionStopReason, InvasionTrapping, InvasionWorkspace, KCoreError, KCoreMC, KCoreSummary,
@@ -156,7 +157,7 @@ pub use percolation::{
     StaticConfiguration, StaticLaw, StaticObservable, StaticPercolationError, StaticPercolationMC,
     StrongComponentResult, StrongComponentSummary, StrongComponentWorkspace, TiePolicy,
     VertexActivity, WeakComponentResult, WeakComponentSummary, WeakComponentWorkspace,
-    WindingError, WindingResult, WindingSummary, WindingWorkspace,
+    WindingError, WindingResult, WindingSummary, WindingWorkspace, NO_PREDECESSOR,
 };
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]

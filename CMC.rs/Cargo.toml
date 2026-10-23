@@ -120,6 +120,10 @@ name = "invasion_percolation"
 harness = false
 
 [[bench]]
+name = "first_passage"
+harness = false
+
+[[bench]]
 name = "incremental_process"
 harness = false
 

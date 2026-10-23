@@ -6,12 +6,12 @@ use allocation_counter::measure;
 use carlo_rs::{Context, MonteCarlo};
 use cmc_rs::{
     analyze, analyze_winding, overlap_pairs, reweight, reweight_heterogeneous, scan_bond,
-    scan_site, AttackGrid, AttackPolicy, Bond, BondBernoulli, BooleanPercolationMC,
-    BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace, DegreeAttackMC, GraphView,
-    HetReweightWorkspace, MixedBernoulli, NewmanZiffWorkspace, ObservablePlan, OrthorhombicCell,
-    PeriodicEmbedding, PointProcess, Probability, ProbabilityField, Radii, RandomFailureMC,
-    ReweightWorkspace, ScanObservable, SiteBernoulli, StaticConfiguration, StaticLaw,
-    StaticObservable, StaticPercolationMC, UndirectedGraphView, WindingWorkspace,
+    scan_site, AttackGrid, AttackPolicy, Bond, BondBernoulli, BondType, BooleanPercolationMC,
+    BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace, CsrLattice, DegreeAttackMC,
+    GraphView, HetReweightWorkspace, MixedBernoulli, NewmanZiffWorkspace, ObservablePlan,
+    OrthorhombicCell, PeriodicEmbedding, PointProcess, Probability, ProbabilityField, Radii,
+    RandomFailureMC, ReweightWorkspace, ScanObservable, SiteBernoulli, StaticConfiguration,
+    StaticLaw, StaticObservable, StaticPercolationMC, UndirectedGraphView, WindingWorkspace,
 };
 use percolation_support::{
     cases, sample_and_analyze, torus_cases, Case, ReferenceConfiguration, ReferenceMode, TorusCase,
@@ -1529,11 +1529,102 @@ fn report_continuum_winding_case() {
     );
 }
 
+/// F1 probe: one single-source weighted shortest-path pass must perform
+/// ZERO allocations and allocate ZERO bytes in steady state after one
+/// `FirstPassageWorkspace::prepare` — asserted, not merely printed (same
+/// policy as the kcore/bootstrap/incremental probes). Topologies: the five
+/// shared cases plus one dense ER multigraph with E >> V. The measured
+/// window alternates geodesic tracking on/off and cycles through sources so
+/// both reset paths are covered.
+fn report_first_passage_probe() {
+    use cmc_rs::{first_passage_run, FirstPassageWorkspace, GeodesicTracking, UndirectedGraphView};
+    let mut cases = cases();
+    // Dense ER multigraph, E = 64 V: the E >> V heap-budget regime.
+    let n = 1024_usize;
+    let m = 65_536_usize;
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x0046_31A1);
+    let mut bonds = Vec::with_capacity(m);
+    while bonds.len() < m {
+        let u = rng.random_range(0..n);
+        let v = rng.random_range(0..n);
+        if u != v {
+            bonds.push(Bond::new(u, v, BondType::Generic, rng.random::<f64>()));
+        }
+    }
+    cases.push(Case {
+        name: "dense-er-multigraph",
+        lattice: CsrLattice::from_edges(n, bonds),
+        from: vec![0],
+        to: vec![n - 1],
+    });
+
+    for case in &cases {
+        let vertices = case.lattice.vertex_count();
+        let edges = case.lattice.edge_count();
+        // The documented weight mapping: one f64 per physical edge, read
+        // from `Bond.weight` in dense edge order.
+        let weights: Vec<f64> = case.lattice.edges.iter().map(|bond| bond.weight).collect();
+        let mut prepared = None;
+        let prepare_info = measure(|| {
+            let mut workspace = FirstPassageWorkspace::new();
+            workspace
+                .prepare(vertices, edges)
+                .expect("probe workspace reservation");
+            prepared = Some(workspace);
+        });
+        let mut workspace = prepared.expect("probe must retain prepared workspace");
+        let run_once = |sample: usize, workspace: &mut FirstPassageWorkspace| {
+            let source = sample % vertices;
+            let tracking = if sample.is_multiple_of(2) {
+                GeodesicTracking::Predecessors
+            } else {
+                GeodesicTracking::Off
+            };
+            std::hint::black_box(
+                first_passage_run(&case.lattice, &weights, source, tracking, workspace)
+                    .expect("probe pass"),
+            )
+        };
+        for sample in 0..8 {
+            run_once(sample, &mut workspace);
+        }
+        let info = measure(|| {
+            for sample in 0..ALLOCATION_SAMPLES {
+                run_once(sample, &mut workspace);
+            }
+        });
+        assert_eq!(
+            info.count_total, 0,
+            "first-passage passes allocated {} times in steady state",
+            info.count_total
+        );
+        assert_eq!(
+            info.bytes_total, 0,
+            "first-passage passes allocated {} bytes in steady state",
+            info.bytes_total
+        );
+        eprintln!(
+            "FIRST_PASSAGE_ALLOC topology={} V={} E={} measured_passes={} \
+             workspace_prepare_allocations={} workspace_prepare_allocator_bytes={} \
+             allocations_per_pass={:.3} allocated_bytes_per_pass={:.3}",
+            case.name,
+            vertices,
+            edges,
+            ALLOCATION_SAMPLES,
+            prepare_info.count_total,
+            prepare_info.bytes_total,
+            info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        );
+    }
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
     report_boolean_case();
     report_continuum_winding_case();
+    report_first_passage_probe();
     let benchmark_cases = cases();
     for case in &benchmark_cases {
         report_law_case(case);
