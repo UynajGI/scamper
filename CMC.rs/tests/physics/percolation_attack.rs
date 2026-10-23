@@ -25,12 +25,25 @@
 //!    intentional-attack breakdown fraction `f_c` from their Eqs. (2), (7),
 //!    (9) with the `kappa = 2` criterion, used as a statistical bracket
 //!    (never an exact threshold claim). PDFs archived under `docs/ref/`.
+//! 6. **T1 adaptive residual-degree attack** (roadmap v2 §2 T1): the
+//!    heap-based online order equals a naive full-rescan reference at
+//!    every step (both tie policies, several seeds, self-loops and
+//!    parallel edges included); per-step invariants (monotone survivor
+//!    count, removed vertex at the scanned residual maximum, edges leaving
+//!    exactly with their endpoints); tie reproduction; and the Holme, Kim,
+//!    Yoon, Han, PRE 65, 056109 (2002) Fig. 7(e) statistical bracket —
+//!    adaptive RD below initial-degree ID through the late stage on BA
+//!    networks, both crossing to zero far earlier than random failure.
+//!    Statistical brackets only, never exact claims.
 
 use std::collections::HashMap;
 
 use carlo_rs::{ArrayEstimate, Context, MonteCarlo, Results};
-use cmc_rs::{build_chain, AttackGrid, AttackPolicy, DegreeAttackMC, GraphView, NetworkProfile};
-use rand::SeedableRng;
+use cmc_rs::{
+    build_chain, AttackGrid, AttackPolicy, Bond, BondType, CsrLattice, DegreeAttackMC, GraphView,
+    NetworkProfile, UndirectedGraphView,
+};
+use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::common::{config_model_power_law, erdos_renyi_graph, star_lattice, zscore_seed_count};
@@ -508,4 +521,472 @@ fn intentional_attack_bracket_matches_cohen_prediction() {
         s_above.mean < 0.05,
         "giant must have collapsed at 1.5x the predicted breakdown fraction"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// T1 gates (roadmap v2 §2 T1): adaptive residual-degree attack.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Naive full-rescan reference for the adaptive order (reference only,
+/// never production): at EVERY step recompute every active vertex's
+/// residual degree straight from the adjacency list (a self-loop is two
+/// active incidences at its own vertex, the CSR convention) and remove the
+/// maximum under (residual desc, tie key asc, dense id asc).
+/// `O(V * (V + E))` — the cost the lazy heap avoids.
+fn naive_residual_order(adjacency: &[Vec<usize>], tie_keys: &[u64]) -> Vec<usize> {
+    let vertices = adjacency.len();
+    let mut removed = vec![false; vertices];
+    let mut order = Vec::with_capacity(vertices);
+    for _ in 0..vertices {
+        let mut victim = usize::MAX;
+        let mut best_degree = 0_u32;
+        let mut best_key = u64::MAX;
+        for vertex in 0..vertices {
+            if removed[vertex] {
+                continue;
+            }
+            let residual = adjacency[vertex]
+                .iter()
+                .filter(|&&neighbor| !removed[neighbor])
+                .count() as u32;
+            let better = residual > best_degree
+                || (residual == best_degree && tie_keys[vertex] < best_key)
+                || (residual == best_degree && tie_keys[vertex] == best_key && vertex < victim);
+            if better {
+                best_degree = residual;
+                best_key = tie_keys[vertex];
+                victim = vertex;
+            }
+        }
+        assert_ne!(victim, usize::MAX, "an active vertex always remains");
+        removed[victim] = true;
+        order.push(victim);
+    }
+    order
+}
+
+/// Replay the seeded-key draw contract: one `u64` per vertex, ascending
+/// dense order, drawn at trajectory start before the first removal.
+fn replay_seeded_tie_keys(seed: u64, vertices: usize) -> Vec<u64> {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+    (0..vertices).map(|_| rng.random::<u64>()).collect()
+}
+
+/// Small multigraph with parallel edges and a self-loop: pins the CSR
+/// incidence conventions (self-loop = two incidences at its own vertex).
+fn multigraph_fixture() -> CsrLattice {
+    let edges = vec![
+        Bond::new(0, 1, BondType::Generic, 1.0),
+        Bond::new(0, 1, BondType::Generic, 1.0),
+        Bond::new(1, 2, BondType::Generic, 1.0),
+        Bond::new(2, 3, BondType::Generic, 1.0),
+        Bond::new(2, 3, BondType::Generic, 1.0),
+        Bond::new(3, 4, BondType::Generic, 1.0),
+        Bond::new(4, 5, BondType::Generic, 1.0),
+        Bond::new(5, 6, BondType::Generic, 1.0),
+        Bond::new(6, 0, BondType::Generic, 1.0),
+        Bond::new(2, 2, BondType::Generic, 1.0),
+    ];
+    CsrLattice::from_edges(7, edges)
+}
+
+#[test]
+fn adaptive_residual_order_matches_naive_rescan_every_step() {
+    let graphs: Vec<(&str, CsrLattice)> = vec![
+        ("chain10", build_chain(10, false)),
+        ("cycle12", build_chain(12, true)),
+        ("star6", star_lattice(6)),
+        ("completeish10", erdos_renyi_graph(10, 40, 0x4a12)),
+        ("multigraph7", multigraph_fixture()),
+        (
+            "er-multigraph24a",
+            config_model_power_law(24, 2.5, 2, 12, 0x6272_4101),
+        ),
+        (
+            "er-multigraph24b",
+            config_model_power_law(24, 2.8, 2, 9, 0x6272_4102),
+        ),
+    ];
+    let mut parity_cases = 0_usize;
+    for (name, lattice) in &graphs {
+        let adjacency = adjacency_of(lattice);
+        let vertices = lattice.vertex_count();
+        let total_edges = lattice.edge_count();
+        for policy in [
+            AttackPolicy::ResidualDegreeDescendingStableId,
+            AttackPolicy::ResidualDegreeDescendingSeededKey,
+        ] {
+            // The stable policy is seed-independent; the seeded policy is
+            // verified over several seeds so both tie paths are exercised.
+            let seeds = match policy {
+                AttackPolicy::ResidualDegreeDescendingStableId => vec![0x5eab_0001],
+                _ => vec![0x5eed_0001, 0x5eed_0002, 0x5eed_0003],
+            };
+            for seed in seeds {
+                let mut mc =
+                    DegreeAttackMC::new(lattice.clone(), policy, AttackGrid::Full).unwrap();
+                let mut ctx =
+                    Context::new_with_binsize(Xoshiro256PlusPlus::seed_from_u64(seed), 0, 1);
+                mc.sweep(&mut ctx);
+                let order = mc.removal_order().to_vec();
+
+                // Gate 1: exact full-order equality with the naive rescan
+                // under the same tie keys (identity keys for the stable
+                // policy; the replayed draw contract for the seeded one).
+                let keys = match policy {
+                    AttackPolicy::ResidualDegreeDescendingStableId => {
+                        (0..vertices as u64).collect::<Vec<_>>()
+                    }
+                    _ => replay_seeded_tie_keys(seed, vertices),
+                };
+                let reference = naive_residual_order(&adjacency, &keys);
+                assert_eq!(
+                    order, reference,
+                    "{name}/{policy:?}/seed {seed:#x}: heap order diverged from naive rescan"
+                );
+                parity_cases += 1;
+
+                // Gate 2: per-step invariants, recomputed independently
+                // from the adjacency, plus full BFS curve parity (the N3
+                // gate applied to the adaptive order).
+                mc.walk_trajectory(&order);
+                let mut removed = vec![false; vertices];
+                for (step, &victim) in order.iter().enumerate() {
+                    let residuals: Vec<u32> = (0..vertices)
+                        .map(|v| {
+                            if removed[v] {
+                                0
+                            } else {
+                                adjacency[v].iter().filter(|&&u| !removed[u]).count() as u32
+                            }
+                        })
+                        .collect();
+                    let active: Vec<usize> = (0..vertices).filter(|&v| !removed[v]).collect();
+                    let max_residual = active.iter().map(|&v| residuals[v]).max().unwrap();
+                    assert_eq!(
+                        residuals[victim], max_residual,
+                        "{name}: removed vertex must sit at the scanned residual maximum"
+                    );
+                    assert_eq!(active.len(), vertices - step, "one removal per step");
+                    let active_edges: usize = (0..vertices)
+                        .filter(|&v| !removed[v])
+                        .map(|v| adjacency[v].iter().filter(|&&u| !removed[u]).count())
+                        .sum::<usize>()
+                        / 2;
+                    let expected_edges: usize = lattice
+                        .edges
+                        .iter()
+                        .filter(|edge| !removed[edge.source] && !removed[edge.target])
+                        .count();
+                    assert_eq!(
+                        active_edges, expected_edges,
+                        "{name}: edges must leave exactly when an endpoint goes"
+                    );
+                    assert_eq!(
+                        total_edges - active_edges,
+                        lattice
+                            .edges
+                            .iter()
+                            .filter(|edge| removed[edge.source] || removed[edge.target])
+                            .count(),
+                        "{name}: removed edges must be exactly the incident ones"
+                    );
+                    removed[victim] = true;
+                    let (reference_giant, reference_chi) = bfs_giant_fraction(&adjacency, &removed);
+                    let checkpoint = step + 1;
+                    assert_eq!(
+                        mc.curve_values()[checkpoint],
+                        reference_giant,
+                        "{name}/{policy:?}: step {checkpoint} giant fraction diverged"
+                    );
+                    match (reference_chi, mc.susceptibility_defined_at(checkpoint)) {
+                        (Some(expected), true) => {
+                            assert_eq!(mc.susceptibility_values()[checkpoint], expected)
+                        }
+                        (None, false) => {}
+                        other => panic!(
+                            "{name}: susceptibility definedness diverged at step {checkpoint}: {other:?}"
+                        ),
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("[T1 parity] exact full-order equality on {parity_cases} cases");
+}
+
+#[test]
+fn adaptive_tie_policies_reproduce_and_differ_only_through_keys() {
+    let lattice = config_model_power_law(64, 2.5, 2, 20, 0x7e51_4d47);
+    let vertices = lattice.vertex_count();
+    let adjacency = adjacency_of(&lattice);
+    let order_of = |policy: AttackPolicy, seed: u64| {
+        let mut mc =
+            DegreeAttackMC::new(lattice.clone(), policy, AttackGrid::Every { step: 64 }).unwrap();
+        let mut ctx = Context::new_with_binsize(Xoshiro256PlusPlus::seed_from_u64(seed), 0, 1);
+        mc.sweep(&mut ctx);
+        mc.removal_order().to_vec()
+    };
+
+    // Stable: seed-independent and equal to the naive rescan with identity
+    // keys (no RNG consumption on this path).
+    let stable_a = order_of(AttackPolicy::ResidualDegreeDescendingStableId, 1);
+    let stable_b = order_of(AttackPolicy::ResidualDegreeDescendingStableId, 99);
+    assert_eq!(stable_a, stable_b, "stable order must not depend on seed");
+    assert_eq!(
+        stable_a,
+        naive_residual_order(&adjacency, &(0..vertices as u64).collect::<Vec<_>>())
+    );
+
+    // Seeded key: bitwise reproduction for a fixed seed; a different seed
+    // differs only through the drawn keys — each order still equals the
+    // naive rescan under its own replayed keys.
+    let seeded_a1 = order_of(AttackPolicy::ResidualDegreeDescendingSeededKey, 7);
+    let seeded_a2 = order_of(AttackPolicy::ResidualDegreeDescendingSeededKey, 7);
+    assert_eq!(seeded_a1, seeded_a2, "seeded order must reproduce bitwise");
+    let seeded_c = order_of(AttackPolicy::ResidualDegreeDescendingSeededKey, 1234);
+    assert_eq!(
+        seeded_a1,
+        naive_residual_order(&adjacency, &replay_seeded_tie_keys(7, vertices))
+    );
+    assert_eq!(
+        seeded_c,
+        naive_residual_order(&adjacency, &replay_seeded_tie_keys(1234, vertices))
+    );
+    assert_ne!(
+        seeded_a1, seeded_c,
+        "different keys must be able to change the adaptive order"
+    );
+
+    // Same seed => identical order AND identical curves (two complete
+    // sweep+measure cycles on a full-grid adapter).
+    let curves_of = |seed: u64| {
+        let mut mc = DegreeAttackMC::new(
+            lattice.clone(),
+            AttackPolicy::ResidualDegreeDescendingSeededKey,
+            AttackGrid::Every { step: 4 },
+        )
+        .unwrap();
+        let arrays = run_attack(&mut mc, seed, 2);
+        arrays["RobustnessCurve"]
+            .elements()
+            .iter()
+            .map(|element| element.mean)
+            .collect::<Vec<f64>>()
+    };
+    assert_eq!(curves_of(0x11e5), curves_of(0x11e5));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// T1 gate 5: Holme et al. (2002) Fig. 7(e) statistical bracket.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Barabási–Albert preferential-attachment graph, the Holme et al. (2002)
+/// Sec. IV E construction: initial complete graph on `m0` vertices; every
+/// later vertex attaches to `m` DISTINCT existing vertices, each target
+/// drawn from an endpoint pool proportional to current degree (a duplicate
+/// draw is redrawn). Graph builder only — deliberately test-local, not
+/// platform physics code. E = m0(m0-1)/2 + m(N - m0).
+fn barabasi_albert_graph(n: usize, m0: usize, m: usize, seed: u64) -> CsrLattice {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+    let mut edges = Vec::with_capacity(m0 * (m0 - 1) / 2 + m * (n - m0));
+    let mut pool: Vec<usize> = Vec::with_capacity(2 * edges.capacity());
+    for left in 0..m0 {
+        for right in (left + 1)..m0 {
+            edges.push(Bond::new(left, right, BondType::Generic, 1.0));
+            pool.push(left);
+            pool.push(right);
+        }
+    }
+    for vertex in m0..n {
+        let mut targets = Vec::with_capacity(m);
+        while targets.len() < m.min(vertex) {
+            let target = pool[rng.random_range(0..pool.len())];
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+        for target in targets {
+            edges.push(Bond::new(vertex, target, BondType::Generic, 1.0));
+            pool.push(vertex);
+            pool.push(target);
+        }
+    }
+    CsrLattice::from_edges(n, edges)
+}
+
+/// Wilson score 95% interval treating the per-graph largest-component
+/// fractions as bounded draws in `[0, 1]` (`n` = graph count).
+///
+/// NOTE (documented deviation): the binomial variance `p(1-p)/n` this
+/// interval assumes is ~two orders of magnitude LARGER than the empirical
+/// across-graph variance of `S(f)` (component fractions concentrate), so
+/// the Wilson interval is reported as the conservative companion; the
+/// bracket is gated on the empirical standard-error interval
+/// `mean ± z * s / sqrt(n)`, which respects the actual sampling variance.
+fn wilson_95(mean: f64, n: usize) -> (f64, f64) {
+    let z = 1.959963984540054_f64;
+    let n = n as f64;
+    let center = (mean + z * z / (2.0 * n)) / (1.0 + z * z / n);
+    let half = z * (mean * (1.0 - mean) / n + z * z / (4.0 * n * n)).sqrt() / (1.0 + z * z / n);
+    (center - half, center + half)
+}
+
+/// Empirical normal 95% interval `mean ± z * s / sqrt(n)` (sample standard
+/// deviation across graphs).
+fn se_95(samples: &[f64]) -> (f64, f64, f64, f64) {
+    let n = samples.len() as f64;
+    let mean = samples.iter().sum::<f64>() / n;
+    let variance = if samples.len() > 1 {
+        samples.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0)
+    } else {
+        0.0
+    };
+    let half = 1.959_963_984_540_054 * variance.sqrt() / n.sqrt();
+    (mean, mean - half, mean + half, half)
+}
+
+#[test]
+fn adaptive_attack_bracket_matches_holme_fig7e() {
+    // Holme et al. Fig. 7(e): BA m0 = 5, m = 3 (<k> ~ 6), here at the
+    // roadmap-mandated N = 10^4 (E ~ 3*10^4). R graph/seed pairs; one
+    // trajectory per process per graph: RD = adaptive recalculated degree
+    // (T1), ID = initial degree (the N3 order, seeded shuffle ties),
+    // random failure = uniformly shuffled removal order.
+    const N: usize = 10_000;
+    const GRAPHS: usize = 24;
+    let fractions = [
+        0.005_f64, 0.01, 0.02, 0.03, 0.05, 0.075, 0.10, 0.125, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40,
+    ];
+    let mut removals: Vec<usize> = fractions.iter().map(|f| (f * N as f64) as usize).collect();
+    removals.sort_unstable();
+    removals.dedup();
+
+    let mut rd = vec![Vec::with_capacity(GRAPHS); removals.len()];
+    let mut id = vec![Vec::with_capacity(GRAPHS); removals.len()];
+    let mut failure = vec![Vec::with_capacity(GRAPHS); removals.len()];
+    for graph in 0..GRAPHS as u64 {
+        let lattice = barabasi_albert_graph(N, 5, 3, 0x0BA1_0000 + graph);
+        assert_eq!(lattice.edge_count(), 10 + 3 * (N - 5));
+
+        let trajectory = |policy: AttackPolicy, seed: u64| -> Vec<f64> {
+            let mut mc = DegreeAttackMC::new(
+                lattice.clone(),
+                policy,
+                AttackGrid::At {
+                    removals: removals.clone(),
+                },
+            )
+            .unwrap();
+            let arrays = run_attack(&mut mc, seed, 1);
+            arrays["RobustnessCurve"]
+                .elements()
+                .iter()
+                .map(|element| element.mean)
+                .collect()
+        };
+        let rd_curve = trajectory(
+            AttackPolicy::ResidualDegreeDescendingSeededKey,
+            0x5D00_0000 + graph,
+        );
+        let id_curve = trajectory(
+            AttackPolicy::DegreeDescendingSeededShuffle,
+            0x1D00_0000 + graph,
+        );
+        // Random failure: a uniformly shuffled removal order walked by the
+        // same trajectory machinery.
+        let mut order: Vec<usize> = (0..N).collect();
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xFA11_0000 + graph);
+        for index in (1..order.len()).rev() {
+            let swap_with = rng.random_range(0..=index);
+            order.swap(index, swap_with);
+        }
+        let mut failure_mc = DegreeAttackMC::new(
+            lattice,
+            AttackPolicy::DegreeDescendingStableId,
+            AttackGrid::At {
+                removals: removals.clone(),
+            },
+        )
+        .unwrap();
+        failure_mc.walk_trajectory(&order);
+        let failure_curve: Vec<f64> = failure_mc.curve_values().to_vec();
+
+        for (index, curve) in rd_curve.iter().enumerate() {
+            rd[index].push(*curve);
+        }
+        for (index, curve) in id_curve.iter().enumerate() {
+            id[index].push(*curve);
+        }
+        for (index, curve) in failure_curve.iter().enumerate() {
+            failure[index].push(*curve);
+        }
+    }
+
+    eprintln!("[T1 holme] BA N={N} m0=5 m=3, R={GRAPHS} graphs, one trajectory each");
+    let mut separated = Vec::new();
+    for (index, &removal) in removals.iter().enumerate() {
+        let f = removal as f64 / N as f64;
+        let (rd_mean, rd_lo, rd_hi, rd_se) = se_95(&rd[index]);
+        let (id_mean, id_lo, id_hi, id_se) = se_95(&id[index]);
+        let (fail_mean, fail_lo, fail_hi, _) = se_95(&failure[index]);
+        let (w_rd_lo, w_rd_hi) = wilson_95(rd_mean, GRAPHS);
+        let (w_id_lo, w_id_hi) = wilson_95(id_mean, GRAPHS);
+        let ci_disjoint = rd_hi < id_lo;
+        let wilson_disjoint = w_rd_hi < w_id_lo;
+        eprintln!(
+            "[T1 holme] f={f:.3}: RD {rd_mean:.4} [{rd_lo:.4},{rd_hi:.4}] ±{rd_se:.4} \
+             ID {id_mean:.4} [{id_lo:.4},{id_hi:.4}] ±{id_se:.4} \
+             fail {fail_mean:.4} [{fail_lo:.4},{fail_hi:.4}] \
+             wilson RD [{w_rd_lo:.4},{w_rd_hi:.4}] ID [{w_id_lo:.4},{w_id_hi:.4}] \
+             disjoint={ci_disjoint} wilson_disjoint={wilson_disjoint}"
+        );
+        if ci_disjoint {
+            separated.push(f);
+        }
+    }
+    assert!(
+        !separated.is_empty(),
+        "RD must separate below ID with disjoint 95% CIs somewhere in the late stage"
+    );
+    // The separated f-range must be contiguous and reach into the late
+    // stage (the last separated f at or beyond the grid median).
+    let median = fractions[fractions.len() / 2];
+    assert!(
+        *separated.last().unwrap() >= median,
+        "the disjoint RD<ID range must extend into the late stage: {separated:?}"
+    );
+
+    // Early stage (Holme: differences among procedures "not significant"):
+    // at the first grid point the CIs must overlap (RD ~ ID before the
+    // recalculated information diverges from the initial one).
+    let (rd_mean0, rd_lo0, rd_hi0, _) = se_95(&rd[0]);
+    let (id_mean0, id_lo0, id_hi0, _) = se_95(&id[0]);
+    assert!(
+        rd_lo0 <= id_hi0 && id_lo0 <= rd_hi0,
+        "early stage must have overlapping CIs: RD {rd_mean0} [{rd_lo0},{rd_hi0}] \
+         ID {id_mean0} [{id_lo0},{id_hi0}]"
+    );
+
+    // Both attacks reach S ~ 0 far earlier than random failure: the
+    // smallest f where BOTH attack upper CIs sit below 0.05 must leave the
+    // random-failure lower CI above 0.3.
+    for index in 0..removals.len() {
+        let (_, rd_lo_i, rd_hi_i, _) = se_95(&rd[index]);
+        let (_, id_lo_i, id_hi_i, _) = se_95(&id[index]);
+        let (_, fail_lo_i, _, _) = se_95(&failure[index]);
+        if rd_hi_i < 0.05 && id_hi_i < 0.05 {
+            let f = removals[index] as f64 / N as f64;
+            assert!(
+                fail_lo_i > 0.3,
+                "at f={f} both attacks collapsed ({rd_lo_i:.4}, {id_lo_i:.4}) but random \
+                 failure sits at {fail_lo_i:.4} — the ordering must match Holme Fig. 7(e)"
+            );
+            eprintln!(
+                "[T1 holme] both attacks collapsed by f={f:.3} while random failure \
+                 lower CI is {fail_lo_i:.4}"
+            );
+            break;
+        }
+    }
 }

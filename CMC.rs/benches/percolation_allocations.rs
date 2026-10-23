@@ -1365,6 +1365,7 @@ fn main() {
         report_law_case(case);
         report_random_failure_case(case);
         report_degree_attack_case(case);
+        report_residual_attack_case(case);
         report_directed_analysis_case(case);
         report_directed_process_case(case);
         report_kcore_case(case);
@@ -1394,4 +1395,61 @@ fn main() {
         report_winding_case(&torus_case);
         report_winding_adapter_case(&torus_case);
     }
+}
+
+/// T1 probe: `DegreeAttackMC::sweep` + `measure` with the adaptive
+/// residual-degree policy (seeded-key draw + lazy-heap order generation +
+/// checkpoint walk) must be allocation-free in steady state, exactly like
+/// the N3 original-degree probe above (same binsize discipline; the heap,
+/// residual, active, and tie-key buffers are reserved at construction).
+fn report_residual_attack_case(case: &Case) {
+    let step = (case.lattice.vertex_count() / 16).max(1);
+    let mut adapter = DegreeAttackMC::new(
+        case.lattice.clone(),
+        AttackPolicy::ResidualDegreeDescendingSeededKey,
+        AttackGrid::Every { step },
+    )
+    .expect("probe adapter");
+    let checkpoints = adapter.checkpoints().len();
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0x7e51),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        adapter.sweep(&mut context);
+        adapter.measure(&mut context);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+            std::hint::black_box(&mut context);
+        }
+    });
+    // Same observable set as the N3 probe: curve + coordinates +
+    // susceptibility indicator + susceptibility array.
+    let observable_count = 4;
+    // Same policy as the kcore/bootstrap/incremental probes: a silent
+    // regression to nonzero allocations must fail the probe.
+    assert_eq!(
+        info.count_total, 0,
+        "residual-degree attack trajectory allocated {} times in steady state",
+        info.count_total
+    );
+    eprintln!(
+        "RESIDUAL_ATTACK_ALLOC topology={} V={} E={} checkpoints={} observables={} \
+         measured_trajectories={} allocations_per_trajectory={:.3} \
+         allocated_bytes_per_trajectory={:.3} peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        case.lattice.vertex_count(),
+        case.lattice.edge_count(),
+        checkpoints,
+        observable_count,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
 }

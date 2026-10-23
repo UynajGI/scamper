@@ -1,14 +1,24 @@
-//! Owned adapter for degree-ordered targeted attack trajectories (N3).
+//! Owned adapter for degree-ordered targeted attack trajectories (N3) and
+//! adaptive residual-degree attack (T1).
 //!
-//! The first production attack removes vertices in descending **original**
-//! degree (cached in the [`NetworkProfile`]); ties resolve by an explicit
-//! policy — ascending dense vertex ID (deterministic, seed-independent) or a
-//! seeded uniform shuffle of each tie group (one realization per seed).
-//! Adaptive residual-degree attack is a different process and is out of
-//! scope here by roadmap decision.
+//! Two removal processes share the trajectory machinery below:
 //!
-//! One `sweep()` samples one complete removal trajectory (the tie shuffle
-//! is the only randomness); the following `measure()` walks the trajectory,
+//! - Original-degree attack (N3): vertices are removed in descending
+//!   **original** degree (cached in the [`NetworkProfile`]).
+//! - Adaptive residual-degree attack (T1, Holme et al.'s "RD"): the order
+//!   is recomputed from **residual** degree — degree within the
+//!   still-active subgraph — after every removal. The order is generated
+//!   online by a lazy max-heap (see [`AttackPolicy`]); the trajectory walk
+//!   itself is unchanged.
+//!
+//! Ties in either process resolve by an explicit policy — ascending dense
+//! vertex ID (deterministic, seed-independent) or a seeded rule. For the
+//! original-degree policies the seeded rule is a uniform shuffle of each
+//! equal-degree run (computable offline); for the adaptive policies it is a
+//! fixed per-vertex random tie-break key (see [`AttackPolicy`]).
+//!
+//! One `sweep()` samples one complete removal trajectory (the tie rule is
+//! the only randomness); the following `measure()` walks the trajectory,
 //! analyzing the survivor configuration at every checkpoint, and records
 //! the robustness curve as ONE C0 element-preserving array sample — one
 //! trajectory is one realization, never a collection of independent scalar
@@ -34,8 +44,13 @@
 //! are validated against Callaway et al., PRL 85, 5468 (2000) Eq. (14)
 //! (`S = F0(1) - F0(u)`, `u = 1 - F1(1) + F1(u)` for degree-dependent
 //! occupation `q_k`), and the attack threshold against Cohen et al., PRL
-//! 86, 3682 (2001); both PDFs are archived in `docs/ref/`. Evidence in
-//! `CMC.rs/PERCOLATION.md` (N3).
+//! 86, 3682 (2001); both PDFs are archived in `docs/ref/`. The adaptive
+//! residual-degree ordering is anchored (statistical bracket only) to
+//! Holme, Kim, Yoon, Han, PRE 65, 056109 (2002) — their Fig. 7(e)
+//! BA-model configuration. Evidence in `CMC.rs/PERCOLATION.md` (N3, T1).
+
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 use carlo_rs::{Context, MonteCarlo};
 use rand::{Rng, RngExt};
@@ -55,6 +70,41 @@ pub enum AttackPolicy {
     /// is uniformly shuffled with the run RNG. One realization per seed;
     /// identical order for identical seeds.
     DegreeDescendingSeededShuffle,
+    /// Descending **residual** degree — recomputed within the still-active
+    /// subgraph after every removal (Holme et al. 2002, "RD"); ties resolve
+    /// by ascending dense vertex ID. Deterministic: identical order for
+    /// every seed, no RNG draws.
+    ///
+    /// # Cost model
+    /// The order is generated online by a lazy max-heap keyed
+    /// `(residual degree desc, tie key asc)` with stale-entry skipping:
+    /// a vertex's residual degree only decreases, so every neighbor
+    /// decrement re-pushes a fresh entry and pops skip entries whose
+    /// degree no longer matches the tracked residual (or whose vertex is
+    /// gone). Total pushes are bounded by `V + E` (each non-loop physical
+    /// edge decrements exactly one endpoint once), so one trajectory costs
+    /// `O((V + E) log V)`. The naive alternative — rescan every active
+    /// vertex and recompute its residual degree from adjacency at every
+    /// step — costs `O(V * (V + E))` and exists only as a test/bench
+    /// reference; it is deliberately not production code.
+    ResidualDegreeDescendingStableId,
+    /// Descending residual degree (same ordering as the stable variant);
+    /// each vertex draws ONE uniform `u64` tie-break key at
+    /// trajectory start and every tie resolves by that fixed key (draw
+    /// contract: keys are drawn in ascending dense vertex order, one
+    /// `u64` each, before the first removal). One realization per seed;
+    /// identical order for identical seeds.
+    ///
+    /// # Tie-policy semantics
+    /// Unlike [`Self::DegreeDescendingSeededShuffle`] — a uniform shuffle
+    /// of each equal-degree run, computable offline because the original
+    /// degree groups are fixed — the adaptive order *emerges online*: the
+    /// equal-residual-degree groups change after every removal, so a
+    /// per-run shuffle is not well-defined. A fixed random tie-break key
+    /// per vertex, drawn once per trajectory, is the standard online
+    /// tie-break: it keeps tie resolution uniform and seed-reproducible
+    /// while the maximum itself is recomputed adaptively.
+    ResidualDegreeDescendingSeededKey,
 }
 
 impl AttackPolicy {
@@ -63,7 +113,45 @@ impl AttackPolicy {
         match self {
             Self::DegreeDescendingStableId => "degree-descending/stable-id",
             Self::DegreeDescendingSeededShuffle => "degree-descending/seeded-shuffle",
+            Self::ResidualDegreeDescendingStableId => "residual-degree-descending/stable-id",
+            Self::ResidualDegreeDescendingSeededKey => "residual-degree-descending/seeded-key",
         }
+    }
+
+    /// Whether the policy recomputes the order from residual degree.
+    const fn is_residual(self) -> bool {
+        matches!(
+            self,
+            Self::ResidualDegreeDescendingStableId | Self::ResidualDegreeDescendingSeededKey
+        )
+    }
+}
+
+/// One lazy max-heap entry of the residual-degree order generation.
+///
+/// `Ord` ranks the entry the standard-library max-heap pops FIRST: higher
+/// residual degree, then the smaller tie key, then the smaller dense ID
+/// (the ID only disambiguates a seeded-key collision; stable policy keys
+/// are the IDs themselves).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ResidualEntry {
+    degree: u32,
+    key: u64,
+    vertex: usize,
+}
+
+impl PartialOrd for ResidualEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ResidualEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.degree
+            .cmp(&other.degree)
+            .then_with(|| other.key.cmp(&self.key))
+            .then_with(|| other.vertex.cmp(&self.vertex))
     }
 }
 
@@ -142,6 +230,15 @@ pub struct DegreeAttackMC {
     all_susceptibility_defined: bool,
     /// Per-checkpoint susceptibility definedness of the last trajectory.
     susceptibility_defined: Vec<bool>,
+    /// Residual-degree workspace (T1 policies; empty for original-degree
+    /// policies): residual degree per dense vertex.
+    residual: Vec<u32>,
+    /// Dense active flags of the residual-degree order generation.
+    residual_active: Vec<bool>,
+    /// Per-vertex tie-break keys (`v as u64` for the stable policy).
+    tie_keys: Vec<u64>,
+    /// Lazy max-heap of [`ResidualEntry`] (stale entries skipped on pop).
+    residual_heap: BinaryHeap<ResidualEntry>,
 }
 
 impl DegreeAttackMC {
@@ -180,6 +277,23 @@ impl DegreeAttackMC {
             .iter()
             .map(|&removal| removal as f64 / vertices as f64)
             .collect();
+        // T1 workspace, reserved once so trajectories allocate nothing: the
+        // heap's total pushes are bounded by V + E (V initial entries plus
+        // one re-push per neighbor decrement; each non-loop physical edge
+        // decrements exactly one endpoint once).
+        let (residual, residual_active, tie_keys, residual_heap) = if policy.is_residual() {
+            let mut heap = BinaryHeap::new();
+            heap.try_reserve_exact(vertices + lattice.edge_count())
+                .map_err(|_| NetworkPercolationError::Capacity)?;
+            (
+                vec![0_u32; vertices],
+                vec![true; vertices],
+                (0..vertices as u64).collect(),
+                heap,
+            )
+        } else {
+            Default::default()
+        };
         Ok(Self {
             lattice,
             profile,
@@ -193,6 +307,10 @@ impl DegreeAttackMC {
             coordinates,
             all_susceptibility_defined: true,
             susceptibility_defined: Vec::new(),
+            residual,
+            residual_active,
+            tie_keys,
+            residual_heap,
         })
     }
 
@@ -239,14 +357,18 @@ impl DegreeAttackMC {
 
     /// The removal-order of the last sweep, as dense vertex indices.
     ///
-    /// Deterministic ties (`StableId`) produce the same order for every
-    /// seed; seeded shuffle reproduces for a fixed seed.
+    /// Deterministic ties (`StableId` policies) produce the same order for
+    /// every seed; seeded policies reproduce for a fixed seed.
     pub fn removal_order(&self) -> &[usize] {
         &self.order
     }
 
     /// Build the removal order for one realization (tie randomness only).
     fn sample_order<R: Rng + ?Sized>(&mut self, rng: &mut R) {
+        if self.policy.is_residual() {
+            self.sample_residual_order(rng);
+            return;
+        }
         self.order.clear();
         self.order.extend(0..self.lattice.vertex_count());
         self.order.sort_unstable_by(|&left, &right| {
@@ -272,6 +394,71 @@ impl DegreeAttackMC {
                     self.order.swap(position, pick);
                 }
                 start = end;
+            }
+        }
+    }
+
+    /// Build the adaptive removal order for one realization (T1): the
+    /// maximum is recomputed from residual degree after every removal.
+    ///
+    /// Seeded-key draws come first (one `u64` per vertex, ascending dense
+    /// order — the bitwise draw contract the parity gate replays); the
+    /// stable policy draws nothing.
+    fn sample_residual_order<R: Rng + ?Sized>(&mut self, rng: &mut R) {
+        let vertices = self.lattice.vertex_count();
+        if matches!(self.policy, AttackPolicy::ResidualDegreeDescendingSeededKey) {
+            for key in self.tie_keys.iter_mut() {
+                *key = rng.random::<u64>();
+            }
+        }
+        self.order.clear();
+        self.residual_heap.clear();
+        for vertex in 0..vertices {
+            let degree = self.profile.degree(vertex);
+            self.residual[vertex] = degree;
+            self.residual_active[vertex] = true;
+            self.residual_heap.push(ResidualEntry {
+                degree,
+                key: self.tie_keys[vertex],
+                vertex,
+            });
+        }
+        while self.order.len() < vertices {
+            // Stale-entry skipping is sound because a residual degree only
+            // decreases: after every decrement the heap holds a fresh
+            // `(residual[v], key, v)` entry for every still-active v, so
+            // the heap maximum always dominates every active vertex's
+            // current entry. Stale entries (degree above the tracked
+            // residual, or an already-removed vertex) are over-estimates —
+            // discarding one never loses a candidate, because that
+            // vertex's fresh entry remains in the heap. Hence the first
+            // fresh entry popped IS the argmax under (degree desc, key
+            // asc, id asc): if some active u ranked above it, u's fresh
+            // entry would still be in the heap and would have popped
+            // first.
+            let victim = loop {
+                let entry = self
+                    .residual_heap
+                    .pop()
+                    .expect("every active vertex keeps one fresh heap entry");
+                if self.residual_active[entry.vertex] && entry.degree == self.residual[entry.vertex]
+                {
+                    break entry.vertex;
+                }
+            };
+            self.residual_active[victim] = false;
+            self.order.push(victim);
+            for &neighbor in self.lattice.neighbors(victim) {
+                if self.residual_active[neighbor] {
+                    // A self-loop's two incidences point back at the
+                    // already-deactivated victim and are skipped here.
+                    self.residual[neighbor] -= 1;
+                    self.residual_heap.push(ResidualEntry {
+                        degree: self.residual[neighbor],
+                        key: self.tie_keys[neighbor],
+                        vertex: neighbor,
+                    });
+                }
             }
         }
     }
