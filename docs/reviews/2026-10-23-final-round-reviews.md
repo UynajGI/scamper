@@ -61,3 +61,18 @@ two stages:
    z_gap variance overestimate (conservative direction, both estimators
    separately gated); the InvasionThresholdOrder tail-repeat mean-bias
    caveat (documented; the scalars carry the true lengths).
+
+---
+
+## ADDENDUM 2 — independent review of P2 (post-reset)
+
+| Stage | Independent verdict | Reviewer's independent confirmation |
+|---|---|---|
+| P2 Boolean | **PASS WITH NOTES** | Hand-constructed 4-particle adversarial fixture (direct / periodic-only / bitwise-tie-inclusive / just-outside) reproduced production's pair set exactly; the monodisperse `(r+r)² == (2r)²` identity fuzzed over 5M random radii with zero mismatches; Poisson CI formulas verified against the exact asymptotic μ₄ − σ⁴ = λ+2λ²; seven failure modes scratch-probed; the spanning-criterion seam safety proven (unfolding collapses seam-straddling raw extents) AND its guarantee boundary identified: the true bound is unwrapped extent ≥ L − 2r_max (not ≥ L), so "catches every wrapping cluster" requires c < 0.2L — demonstrated by a legal K₃ counterexample at contact 50 in L=100 that the gate's own parameters (c ≈ 0.006L) never approach; all doc numbers reproduced to the last digit |
+
+### Follow-up applied
+
+The two over-broad statements (test comment + PERCOLATION.md) qualified to
+the correct bound "extent ≥ L − 2 r_max, safe at this gate's radii
+(c ≈ 0.006 L)" — no functional change; the bracket gate is unaffected.
+P2 promoted to Validated.
