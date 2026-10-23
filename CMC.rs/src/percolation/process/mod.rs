@@ -9,18 +9,28 @@
 //! workspace prepared for one graph accepts indices from any other graph
 //! with the same (V, E) counts, positionally reinterpreted.
 
+mod achlioptas;
 mod bootstrap;
 mod incremental;
+mod invasion;
 mod kcore;
 
 use std::collections::TryReserveError;
 
+pub use achlioptas::{
+    AchlioptasError, AchlioptasGrid, AchlioptasProcessMC, AchlioptasRule, AchlioptasStepRecord,
+    CandidateSampling, EdgeUniverse, TiePolicy,
+};
 pub use bootstrap::{
     BootstrapDynamics, BootstrapError, BootstrapOutcome, BootstrapPercolationMC, BootstrapSeeds,
     BootstrapThreshold, BootstrapWorkspace,
 };
 pub use incremental::{
     IncrementalError, IncrementalSummary, IncrementalUnionWorkspace, ProcessTrajectory,
+};
+pub use invasion::{
+    invasion_run, InvasionError, InvasionMode, InvasionOutcome, InvasionPercolationMC,
+    InvasionStop, InvasionStopReason, InvasionTrapping, InvasionWorkspace,
 };
 pub use kcore::{
     kcore_decompose, CoreThresholds, KCoreError, KCoreMC, KCoreSummary, KCoreWorkspace,

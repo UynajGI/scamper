@@ -46,8 +46,12 @@ mod worm_stage5;
 
 // ── Physics — deterministic exact validation (was physics_validation.rs) ─
 
+#[path = "physics/achlioptas_process.rs"]
+mod achlioptas_process;
 #[path = "physics/bkl_gillespie_equilibrium.rs"]
 mod bkl_gillespie_equilibrium;
+#[path = "physics/boolean_percolation.rs"]
+mod boolean_percolation;
 #[path = "physics/bootstrap_percolation.rs"]
 mod bootstrap_percolation;
 #[path = "physics/common.rs"]
@@ -66,6 +70,8 @@ mod directed_analysis;
 mod directed_process;
 #[path = "physics/dynamics_exact.rs"]
 mod dynamics_exact;
+#[path = "physics/edwards_sokal.rs"]
+mod edwards_sokal;
 #[path = "physics/ergodicity.rs"]
 mod ergodicity;
 #[path = "physics/ergodicity_extended.rs"]
@@ -84,6 +90,8 @@ mod hybrid_compositions;
 mod incremental_process;
 #[path = "physics/input_validation.rs"]
 mod input_validation;
+#[path = "physics/invasion_percolation.rs"]
+mod invasion_percolation;
 #[path = "physics/kawasaki_exact.rs"]
 mod kawasaki_exact;
 #[path = "physics/kcore_percolation.rs"]
@@ -136,6 +144,8 @@ mod percolation_winding;
 mod percolation_zscore;
 #[path = "physics/potts_exact.rs"]
 mod potts_exact;
+#[path = "physics/random_cluster_q1.rs"]
+mod random_cluster_q1;
 #[path = "physics/statistical_regression.rs"]
 mod statistical_regression;
 #[path = "physics/sw_continuous.rs"]

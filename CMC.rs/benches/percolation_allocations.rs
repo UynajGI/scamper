@@ -5,10 +5,11 @@ use std::mem::size_of;
 use allocation_counter::measure;
 use carlo_rs::{Context, MonteCarlo};
 use cmc_rs::{
-    analyze, analyze_winding, reweight, scan_bond, scan_site, AttackGrid, AttackPolicy, Bond,
-    BondBernoulli, BorrowedUndirectedCsr, BoundaryQuery, ComponentWorkspace, DegreeAttackMC,
-    GraphView, MixedBernoulli, NewmanZiffWorkspace, ObservablePlan, PeriodicEmbedding, Probability,
-    ProbabilityField, RandomFailureMC, ReweightWorkspace, ScanObservable, SiteBernoulli,
+    analyze, analyze_winding, overlap_pairs, reweight, scan_bond, scan_site, AttackGrid,
+    AttackPolicy, Bond, BondBernoulli, BooleanPercolationMC, BorrowedUndirectedCsr, BoundaryQuery,
+    ComponentWorkspace, DegreeAttackMC, GraphView, MixedBernoulli, NewmanZiffWorkspace,
+    ObservablePlan, OrthorhombicCell, PeriodicEmbedding, PointProcess, Probability,
+    ProbabilityField, Radii, RandomFailureMC, ReweightWorkspace, ScanObservable, SiteBernoulli,
     StaticConfiguration, StaticLaw, StaticObservable, StaticPercolationMC, UndirectedGraphView,
     WindingWorkspace,
 };
@@ -16,7 +17,7 @@ use percolation_support::{
     cases, sample_and_analyze, torus_cases, Case, ReferenceConfiguration, ReferenceMode, TorusCase,
     P_BOND, P_SITE,
 };
-use rand::SeedableRng;
+use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 const ALLOCATION_SAMPLES: usize = 128;
@@ -1079,9 +1080,286 @@ fn report_incremental_case(case: &Case) {
     );
 }
 
+/// G2 probe: one complete Achlioptas realization (vertex re-initialization +
+/// E candidate steps: 2 draws, 2 `component_size` scorings, 1 union each,
+/// running to complete occupation) must be allocation-free in steady state —
+/// every buffer (pool, candidates, added flags, accepted order, curve) is
+/// reserved at construction. Asserts zero (same policy as the
+/// kcore/bootstrap/incremental probes).
+fn report_achlioptas_case(case: &Case) {
+    use cmc_rs::{
+        AchlioptasGrid, AchlioptasProcessMC, AchlioptasRule, CandidateSampling, EdgeUniverse,
+        TiePolicy,
+    };
+    let edges = case.lattice.edge_count();
+    let mut process = AchlioptasProcessMC::new(
+        case.lattice.clone(),
+        AchlioptasRule::Product,
+        CandidateSampling::WithoutReplacement,
+        2,
+        TiePolicy::LowestEdgeIndex,
+        EdgeUniverse::AllEdges,
+        AchlioptasGrid::Every {
+            step: (edges / 64).max(1),
+        },
+    )
+    .expect("probe process");
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x00C2_414C);
+    for _ in 0..ADAPTER_WARMUP {
+        process.run_realization(&mut rng);
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            process.run_realization(&mut rng);
+            std::hint::black_box(process.largest_curve());
+        }
+    });
+    assert_eq!(
+        info.count_total, 0,
+        "achlioptas realizations allocated {} times in steady state",
+        info.count_total
+    );
+    eprintln!(
+        "ACHILLOPTAS_PROCESS_ALLOC topology={} V={} E={} m=2 rule=product \
+         sampling=without-replacement steps_per_realization={} \
+         measured_realizations={} allocations_per_realization={:.3} \
+         allocated_bytes_per_realization={:.3} peak_live_allocations={} peak_live_bytes={}",
+        case.name,
+        case.lattice.vertex_count(),
+        edges,
+        edges,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
+/// G3 probe: one complete invasion realization (frozen threshold draw,
+/// binary-heap minimum-frontier growth to exhaustion, G1 substrate drive,
+/// C0 history compression, measurement) must be allocation-free in steady
+/// state — the heap, invasion state, trapping scratch, and substrate are
+/// reserved at construction. Site, bond, and the trapping variant are all
+/// asserted (same policy as the kcore/bootstrap/incremental/achlioptas
+/// probes).
+fn report_invasion_case(case: &Case) {
+    use cmc_rs::{InvasionMode, InvasionPercolationMC, InvasionStop, InvasionTrapping};
+    let vertices = case.lattice.vertex_count();
+    let variants: [(&str, InvasionMode, InvasionTrapping); 3] = [
+        ("site", InvasionMode::Site, InvasionTrapping::NonTrapping),
+        ("bond", InvasionMode::Bond, InvasionTrapping::NonTrapping),
+        (
+            "site-trapping",
+            InvasionMode::Site,
+            InvasionTrapping::Trapping {
+                exit: vec![vertices - 1],
+            },
+        ),
+    ];
+    for (label, mode, trapping) in variants {
+        let mut process = InvasionPercolationMC::new(
+            case.lattice.clone(),
+            mode,
+            vec![0],
+            InvasionStop::GrowAll,
+            trapping,
+            vertices.saturating_sub(1).max(1),
+        )
+        .expect("probe process");
+        let mut context = Context::new_with_binsize(
+            Xoshiro256PlusPlus::seed_from_u64(0x00C3_1A5A),
+            0,
+            ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+        );
+        for _ in 0..ADAPTER_WARMUP {
+            process.sweep(&mut context);
+            process.measure(&mut context);
+        }
+        let info = measure(|| {
+            for _ in 0..ALLOCATION_SAMPLES {
+                process.sweep(&mut context);
+                process.measure(&mut context);
+                std::hint::black_box(&mut context);
+            }
+        });
+        assert_eq!(
+            info.count_total, 0,
+            "invasion ({label}) realizations allocated {} times in steady state",
+            info.count_total
+        );
+        // InvasionThresholdOrder array + three scalars.
+        let observable_count = 4;
+        eprintln!(
+            "INVASION_PROCESS_ALLOC topology={} variant={} V={} E={} observables={} \
+             measured_realizations={} allocations_per_realization={:.3} \
+             allocated_bytes_per_realization={:.3} peak_live_allocations={} peak_live_bytes={}",
+            case.name,
+            label,
+            vertices,
+            case.lattice.edge_count(),
+            observable_count,
+            ALLOCATION_SAMPLES,
+            info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.count_max,
+            info.bytes_max,
+        );
+    }
+}
+
+/// P2 probe: one complete Boolean realization (binomial point-process draw +
+/// overlap construction via P1 + F3 analysis + plan record) must perform
+/// exactly the allocations of the documented P1 transient construction —
+/// zero beyond it. The transient (coordinate copy, cell-list buckets, pair
+/// list) allocates EVERY realization by design under the no-persistent-CSR
+/// rule, so warmup cannot exclude it; instead the probe replays the same
+/// construction in isolation over identical coordinate snapshots and asserts
+/// allocation-count equality: every steady-state allocation is attributable
+/// to the documented transient and the adapter adds none. The frozen
+/// measuring mode gets the same equality assertion (its sweep is a
+/// documented no-op). Binomial counts keep the realized N fixed; a Poisson
+/// adapter differs only by rare tail excursions growing the retained buffer
+/// once (documented on the adapter).
+fn report_boolean_case() {
+    let count = 2048_usize;
+    let side = (count as f64).sqrt();
+    let cell = OrthorhombicCell::new([side, side]).expect("probe cell");
+    let plan = || ObservablePlan::all(Vec::new());
+    for (dispersion, radii) in [
+        (
+            "monodisperse",
+            Radii::monodisperse(0.47).expect("probe radius"),
+        ),
+        (
+            "polydisperse",
+            Radii::per_particle((0..count).map(|index| [0.25, 0.5, 0.75][index % 3]))
+                .expect("probe radii"),
+        ),
+    ] {
+        let mut adapter = BooleanPercolationMC::<2>::sampling(
+            cell,
+            radii.clone(),
+            PointProcess::binomial(count).expect("positive count"),
+            plan(),
+        )
+        .expect("probe sampling adapter");
+        let mut context = Context::new_with_binsize(
+            Xoshiro256PlusPlus::seed_from_u64(0x0000_B001),
+            0,
+            ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+        );
+        for _ in 0..ADAPTER_WARMUP {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+        }
+        // Snapshot every realized coordinate set into a preallocated arena
+        // (copying allocates nothing) so the replay window sees identical
+        // geometry — pair-list growth patterns included.
+        let coordinates = count * 2;
+        let mut arena = vec![0.0_f64; ALLOCATION_SAMPLES * coordinates];
+        let info_full = measure(|| {
+            for sample in 0..ALLOCATION_SAMPLES {
+                adapter.sweep(&mut context);
+                arena[sample * coordinates..(sample + 1) * coordinates]
+                    .copy_from_slice(adapter.coordinates());
+                adapter.measure(&mut context);
+                std::hint::black_box(&context);
+            }
+        });
+        let info_transient = measure(|| {
+            for sample in 0..ALLOCATION_SAMPLES {
+                std::hint::black_box(
+                    overlap_pairs(
+                        &arena[sample * coordinates..(sample + 1) * coordinates],
+                        &cell,
+                        &radii,
+                    )
+                    .expect("probe geometry"),
+                );
+            }
+        });
+        assert_eq!(
+            info_full.count_total, info_transient.count_total,
+            "{dispersion} sampling realizations allocated {} times vs {} for the isolated \
+             P1 transient; the adapter must add zero allocations",
+            info_full.count_total, info_transient.count_total
+        );
+        eprintln!(
+            "BOOLEAN_PERCOLATION_ALLOC mode=sampling radii={dispersion} N={} eta~{:.3} \
+             measured_realizations={} transient_allocations_per_realization={:.3} \
+             transient_bytes_per_realization={:.3} adapter_added_allocations={} \
+             peak_live_allocations={} peak_live_bytes={}",
+            count,
+            std::f64::consts::PI
+                * (0..count)
+                    .map(|index| radii.radius(index).powi(2))
+                    .sum::<f64>()
+                / (side * side),
+            ALLOCATION_SAMPLES,
+            info_transient.count_total as f64 / ALLOCATION_SAMPLES as f64,
+            info_transient.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+            info_full.count_total - info_transient.count_total,
+            info_full.count_max,
+            info_full.bytes_max,
+        );
+    }
+
+    // Frozen measuring adapter: the equilibrium-measurement path.
+    let mut frozen = Vec::with_capacity(count * 2);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x0000_B002);
+    for _ in 0..count {
+        for axis in 0..2 {
+            frozen.push(rng.random_range(0.0..cell.lengths()[axis]));
+        }
+    }
+    let radii = Radii::monodisperse(0.47).expect("probe radius");
+    let mut adapter =
+        BooleanPercolationMC::<2>::measuring(cell, frozen.clone(), radii.clone(), plan())
+            .expect("probe measuring adapter");
+    let mut context = Context::new_with_binsize(
+        Xoshiro256PlusPlus::seed_from_u64(0x0000_B003),
+        0,
+        ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+    );
+    for _ in 0..ADAPTER_WARMUP {
+        adapter.sweep(&mut context);
+        adapter.measure(&mut context);
+    }
+    let info_full = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+            std::hint::black_box(&context);
+        }
+    });
+    let info_transient = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            std::hint::black_box(overlap_pairs(&frozen, &cell, &radii).expect("probe geometry"));
+        }
+    });
+    assert_eq!(
+        info_full.count_total, info_transient.count_total,
+        "frozen measurements allocated {} times vs {} for the isolated P1 transient",
+        info_full.count_total, info_transient.count_total
+    );
+    eprintln!(
+        "BOOLEAN_PERCOLATION_ALLOC mode=measuring-frozen radii=monodisperse N={} \
+         measured_measurements={} transient_allocations_per_measurement={:.3} \
+         adapter_added_allocations={} peak_live_allocations={} peak_live_bytes={}",
+        count,
+        ALLOCATION_SAMPLES,
+        info_transient.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info_full.count_total - info_transient.count_total,
+        info_full.count_max,
+        info_full.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
+    report_boolean_case();
     let benchmark_cases = cases();
     for case in &benchmark_cases {
         report_law_case(case);
@@ -1092,6 +1370,8 @@ fn main() {
         report_kcore_case(case);
         report_bootstrap_case(case);
         report_incremental_case(case);
+        report_achlioptas_case(case);
+        report_invasion_case(case);
         for mode in ReferenceMode::ALL {
             report_component_case(case, mode);
         }

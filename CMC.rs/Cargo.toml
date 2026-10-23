@@ -108,11 +108,31 @@ name = "continuum_pairs"
 harness = false
 
 [[bench]]
+name = "boolean_percolation"
+harness = false
+
+[[bench]]
+name = "achlioptas_process"
+harness = false
+
+[[bench]]
+name = "invasion_percolation"
+harness = false
+
+[[bench]]
 name = "incremental_process"
 harness = false
 
 [[bench]]
 name = "external_bonds"
+harness = false
+
+[[bench]]
+name = "edwards_sokal"
+harness = false
+
+[[bench]]
+name = "random_cluster_q1"
 harness = false
 
 [features]

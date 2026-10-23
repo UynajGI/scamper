@@ -25,16 +25,19 @@
 mod activity;
 mod analyzer;
 mod bonds;
+mod boolean;
 mod carlo;
 mod configuration;
 mod continuum;
 mod directed;
+mod edwards_sokal;
 mod law;
 mod network;
 mod observable;
 mod probability;
 mod process;
 mod query;
+mod random_cluster;
 mod scan;
 mod summary;
 mod workspace;
@@ -45,6 +48,10 @@ pub use analyzer::{
     WindingError, WindingResult, WindingSummary,
 };
 pub use bonds::{analyze_bonds, BondConfigurationError, BondSample, ExternalBondConfiguration};
+pub use boolean::{
+    overlap_pairs, overlap_pairs_from_configuration, BooleanError, BooleanPercolationMC,
+    OverlapGraph, PointProcess, Radii,
+};
 pub use carlo::{StaticLaw, StaticPercolationError, StaticPercolationMC};
 pub use configuration::StaticConfiguration;
 pub use continuum::{
@@ -57,6 +64,7 @@ pub use directed::{
     StrongComponentResult, StrongComponentSummary, StrongComponentWorkspace, WeakComponentResult,
     WeakComponentSummary, WeakComponentWorkspace,
 };
+pub use edwards_sokal::{AllActiveVertices, EdwardsSokalError, EdwardsSokalMC};
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
 pub use network::{
     csr_from_edge_list, AttackGrid, AttackPolicy, DegreeAttackMC, DegreeScratch,
@@ -66,12 +74,17 @@ pub use network::{
 pub use observable::{ObservablePlan, ObservablePlanError, StaticObservable};
 pub use probability::{Probability, ProbabilityError, ProbabilityField};
 pub use process::{
-    kcore_decompose, BootstrapDynamics, BootstrapError, BootstrapOutcome, BootstrapPercolationMC,
-    BootstrapSeeds, BootstrapThreshold, BootstrapWorkspace, CoreThresholds, IncrementalError,
-    IncrementalSummary, IncrementalUnionWorkspace, KCoreError, KCoreMC, KCoreSummary,
-    KCoreWorkspace, NeighborCounters, ProcessError, ProcessQueue, ProcessTrajectory, StampFlags,
+    invasion_run, kcore_decompose, AchlioptasError, AchlioptasGrid, AchlioptasProcessMC,
+    AchlioptasRule, AchlioptasStepRecord, BootstrapDynamics, BootstrapError, BootstrapOutcome,
+    BootstrapPercolationMC, BootstrapSeeds, BootstrapThreshold, BootstrapWorkspace,
+    CandidateSampling, CoreThresholds, EdgeUniverse, IncrementalError, IncrementalSummary,
+    IncrementalUnionWorkspace, InvasionError, InvasionMode, InvasionOutcome, InvasionPercolationMC,
+    InvasionStop, InvasionStopReason, InvasionTrapping, InvasionWorkspace, KCoreError, KCoreMC,
+    KCoreSummary, KCoreWorkspace, NeighborCounters, ProcessError, ProcessQueue, ProcessTrajectory,
+    StampFlags, TiePolicy,
 };
 pub use query::{BoundaryQuery, BoundaryQueryError};
+pub use random_cluster::{ClusterQ, RandomClusterError, RandomClusterMC};
 pub use scan::{
     reweight, scan_bond, scan_site, NewmanZiffWorkspace, ReweightError, ReweightWorkspace,
     ReweightedEstimate, ScanCurve, ScanError, ScanEstimator, ScanMode, ScanObservable, ScanPoint,

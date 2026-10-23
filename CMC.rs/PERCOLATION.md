@@ -34,13 +34,13 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Bootstrap percolation | Validated | E2 `BootstrapWorkspace` + `BootstrapPercolationMC` (roadmap §12): monotone activation-threshold closure over the E1 `ProcessQueue`/`NeighborCounters`/`StampFlags` primitives, generic over `UndirectedGraphView` with seeds as any `VertexActivity`, homogeneous `r` or per-vertex `u32` thresholds, and TWO explicit clocks — `SynchronousRounds` (Holroyd's parallel rounds) and `QueueClosure` (order-independent FIFO monotone closure) — recorded as `BootstrapActiveCount` (ONE C0 vector sample, fixed shape, truncate/pad convention) + `BootstrapFinalActive`/`BootstrapActivatedTotal`/`BootstrapRounds`|`BootstrapEvents` scalars. Gates: exhaustive 2^V seed masks on path/cycle/star/complete for every r in 0..=max_degree+1 AND seeded heterogeneous vectors vs an independent repeated-full-scan reference (closure sets, per-round trajectories, scalar invariants; ~2600 production runs); r=0 activates all / r>max_degree preserves seeds verbatim; FIFO queue closure = one-random-vertex-at-a-time and shuffled-sweep closures (test-RNG orders) = synchronous closure on random multigraphs; hand-worked heterogeneous cascade; bitwise replay of the one-f64-per-vertex density draw contract; Holroyd (PTRF 125, 195 (2003), arXiv:math/0206132, archived PDF) finite-size metastability brackets — his own full-activation observable I(L,p) is 1.0000 +/- 0.0013 at p+ = pi^2/(18 ln L) and 0.0000-0.0025 at p+/4 for L = 32/64/128, the measured half-majority density p_hat(L) = 0.0692/0.0577/0.0480 decays monotonically (the 1/ln L law) with p_hat ln L = 0.240/0.240/0.233 strictly inside (lambda/4, lambda), and the metastable window is sharper than a factor 1.5 (P(p_hat/1.5) <= 0.018, P(1.5 p_hat) >= 0.992); 0-allocation realization probe on five topologies; Criterion data. See the E2 section. |
 | k-core percolation | Validated | E3 `kcore_decompose` + `KCoreMC` (roadmap §12): residual-degree peeling over the E1 `ProcessQueue`/`NeighborCounters`/`StampFlags` primitives, generic over `UndirectedGraphView`, uniform or per-vertex `u32` thresholds, arbitrary initial activity, synchronous-round survivor accounting (`KCoreSurvivorCount` as ONE C0 vector sample + `KCoreFinalSize`/`KCoreRounds`/`KCoreDeletedTotal` scalars), deterministic deletion order and waves exposed post-run. Gates: exhaustive 2^V initial subsets on path/cycle/star/complete vs an independent repeated-full-scan reference (1456 runs), k=0 removes nothing / k>max_degree removes everything in one round, queue-order independence across 90 shuffled relabeling orders, hand-worked heterogeneous thresholds, 1-core/tree closed forms, bitwise site-law reduction of the activity draw, and the Janson-Luczak (arXiv:math/0508453, archived) 3-core emergence bracket on G(n=5e4, m) — own solver reproduces `lambda_3 = 3.350919`, below c=lambda_3-0.15 the 3-core is extinguished (0.00000 ± 0.00000), above c=lambda_3+0.15 it measures 0.45309 ± 0.00134 vs theory 0.45167. 0 allocations/realization probe on five topologies; Criterion data below. See the E3 section. |
 | Incremental component process (G1) | Validated | `IncrementalUnionWorkspace` (`percolation/process/incremental.rs`): generic incremental union substrate over any `UndirectedGraphView` — `activate_vertex`/`activate_edge` (union when both endpoints active) each return an online `IncrementalSummary` (component count, largest size with canonical lowest-index identity, raw second moment, active vertex/edge counts) and append `(step, summary)` to a `ProcessTrajectory` whose budget `V + E` is exact. The step coordinate is caller-defined and never interpreted — the roadmap's "record process coordinates without forcing a specific law"; Achlioptas (G2) and invasion (G3) build on this substrate without a common law trait. Gates: random-activation prefix parity vs fresh F3 `analyze` on chain/square/random/multigraph; exhaustive activation orderings vs an independent flood-fill reference; canonical identity vs F3 labels; random vertex replay reproduces `scan_site` prefix summaries (test-only Z1 demonstration); reuse/reset/re-prepare cycles; asserted 0-allocation probe on five topologies; Criterion unions/s data below. |
-| Achlioptas processes | Not implemented | No candidate-edge process, rule, or process-time output. |
-| Invasion percolation | Not implemented | No frozen thresholds or minimum-frontier growth. |
+| Achlioptas processes | Experimental — awaiting independent review | G2 `AchlioptasProcessMC` (`percolation/process/achlioptas.rs`, roadmap §13): rule-driven competitive edge addition on the G1 `IncrementalUnionWorkspace` — every step proposes `m` candidate edges, scores them by the rule through `component_size` (the substrate's designated scoring primitive), and adds the minimum-score winner. ALL physical parameters explicit: `AchlioptasRule` (Product `s_u*s_v` / Sum `s_u+s_v`, evaluated as u128 — a `score(size_a, size_b)` closure is deliberately insufficient), `CandidateSampling` (WithoutReplacement partial Fisher-Yates pool / WithReplacement iid draws), `EdgeUniverse` (all physical edges or a validated subset), `TiePolicy` (tie = equal score in one step → LowestEdgeIndex default / EarliestDraw), `AchlioptasGrid` (Full/Every/At checkpoints over the occupation-count axis). Null steps under with-replacement are recorded, never filtered (occupied candidates compete and can win: draws consumed, nothing added). Bitwise RNG draw contract documented incl. the winner compaction; `step_with_candidates` replays a fixed candidate trace with no RNG. Runs to complete occupation (terminal = every permitted edge). Records ONE C0 vector sample (`AchlioptasLargestSize` + `AchlioptasOccupiedEdges` coordinates) + scalars (`AchlioptasGiantReached`/`AchlioptasStepsToGiant` — explicit criterion `2*S_max > V` after an acceptance — `AchlioptasSteps`, `AchlioptasNullSteps`). Gates: contract-driver replay reproduces sweeps bit-for-bit + pure-trace re-replay; EVERY step vs independent flood-fill on chain/square/random/multigraph across both rules, both sampling modes, 3 seeds; m=1 without replacement == test-side uniform permutation bitwise AND statistically == `scan_bond` (|z| < 1.2 at four occupation counts); m=1 with replacement == coupon-collector statistics (z = -0.87) and permutation-equivalence; terminal-state exactness (full + subset universes); hand-worked product-vs-sum split; asserted 0-allocation probe on five topologies; Riordan-Warnke (Science 335, 1189 (2012), arXiv:1102.5306, archived) continuity anchor. See the G2 section. |
+| Invasion percolation | Experimental — awaiting independent review | G3 `invasion_run` + `InvasionWorkspace` + `InvasionPercolationMC` (`percolation/process/invasion.rs`, roadmap §13): frozen per-realization threshold fields (site: one `f64` per vertex; bond: one per physical edge, NaN/infinity typed rejections) grown from explicit duplicate-free seeds through a **binary-heap minimum-threshold frontier** (`total_cmp` then lowest dense ID — the explicit tie policy; `-0.0 < +0.0` are distinct keys, not a tie). Explicit stop policies (`GrowAll`, `FirstSpanning{from,to}` checked after planting and after every accepted step, `Steps(n)` with zero legal) and an optional Wilkinson-Willemsen trapping rule (explicit exit set; invadable iff connected to an un-invaded exit through the defending phase; trapped sites retire permanently — monotone, DFS with early exit). Site mode queues a site once carrying its first invader's edge; bond mode queues boundary edges and discards stale pops; parallel edges are independent entries, self-loops never enter. Every accepted operation drives the G1 substrate with invasion times as the step coordinate. The invasion graph is a forest (one tree per seed) by construction — verified. With UNIQUE thresholds, non-trapping bond invasion accepts exactly the Prim growth order (single seed: Prim from the seed, terminal tree = the unique MST of the seed's component; `k` seeds: Prim from a virtual super-root joined to the seeds; `Steps(n)` = the exact prefix) — verified against independent test-side Prim AND Kruskal. Records ONE C0 vector sample (`InvasionThresholdOrder`, fixed shape, final-threshold padding) + scalars (`InvasionAcceptedTotal`/`InvasionInvadedVertices`/`InvasionMaxAcceptedThreshold`). Gates: hand-worked multigraph (parallel + self-loop) sequence/frontier/tree in both modes against a full-frontier-scan reference; 576+-realization heap-vs-scan parity (continuous and tie-dense thresholds, multiseed, all stop policies, both components graphs, trapping); forest invariants via independent union-find replay; BFS-verified spanning steps; bitwise adapter draw contract; asserted 0-allocation probe on five topologies; Criterion steps/s below. Wilkinson-Willemsen (1983) predates arXiv (Tarjan precedent — no archivable PDF; the trapping rule and the Prim/MST identity are verified against independent in-repo implementations, anchored by the archived Sweeney & Middleton PRE 88, 032129 (2013) statement of the correspondence). See the G3 section. |
 | Particle candidate-pair adapter (P1) | Validated | `percolation/continuum.rs` borrows the particle module's coordinates, `OrthorhombicCell` minimum-image geometry, and `CellList` stencil search (nothing duplicated, nothing modified there) to enumerate candidate pairs `(i, j)`, `i < j`, boundary-inclusive `|displacement| <= cutoff`, in a documented cell-major canonical order. The output is an ephemeral owned `PairGraph` (vertex count + pair `Vec`, `UndirectedGraphView` with derived incidences) that exists for one F3 analysis pass and is dropped — the deliberate transient counterpart to the roadmap's ban on a persistent per-snapshot CSR. Zero-copy `candidate_pairs_from_configuration` and validated prepared-list `candidate_pairs_with_cell_list` entry points serve equilibrium-simulation callers. Gates: exhaustive all-pairs parity in 2D/3D, exact-boundary inclusivity, periodic-image pairs, determinism, lattice and generic translation invariance, F3-vs-independent-BFS summary and label parity, typed rejections, throughput record; Criterion data below. Experimental — awaiting independent review. |
-| Continuum/Boolean percolation | Not implemented | Particle geometry and cell lists exist elsewhere, but no continuum percolation adapter or validated overlap analyzer exists. |
+| Continuum/Boolean percolation | Experimental | `percolation/boolean.rs` (P2): overlapping disks/spheres in orthorhombic periodic cells with `Radii` (monodisperse or finite-polydisperse, typed validation) and a `PointProcess` sampler (binomial fixed count; Poisson with a documented chunked-Knuth draw contract) plus the equilibrium **measurement** path — caller-supplied coordinates analyzed by `overlap_pairs`/`overlap_pairs_from_configuration` or a frozen `BooleanPercolationMC::measuring` adapter that never resamples. Overlap pairs compose P1 at the maximum contact cutoff `2 r_max` with an in-place per-pair filter `d^2 <= (r_i + r_j)^2` (inclusive, squared, no epsilon; monodisperse radii pass through unfiltered — bit-identical criterion), feeding the F3 analyzer through an ephemeral `OverlapGraph`. Gates: all-pairs overlap parity 2D/3D polydisperse, translation/permutation/periodic-representative invariance, zero-radius and fully-overlapping limits, Poisson count mean/variance CI gates (direct and through the adapter), frozen-configuration zero-variance remeasurement, bitwise per-seed determinism, and the 2D disk covered-fraction threshold bracket `eta_c = 1.12808737(6)` (Mertens & Moore 2012, archived) crossing 1/2 inside `(eta_c/1.15, 1.15 eta_c)` — a statistical bracket, never exact. Experimental — awaiting independent review. |
 | External bond-configuration analysis (R1) | Experimental | Decoupled analysis contract of the R track: an `ExternalBondConfiguration` borrows a caller-supplied bond mask (one `bool` per physical edge) and feeds the shared F3 `analyze`/`analyze_with_labels` and W2 `analyze_winding` as both activity sources (all vertices active, edges per mask), with the `analyze_bonds` one-call convenience and an owned `BondSample` open-edge record for future sampler exposure. Analysis is deliberately sampler-agnostic; gates and bench below. Experimental — awaiting independent review. |
-| FK/random-cluster q=1 | Not implemented | Ordinary bond Bernoulli and the R1 external bond-configuration contract exist, but the q=1 reduction validation (R2) does not. |
-| FK q=2 Edwards-Sokal/Swendsen-Wang | Not implemented | SW exists, but its sampled FK bonds are not exposed for this analysis. The worm high-temperature even subgraph is not FK. |
+| FK/random-cluster q=1 | Experimental | R2 validates the exact q = 1 collapse (the FK measure `p^{\|A\|} (1-p)^{E-\|A\|} q^{k(A)}/Z` becomes the product Bernoulli measure because `1^{k(A)} = 1` and `Z(p,1) = 1`) configuration by configuration: exhaustive 2^E enumeration on a 5-edge chain-ish graph and a 6-edge self-loop/parallel multigraph (uniform and heterogeneous p, per-configuration weight equality, Z = 1, observable-mean identity), bitwise delegation identity to `BondBernoulli`, and multi-seed z-scores of `RandomClusterMC` (Bernoulli delegate → R1 external-mask analysis) versus the `StaticPercolationMC` bond path at matched p on a square lattice. `q ≠ 1` is a typed roadmap-citing rejection. Delivered in-branch on `feat/cmc-percolation`; Experimental — awaiting independent review. |
+| FK q=2 Edwards-Sokal/Swendsen-Wang | Experimental | R3 `EdwardsSokalMC` (roadmap §15): an owned-`CsrLattice` Swendsen-Wang/Edwards-Sokal adapter whose `sweep()` performs the conditional FK bond draw `p_e = 1 - exp(-2 beta J_e)` on same-spin edges (ferromagnetic `J_e > 0` typed-rejected otherwise) and exposes that ACTUAL draw as an R1 `BondSample`; the following `measure()` runs the shared F3 analyzer on that same sample through the F4 `ObservablePlan`. Frozen-spins mode reduces the sweep to the pure conditional draw for exact enumeration. Gates: frozen-spin bond-subset enumeration vs the product Bernoulli law with bitwise RNG-contract replay; partition-function agreement `Z_Ising = exp(beta sum J_e) * sum_s sum_A p^{|A|}(1-p)^{E-|A|}` (exhaustive over spins and bond subsets, incl. a parallel+self-loop multigraph, own union-find `k(A)`, independent brute-force Ising reference); `P_FK(i ~ j) = <s_i s_j>` on a proper ES chain (z-score gates, both sides vs exact and vs each other); worm-representation (even/two-defect subgraph, tanh weights) cross-checks at the observable level only — the worm's even subgraph is not FK and is never relabeled. Edwards-Sokal (1988)/Swendsen-Wang (1987) pre-date arXiv (no archivable PDFs; Tarjan precedent) — the exact double-sum identities are the anchors. Delivered in-branch; Experimental — awaiting independent review. |
 | Generic real-q random-cluster model | Not implemented | No Sweeny or Chayes-Machta sampler. |
 | Network edge-list input | Validated | `csr_from_edge_list` builds an owned `CsrLattice` from text edge lists (`left right` per line, `#` comments and blank lines skipped) under an explicit `EdgeListSpec` (declared vertex count, duplicate policy Reject/AllowParallel, self-loop policy Reject/Allow); every rejection is typed and carries the 1-based line (parse, endpoint range, duplicate, self-loop). Zero-copy external arrays remain the F1 `BorrowedUndirectedCsr`. No binary/memory-mapped format: million-edge ingestion evidence recorded below. Independent review passed 2026-10-22 (see `docs/reviews/`). |
 | Boundary crossing between explicit vertex sets | Validated | F3 `BoundaryQuery` is validated for owned/borrowed generic undirected views, supports several queries in one component pass, and defines empty/overlap/dedup semantics; F4 migrates the full crossing test assets. The square left/right-column and chain endpoint defaults live in the `StaticPercolationMC` parameter schema; all other parameter-built topologies require explicit site sets. |
@@ -2245,13 +2245,264 @@ external wrapper adds one indexed load per edge at most.
 
 ### Limitations
 
-Analysis only: no sampler exists here, by design (R2 validates the
-random-cluster q = 1 limit, R3 exposes an actual SW/Edwards-Sokal bond
-draw; both Not implemented). The mask is per *physical* edge, so site
+Analysis only: no sampler exists here, by design (R2 below validates the
+random-cluster q = 1 limit; R3 below exposes an actual SW/Edwards-Sokal bond
+draw). The mask is per *physical* edge, so site
 activity is fixed all-active — mixing heterogeneous vertex activity with
 an external bond mask goes through the F3 capabilities directly with a
 separate vertex source. `BondSample` is a record, not a distribution:
 it carries no probability or RNG state and cannot generate draws.
+
+## R2 random-cluster q = 1
+
+Status: **Experimental** — delivered in-branch, awaiting independent
+review (roadmap §15 R2).
+
+### The exact statement validated
+
+**The q = 1 FK/random-cluster measure on a graph `G = (V, E)` equals the
+product Bernoulli(p) measure on its bonds.** The random-cluster measure
+with edge parameter `p` and cluster weight `q` is
+
+`phi_{p,q}(A) = p^{|A|} (1-p)^{E-|A|} q^{k(A)} / Z(p, q)` over bond
+subsets `A ⊆ E`, with `k(A)` the component count of `(V, A)` under the
+bond convention (every vertex active). At `q = 1` the cluster factor is
+exactly `1^{k(A)} = 1` — `k(A)` drops out of the weight entirely, on any
+graph including parallel edges and self-loops — so
+`Z(p, 1) = Σ_A p^{|A|} (1-p)^{E-|A|} = (p + (1-p))^E = 1` and
+`phi_{p,1}(A) = Π_e [p if e ∈ A, (1-p) otherwise]`: the independent bond
+Bernoulli product measure, configuration by configuration. This is exact
+mathematics, not an approximation to be anchored numerically — the
+founding q = 1 observation of Fortuin and Kasteleyn (Physica 57, 536
+(1972); pre-arXiv, so no PDF is archived) — and the gates below prove it
+by computation on this codebase.
+
+### API
+
+- `ClusterQ` is the explicit cluster-weight parameter, pinned to `q = 1`:
+  `ClusterQ::q1()` constructs it, `ClusterQ::new(value)` accepts exactly
+  `1.0` and returns the typed `RandomClusterError::UnsupportedQ` for
+  anything else (the message cites the roadmap requirement that generic
+  real-`q` samplers — Sweeny, Chayes-Machta — need a separate plan after
+  R3). The parameter is carried explicitly so the domain widens in one
+  place.
+- `RandomClusterMC` is the owned scheduler adapter. It duplicates **no
+  sampling law**: `sweep()` delegates to the F2 `BondBernoulli` (uniform
+  `p` via `new`, or a validated per-edge field via `new_heterogeneous` —
+  at q = 1 the heterogeneous FK measure is `Π_e Bernoulli(p_e)`) and
+  mirrors the draw into a reused dense mask; `measure()` analyzes that
+  mask through the R1 external-bond path (`analyze_bonds`) and records
+  the F3 `ObservablePlan` scalars. The analysis plumbing is therefore a
+  different path than `StaticPercolationMC`'s `StaticConfiguration`
+  analysis — the two adapters agree bitwise at matched seeds (same
+  `BondBernoulli` stream) and statistically at independent seeds.
+- After `sweep()`, `mask()` (dense view), `configuration()` (the law's
+  draw target), and `realization()` (R1's owned `BondSample`, the R3
+  contract surface — an SW/Edwards-Sokal adapter exposes its actual FK
+  draw as the same record) describe one and the same realization.
+  `realization()` materializes on demand so the sweep/measure path
+  allocates nothing; constructor rejections mirror the static adapter
+  (topology, winding plans, moment exactness, query domain, law domain,
+  invalid `p`).
+
+### Validation gates
+
+`tests/physics/random_cluster_q1.rs` (plus module unit tests):
+
+- **Configuration-by-configuration (roadmap gate)**: exhaustive
+  enumeration of ALL `2^E` bond configurations on a 5-edge chain-ish
+  graph (square + pendant tail, so `k(A)` is not a function of `|A|`
+  alone) and a 6-edge multigraph (self-loop, parallel pair, 4-cycle), at
+  uniform p ∈ {0, 0.25, 0.5, 0.75, 1} and one heterogeneous per-edge
+  field each. Per configuration: the FK weight `p^{|A|} (1-p)^{E-|A|} q^{k(A)}`
+  with the q = 1 cluster factor computed (`1.0f64.powi(k(A))`) and
+  multiplied in equals the Bernoulli product weight computed edge by edge
+  (≤ 1e-12 from power-versus-product floating association); the
+  enumerated FK probabilities sum to `Z(p,1) = 1`; `k(A)` and `S_max(A)`
+  come from an independent flood fill cross-checked against the
+  production analyzer on every configuration; and the observable means
+  ⟨k⟩, ⟨S_max⟩ under the two full distributions coincide.
+- **Bitwise sampler identity (delegation contract)**: same seed → the
+  adapter's mask and its `BondSample::to_mask()` equal the direct
+  `BondBernoulli` draw read back from a `StaticConfiguration`, for
+  uniform p ∈ {0, 0.25, 0.5, 0.73, 1} and a heterogeneous field, several
+  seeds.
+- **Statistical (roadmap gate)**: 8x8 open square at matched p = 0.5 (the
+  bond threshold), `SCUTTLE_ZSCORE_SEEDS` seeds (default 16), 10 000
+  i.i.d. realizations per seed and path with independent RNG streams:
+  two-sample z-scores of GiantFraction and finite-cluster susceptibility,
+  `RandomClusterMC` (Bernoulli delegate → external-mask analysis) versus
+  the `StaticPercolationMC` bond path (`StaticConfiguration` analysis) —
+  per-seed |z| < 4 and |mean z| < 2.
+- **Typed rejections**: `q ≠ 1` (including `NaN` and `1 + eps`) rejected
+  with the roadmap-citing error; module unit tests cover invalid `p`,
+  winding plans, query-domain and heterogeneous-field-length rejections,
+  endpoint-exact measures (p = 0, 1), and the edgeless graph.
+
+### Benchmark
+
+`cargo bench -p cmc-rs --bench random_cluster_q1 -- --quick`
+(realization = BondBernoulli draw + analysis; the q = 1 path adds the
+dense-mask mirror that feeds the R1 external-bond analysis; plan
+recording excluded from both paths equally):
+
+| Topology | V | E | q1 realization (external path) | static bond realization |
+|---|---:|---:|---:|---:|
+| chain | 4096 | 4095 | 74.9 us | 78.3 us |
+| square | 4096 | 8064 | 126.8 us | 131.5 us |
+| cubic | 4096 | 11520 | 159.5 us | 168.2 us |
+| sparse-er | 4096 | 16384 | 257.0 us | 260.9 us |
+| power-law | 4096 | 16374 | 187.2 us | 190.7 us |
+
+The two realization paths execute the same analyzer over bitwise-identical
+draws, and the external path lands at or slightly below the static path
+across repeated quick-mode runs — the same ±10% quick-mode noise band R1
+recorded for `analyze_bonds` versus `analyze` (code-layout effects between
+the two `EdgeActivity` monomorphizations), with the mask mirror inside
+that band rather than a systematic premium. A separate quick-mode timing
+of `BondSample` materialization (the on-demand `realization()` record,
+`O(E)` plus one allocation) runs 19.0 us (chain), 49.3 us (square),
+66.6 us (cubic), 105.7 us (sparse-er), 104.8 us (power-law) — roughly a
+quarter to half of a realization, paid by R3 only when the draw record is
+actually consumed.
+
+### Limitations
+
+q = 1 only, by design: `q ≠ 1` is a typed rejection, and generic real-`q`
+samplers (Sweeny, Chayes-Machta) need a separate plan after R3. The
+adapter owns its lattice and carries no periodic embedding — winding an
+FK configuration goes through the core `analyze_winding` with an
+`ExternalBondConfiguration` directly. No `FromParams` parameter schema
+(construct the adapter directly). The sweep/measure path is
+allocation-free; only `realization()` allocates, on demand.
+
+## R3 Edwards-Sokal FK exposure
+
+Status: **Experimental — awaiting independent review** (roadmap §15 R3).
+
+### The actual draw, exposed and analyzed
+
+`EdwardsSokalMC` (`percolation/edwards_sokal.rs`) is the sampler side of
+the R track: an owned-`CsrLattice` MonteCarlo adapter over ferromagnetic
+couplings (`J_e = Bond.weight`, validated strictly positive and finite at
+construction — the typed `Coupling` rejection — with the inverse
+temperature `beta >= 0` validated finite). One `sweep()` is one
+Swendsen-Wang / Edwards-Sokal step:
+
+1. **Conditional FK bond draw** given the current spins: every physical
+   edge in ascending dense `EdgeId` order whose endpoints carry equal
+   spins opens independently with `p_e = 1 - exp(-2 beta J_e)`
+   (precomputed per edge); opposite-spin edges are closed with probability
+   one. The draw is recorded AS IT HAPPENS into the R1 `BondSample` (open
+   edges are emitted in ascending dense order, exactly the sample's sorted
+   storage) — `last_bond_sample()` returns the actual draw, never a
+   reconstruction.
+2. **Cluster spin assignment**: an internal union-find over the open bonds
+   builds the FK clusters, and each cluster receives one independent
+   uniform spin.
+
+The following `measure()` runs the shared F3 `analyze` on that same
+`BondSample` (as `EdgeActivity`, paired with the all-active vertex source
+`AllActiveVertices`) and records the F4 `ObservablePlan` scalars — the
+composition mirrors `StaticPercolationMC`, so the exposed and analyzed
+configurations are one object. Boundary queries become
+`BoundaryCrossing*` means; on a proper chain these are `P_FK(i ~ j)`.
+A frozen-spins constructor pins a caller-supplied `±1` configuration
+forever, reducing every sweep to the pure conditional draw — the
+deterministic ensemble the exact gates exhaust. Unlike the i.i.d. static
+family this is a Markov chain: thermalize before measuring.
+
+### RNG contract
+
+Documented and bitwise-replayed by tests: the bond pass consumes one `f64`
+per same-spin edge with `0 < p_e < 1` (exactly the F2 endpoint convention
+at `p_e = 0` — `beta = 0` — and at `p_e = 1`, reachable only through
+`exp` underflow) and nothing for opposite-spin edges; the spin pass
+consumes one `f64` per FK cluster, at the cluster's lowest-index site
+under an ascending site scan (a cluster-set invariant, so the count and
+order are determined by the bond draw alone).
+
+### Validation gates (roadmap §15 R3)
+
+All in `tests/physics/edwards_sokal.rs` (4 tests, draw counts tunable via
+`SCUTTLE_EDWARDS_DRAWS`, default 60 000) plus 6 module unit tests
+(typed rejections, bitwise RNG-contract replays frozen and unfrozen,
+endpoint determinism, observable recording, accessor state):
+
+- **Exact bond-subset enumeration** (frozen spins, a 4-edge heterogeneous
+  graph, two 4-spin configurations): all `2^E` subsets of same-spin edges
+  enumerated; the sampler's empirical frequencies z-gated against the
+  product Bernoulli law (`|z| < 5` per subset; opposite-spin edges closed
+  in every draw), and for EVERY subset the adapter's measure-time path
+  (`BondSample` as edge activity) and the R1 `analyze_bonds` raw-mask path
+  produce identical summaries and query outcomes.
+- **Partition function**: on the heterogeneous graph, the 4-ring, and a
+  3-vertex parallel-edge + self-loop multigraph (self-loops same-spin by
+  definition, open self-loop a union no-op), at `beta in {0.3, 0.9}`:
+  the Edwards-Sokal double sum `sum_s sum_{A compatible} p^{|A|}
+  (1-p)^{E-|A|}` (exhaustive over spins AND bond subsets), the q = 2
+  random-cluster single sum `sum_A p^{|A|}(1-p)^{E-|A|} 2^{k(A)}` with a
+  test-local union-find `k(A)`, and the independent brute-force Ising
+  `sum_s exp(-beta H)` agree: double sum = single sum, and
+  `Z_Ising = exp(beta sum_e J_e) * double sum`, each to `1e-12` relative.
+- **`P_FK(i ~ j) = <s_i s_j>`**: a thermalized proper ES chain on the
+  4-ring at `beta = 0.9`; the boundary-crossing mean of the exposed draw
+  and the spin correlator read from the same chain's spins are each
+  z-gated against the exact brute-force correlator (`|z| < 5`) and to each
+  other (per-sample conditional-mean relation
+  `E[s_i s_j | A] = [i ~_A j]`, so the empirical gap has exact stderr
+  `sqrt((1-p)/n)`, gated at `|z| < 6`).
+- **Worm-representation separation and consistency**: the worm's
+  high-temperature representation (even subgraphs with `tanh(beta J)`
+  weights; two-defect odd subgraphs for correlators) is checked to agree
+  with brute-force spin enumeration on the partition function and both
+  correlators — the level at which the two representations MUST agree.
+  Configuration-level agreement is impossible by construction and never
+  claimed: the worm's even subgraph has `tanh(beta J)` weights on a
+  parity-constrained support and is not an FK configuration; nothing in
+  the R track analyzes it as one (the assertion lives in the module and
+  test docs).
+
+Edwards-Sokal (Phys. Rev. D 38, 2009 (1988)) and Swendsen-Wang (Phys.
+Rev. Lett. 58, 86 (1987)) pre-date arXiv — no PDFs are archivable (the
+Tarjan-1972 precedent in D2); the exact double-sum identities above are
+the anchors.
+
+### Benchmark (`benches/edwards_sokal.rs`)
+
+Quick-mode medians on the five shared topologies (V = 4096, `beta = 0.5`,
+`p_e = 1 - exp(-1) ~ 0.6327`, full `ObservablePlan::all` plan with one
+boundary query; one `es_sweep` = FK draw + cluster spins + `BondSample`
+exposure, `es_sweep+measure` adds the F3 analysis and scalar recording):
+
+| Topology | E | es_sweep | es_sweep+measure |
+|---|---:|---:|---:|
+| chain | 4095 | 79.4 us | 249.7 us |
+| square | 8064 | 156.1 us | 460.8 us |
+| cubic | 11520 | 192.7 us | 595.6 us |
+| sparse ER | 16384 | 321.0 us | 1004.6 us |
+| preferential attachment | 16374 | 232.6 us | 811.0 us |
+
+The draw+exposure path sustains roughly 50-70 M edges/s; the full cycle
+16-21 M edges/s (the F3 analysis dominates, as in the static family).
+One `Vec<EdgeId>` collection per sweep rebuilds the `BondSample` through
+R1's public constructor — the single documented steady-state allocation
+of the cycle (every other buffer — masks are implicit in the sample,
+union-find, cluster spins, workspace — is reused).
+
+### Limitations
+
+Full Swendsen-Wang dynamics only (no Wolff single-cluster variant; the
+spec makes the conditional bond draw the requirement, and the alternating
+cluster resampling is what makes the chain's bond marginal the FK
+measure — an i.i.d. per-site spin redraw would NOT produce `2^{k(A)}`).
+Winding observables on the FK draw are a typed `WindingNotSupported`
+rejection (FK winding analysis awaits an embedding-aware follow-up; the
+core `analyze_winding` + `ExternalBondConfiguration` path remains
+available to callers). No `FromParams` schema (construct directly or via
+`Run::from_parts`). The `q = 2` cluster factor enters through the spin
+resampling, not an explicit weight; generic real-`q` Sweeny/Chayes-Machta
+samplers remain Not implemented pending their own plan.
 
 ## P1 particle candidate-pair adapter
 
@@ -2388,6 +2639,206 @@ prepared-list paths do not); winding/wrapping over candidate pairs awaits
 the continuum geometry and configuration definitions required by the W
 track contract.
 
+## P2 Boolean percolation
+
+Experimental — delivered in-branch on `feat/cmc-percolation`, awaiting
+independent review. Initial scope (roadmap §14, verbatim): orthorhombic
+cells; disks/spheres; monodisperse and finite-polydisperse radii; binomial
+and Poisson point processes.
+
+### Composition on P1
+
+`percolation/boolean.rs` adds no second geometry implementation. Overlap
+enumeration composes the P1 candidate-pair adapter at the scalar cutoff
+`2 r_max` — the smallest cutoff that provably contains every overlapping
+pair, since `r_i + r_j <= 2 r_max` — and then keeps exactly the pairs with
+minimum-image `d^2 <= (r_i + r_j)^2` (inclusive, squared, no epsilon,
+matching P1's boundary discipline). Monodisperse radii never pay the
+filter: `r_i + r_j = 2r` IS the enumeration cutoff, and `(r+r)^2` is
+bit-identical to P1's `(2r)^2`, so the P1 pair list passes through
+untouched (unit-tested against the filtered all-equal-radii path).
+Per-particle radii run one in-place `retain` recomputing each candidate
+pair's squared distance with the particle module's own metric — one extra
+metric call per candidate pair, no duplicated geometry. The P1
+minimum-image ceiling carries over unchanged: `2 r_max <= L_min / 2`.
+
+### API
+
+- `Radii::monodisperse(r)` / `Radii::per_particle(...)` — typed validation
+  (finite, strictly positive, non-empty; length checked against the
+  particle count at every enumeration entry point, and re-validated so a
+  direct enum literal cannot smuggle an invalid radius into geometry).
+- `PointProcess::binomial(count)` / `PointProcess::poisson(mean)` — the
+  SAMPLING side. Positions are uniform in the cell under a documented
+  draw contract (particle-major, axis-ascending, one
+  `random_range(0.0..L_axis)` per coordinate). The Poisson count draw is
+  Knuth's multiplication method in chunks of at most 512 (Poisson
+  additivity; keeps `exp(-part)` far from underflow for every accepted
+  mean, cap 1e6); the binomial count consumes no randomness.
+- `overlap_pairs(&[f64], &OrthorhombicCell<D>, &Radii)` and
+  `overlap_pairs_from_configuration(&ParticleConfiguration<D>, &Radii)`
+  — the MEASUREMENT side for existing coordinates (the equilibrium-chain
+  case): the caller's accepted coordinates are analyzed, never resampled.
+  Output is an ephemeral `OverlapGraph` (vertex count + flat pair `Vec`,
+  `UndirectedGraphView` with derived incidences) following the documented
+  P1 transient pattern.
+- `BooleanPercolationMC::sampling(...)` — Carlo.rs adapter drawing one
+  point-process realization per sweep and recording the F4
+  `ObservablePlan` scalars (GiantFraction, susceptibility, ...) per
+  measure. `thermalization_sweeps = 0` documented (i.i.d. samples). A
+  Poisson realization may draw zero particles — a legitimate vacuum
+  sample recorded as the all-zero summary (an empty-buffer REQUEST
+  through `overlap_pairs` remains the P1 typed rejection: caller bug).
+- `BooleanPercolationMC::measuring(cell, coordinates, radii, plan)` —
+  frozen adapter owning an immutable coordinate copy: `sweep()` is a
+  documented no-op and every `measure()` analyzes the identical
+  configuration. Live equilibrium chains should call
+  `overlap_pairs_from_configuration` per accepted snapshot instead.
+- Typed `BooleanError`: P1 rejections wrapped, invalid radii, empty
+  radii, radii-length mismatch, zero binomial count, invalid/oversized
+  Poisson mean, Poisson-with-per-particle-radii (the radii pin the
+  count), boundary queries with a random count, query-domain mismatch,
+  winding observables (no continuum embedding — W-track contract),
+  capacity.
+
+Deliberate scope cuts, documented in the code: per-particle radii cannot
+pair with a Poisson process (they pin the particle count; species-per-
+particle DRAWN radii are a point-process extension beyond the roadmap's
+initial scope); boundary queries are rejected for Poisson adapters (their
+vertex domain varies per realization); no degree-array observable
+(unbounded support would force an arbitrary bin cap — the moment scalars
+carry the connectivity information); winding observables are rejected.
+
+### Validation gates (`tests/physics/boolean_percolation.rs`)
+
+- **All-pairs overlap parity**: exact pair-set equality against an
+  independently coded exhaustive `O(N^2)` overlap scan with minimum image
+  on random 2D and 3D periodic polydisperse configurations (species
+  0.4/0.65/0.9 and 0.3/0.5/0.55), three seeds each.
+- **Translation invariance**: a generic shift (then wrap) preserves the
+  pair set and every label-free summary field (fixture guarded to sit a
+  safe margin off all contact distances); an exact lattice shift of a
+  dyadic-quantized configuration reproduces the identical canonical pair
+  sequence.
+- **Particle-permutation invariance**: a Fisher-Yates relabeling of
+  positions+radii maps the pair set exactly (relabeled identities,
+  identical connectivity) and leaves the summary's label-free fields
+  unchanged.
+- **Periodic-representative invariance**: shifting individual particles
+  by random integer box vectors changes neither pair set nor summary.
+- **Zero-radius limit (exact)**: at `r = 5e-3` in a 6x6 box (the smallest
+  scale whose `(L/2r)^D` cell grid allocates comfortably), distinct
+  particles (distances >= 1) yield zero pairs and exactly coincident
+  particles yield exactly one pair — decided exactly in floating point.
+- **Fully-overlapping limit**: at the largest permitted contact cutoff
+  (exactly `L/2`) a 1D ring is the complete graph `K_6` — all 15 pairs,
+  one component, second moment 36 — verified against the brute-force
+  reference; in 2D (where the box diagonal exceeds `L/2`, so a complete
+  graph is unreachable under minimum image) an 8x8 grid at `r = L/4`
+  collapses into a single component (saturated connectivity).
+- **Poisson count statistics**: the chunked-Knuth count draw (direct, n
+  = 6000 draws at lambda = 37.7 and n = 800 at lambda = 1500 exercising
+  the chunked path) satisfies `|mean - lambda| <= 4 sqrt(lambda/n)` and
+  `|s^2 - lambda| <= 4 sqrt((lambda + 2 lambda^2)/n)`;
+  the same gates hold through the adapter's `ActiveVertexCount`
+  observable (3000 realizations). Measured: lambda = 37.7 -> mean
+  37.818 +- 0.317, s^2 = 37.661 +- 2.771; lambda = 1500 (chunked) ->
+  mean 1499.605 +- 5.477, s^2 = 1549.09 +- 300.05; adapter lambda = 40
+  -> mean 39.946, s^2 = 38.41.
+- **Equilibrium-measurement path**: a frozen 200-particle polydisperse
+  configuration measured across 12 sweeps records zero-variance
+  estimates for every always-defined observable (integer observables
+  exactly zero; the rational GiantFraction at most one bin-mean-rounding
+  ulp) with the coordinate buffer bit-identical throughout, and the
+  zero-copy configuration entry point enumerates the identical overlap
+  set as the flat path.
+- **Determinism**: identical seeds reproduce bitwise-identical scheduler
+  estimates (3D, 60 sweeps); different seeds differ.
+- **Typed rejections** at integration level: empty coordinates (P1
+  wrap), radii-length mismatch, cutoff beyond the minimum-image maximum;
+  adapter-level rejections in the module unit tests.
+- **Monodisperse 2D disk threshold bracket**: N = 50 000 binomial disks
+  on the 400x400 torus, percolation probability = fraction of
+  realizations with a component whose UNWRAPPED x-extent exceeds 80% of
+  the side (spanning judged on minimum-image-unfolded coordinates — raw
+  extents are meaningless on a torus, where a tiny seam-straddling
+  cluster has raw extent ~L; the unfolding BFS also catches every
+  x-wrapping cluster). Against the Mertens & Moore Table I anchor
+  `eta_c = 1.12808737(6)` (PRE 86, 061109 (2012), archived in
+  `docs/ref/`, BIBLIOGRAPHY.md row): the Wilson-95% interval at
+  `eta_c/1.15` lies strictly below 1/2 and at `1.15 eta_c` strictly
+  above 1/2, 12 realizations per side — the measured crossing of 1/2
+  sits inside the bracket. Measured: eta = 0.98095 -> 0/12 crossings
+  (Wilson-95% [0, 0.250]), giant fraction 0.030; eta = 1.29730 -> 12/12
+  crossings ([0.750, 1]), giant fraction 0.950. Statistical bracket with
+  real error bars; never labeled exact.
+
+### Steady-state allocation (probe `report_boolean_case`)
+
+The adapter allocates nothing per realization beyond the documented P1
+transient: positions land in one retained buffer reserved for the count
+ceiling, the F3 workspace and query-outcome scratch are reused, and the
+observable plan records scalars under the standard first-measure/binsize
+discipline. The transient (coordinate copy, cell-list buckets, pair
+list) allocates EVERY realization by design under the no-persistent-CSR
+rule, so warmup cannot exclude it; the probe instead replays the same
+construction in isolation over identical coordinate snapshots (copied
+into a preallocated arena inside the measured window) and asserts
+allocation-count equality — every steady-state allocation is
+attributable to the documented transient and the adapter adds exactly
+zero. Both the sampling path (monodisperse and polydisperse, N = 2048,
+128 measured realizations) and the frozen measuring path are asserted;
+binomial counts keep the realized N fixed (a Poisson adapter differs
+only by rare tail excursions growing the retained buffer once).
+Measured (release, N = 2048, 128 samples, unit-density 2D box):
+monodisperse (eta ~ 0.69) 3 691.7 transient allocations per realization
+(523.9 KB), polydisperse 0.25/0.5/0.75 species (eta ~ 0.92; the larger
+`2 r_max = 1.5` cutoff coarsens the cell grid) 1 808.6 per realization
+(473.8 KB), frozen measuring mode 3 699.0 per measurement — and
+`adapter_added_allocations = 0` asserted in all three records. The
+transient is dominated by cell-list buckets, exactly the documented P1
+pattern.
+
+### Criterion data (`benches/boolean_percolation.rs`)
+
+Unit number density, filling factor `eta` as the overlap knob;
+`realize` = full sampling realization through the production adapter
+(draw + overlap + F3 + recording), `measure` = frozen-configuration
+analysis (the equilibrium path, comparable to P1's `analyze` figure).
+`eta = 1.1281` is the disk-threshold operating point, not an exact claim.
+Representative quick-run Criterion medians (sample-size 10, warm-up 0.5 s,
+measurement 2 s; the bench records all 24 systems — measured pairs per
+particle track `2^D eta / 2` as expected):
+
+| System | pairs | measure | realize |
+|---|---|---|---|
+| 2D N=4096 eta=0.700 mono | 5 728 | 2.33 ms | 2.44 ms |
+| 2D N=4096 eta=1.128 mono | 9 279 | 2.22 ms | 2.24 ms |
+| 2D N=4096 eta=1.800 mono | 14 858 | 2.21 ms | 2.14 ms |
+| 2D N=4096 eta=1.128 poly | 8 667 | 2.60 ms | 2.55 ms |
+| 2D N=4096 eta=1.800 poly | 13 818 | 3.11 ms | 3.19 ms |
+| 2D N=16384 eta=1.128 mono | 36 944 | 9.67 ms | 9.55 ms |
+| 2D N=16384 eta=1.128 poly | 34 256 | 10.99 ms | 10.77 ms |
+| 3D N=4096 eta=1.128 mono | 18 408 | 5.14 ms | 5.22 ms |
+| 3D N=4096 eta=1.128 poly | 15 499 | 8.79 ms | 8.62 ms |
+| 3D N=16384 eta=1.128 mono | 74 431 | 24.12 ms | 22.90 ms |
+| 3D N=16384 eta=1.800 poly | 98 699 | 55.50 ms | 53.64 ms |
+
+Peak ~4.1e6 overlapping pairs/s (3D N=16384 eta=1.128 mono). The
+polydisperse per-candidate contact filter costs ~30-70% over the
+monodisperse pass-through at equal eta — one metric call per candidate
+pair on top of P1's enumeration-dominated cost, largest where the
+candidate list has the most non-survivors (3D, mixed radii).
+
+### Limitations
+
+Orthorhombic cells only (the reused cell list); contact cutoff
+`2 r_max <= L_min/2` (minimum image — the fully-overlapping 2D limit is
+therefore connectivity saturation, not a complete graph); radii are
+caller-assigned per particle (a finite-species DRAWN-radius point process
+is an extension); no continuum winding/wrapping (W-track contract);
+known thresholds are statistical brackets only.
+
 ## G1 incremental component process
 
 Status: **Experimental — awaiting independent review** (roadmap §13 G1).
@@ -2511,3 +2962,370 @@ The largest-selection bookkeeping is exact but recomputed incrementally;
 callers needing full component-size distributions at every step must
 derive them from the summary stream or wait for a process that records
 them.
+
+## G2 Achlioptas processes
+
+Status: **Experimental — awaiting independent review** (roadmap §13 G2).
+
+### Contract: the process and its explicit parameters
+
+An Achlioptas process turns random edge addition into a competition: every
+step proposes `m` candidate edges, scores each against the current
+component structure, and adds exactly ONE — the minimum-score winner
+(giant suppression). `AchlioptasProcessMC`
+(`percolation/process/achlioptas.rs`) drives the G1
+`IncrementalUnionWorkspace` unchanged: every vertex is active from step
+zero (an edge-addition process on a fixed vertex set; the initial state is
+V isolates, largest component size 1), candidates are scored through
+`component_size` (the substrate's designated scoring primitive), and each
+accepted edge is one `activate_edge` call. The process runs until EVERY
+permitted edge is added (terminal state = complete occupation of the
+universe; roadmap gate).
+
+Roadmap §13 demands that the physical parameters be explicit because "a
+generic `score(size_a, size_b)` callback is insufficient to define the
+process" — the process is defined by named, closed enums:
+
+- **`AchlioptasRule`**: `Product` (`s_u * s_v`, the classic product rule)
+  or `Sum` (`s_u + s_v`), evaluated as `u128` over the two endpoint
+  component sizes. Selection is minimum-score in both.
+- **`CandidateSampling`**: `WithoutReplacement` draws `m` distinct edges
+  from the not-yet-added pool (partial Fisher-Yates; every step adds a
+  fresh edge, exactly `|U|` steps total) or `WithReplacement` draws `m`
+  iid uniform edges from the static universe — the two conventions the
+  Riordan-Warnke paper itself describes ("from all possible edges [or]
+  from those edges not present").
+- **`EdgeUniverse`**: all physical edges, or a validated subset of dense
+  edge indices (sorted, deduplicated; out-of-domain and duplicate entries
+  are typed errors).
+- **`TiePolicy`**: a tie is two candidate edges with EQUAL score in one
+  step; `LowestEdgeIndex` (the default convention) selects the tied
+  candidate with the lowest dense edge index, `EarliestDraw` the one
+  drawn earliest. Repeated identical candidates (possible only under
+  with-replacement) are one candidate.
+
+**Null steps are decided, documented, and tested**: under
+`WithReplacement` an already-added candidate competes normally (its score
+`s*s` resp. `2*s` is legal), and when it wins the step consumes its draws,
+advances the step counter, and adds NOTHING — the candidate pool is never
+filtered or redrawn (filtering would silently change the law). The process
+then terminates at coupon-collector time, a.s.
+
+**RNG draw contract** (bitwise reproducible; verbatim in the module docs):
+initialization consumes no randomness (vertices activate in ascending
+dense order); each step consumes `k = m` draws (`WithReplacement`, each
+`random_range(0..U)` through the static universe) resp.
+`k = min(m, L)` draws (`WithoutReplacement`: the j-th draw is
+`random_range(0..L-j)`, partial Fisher-Yates into the pool tail); after
+selection the winner leaves the pool via a documented compaction (its tail
+slot `L-1-r` swaps with the last slot `L-1`). `step_with_candidates`
+drives one step from a caller-supplied candidate list with NO RNG —
+deterministic replay of a recorded trace.
+
+**Output (C0)**: one realization is ONE vector sample over the
+occupation-count axis — `AchlioptasLargestSize[i]` (largest component size
+at checkpoint `i`; 1 at zero occupation: the V active isolates) plus
+`AchlioptasOccupiedEdges[i]` (fixed checkpoint coordinates, so merged rows
+are self-describing) — plus scalars: `AchlioptasGiantReached` (0/1) and
+`AchlioptasStepsToGiant` (the EXPLICIT percolation criterion: the first
+accepted edge whose summary satisfies `2 * largest > V`, recorded as the
+occupied-edge count), `AchlioptasSteps` (proposal steps incl. nulls),
+`AchlioptasNullSteps`. Provenance strings (`as_provenance`) for run
+metadata.
+
+### Validation gates
+
+`tests/physics/achlioptas_process.rs` (10 tests; plus 6 module unit tests):
+
+- **Deterministic replay of a fixed candidate trace** (roadmap gate): a
+  test-side driver reimplements the DOCUMENTED draw contract and drives the
+  process through the public `step_with_candidates` API only — same seed
+  reproduces the drawing sweep's accepted sequence BIT-TO-BIT (accepted
+  edges, curve, giant step, terminal summary) on chain/square/random for
+  m in {2, 4, 3} across both sampling modes; re-replaying the recorded
+  trace on a fresh adapter (no RNG anywhere) reproduces it again. Frozen
+  seeds give identical sweeps.
+- **Every step vs naive BFS** (roadmap gate): after EVERY accepted edge of
+  every realization, component count / largest size / raw second moment /
+  active edge count recomputed from scratch by an independent flood fill
+  and compared against the G1 trajectory summaries — chain/square/random/
+  multigraph x {product m=2, sum m=3, product-with-replacement m=2} x 3
+  seeds; the trajectory step coordinates (`0` x V, then 1..=|U|) and the
+  `steps_to_giant` scalar are re-derived from the reference; the
+  `AchlioptasLargestSize` curve mirrors the trajectory at every Full-grid
+  checkpoint.
+- **m = 1 reduces to ordinary random edge addition** (roadmap gate):
+  bitwise — the accepted order equals a test-side uniform edge permutation
+  implementing the documented m=1 contract under the same seed (the
+  candidate IS the added edge; scoring cannot reroute it); statistically —
+  mean largest sizes at four fixed occupation counts agree with the Z1
+  `scan_bond` activation order within combined error bars (|z| <= 1.1, 40
+  seeds, both sampling modes — with-replacement reduces in distribution
+  because the first-appearance order of iid draws IS a uniform
+  permutation); m=1 with-replacement total steps match the
+  coupon-collector mean `U H_U` (measured 87.7 +/- 3.4 vs 90.6, z=-0.87,
+  60 realizations) with exact bookkeeping `steps - null_steps = U`.
+- **Terminal state = every permitted edge** (roadmap gate): exact —
+  accepted set == universe set, all permitted edges live, pool empty, for
+  AllEdges AND Subset universes under both sampling modes.
+- **Product vs sum by hand**: components of sizes 5, 2, 3, 1 built by
+  hand; candidates joining (5,1) and (2,3) score product 5 vs 6 but sum
+  6 vs 5 — the two rules accept DIFFERENT edges from the same candidate
+  set (hand-computed, unit + integration).
+- **Replacement semantics**: occupied candidates can win (null step),
+  leave the summary untouched, and the process still terminates complete.
+- **C0 recording**: `Every`-grid vector shape, one vector sample per
+  realization, constant coordinates, all four scalars, provenance strings.
+
+### Literature anchor: Riordan & Warnke continuity
+
+O. Riordan, L. Warnke, "Achlioptas Process Phase Transitions Are
+Continuous", Science 335, 1189-1191 (2012) (arXiv:1102.5306, archived in
+`docs/ref/`; the archived v3 is the extended Ann. Appl. Probab. version):
+Theorems 1-2 prove that for any merging rule — in particular any
+Achlioptas process, including the product rule — the rescaled giant
+component evolves CONTINUOUSLY (no discontinuous jump, `L1(m) >= N_>=K(m) -
+eps*n` whp at every step).
+
+Anchor gate (product rule, m = 2, without replacement, fixed sparse ER
+graphs of mean degree 4; every number a mean with real error bars over
+independent seeded realizations; statistical claims, never exact):
+
+- **Finite-cluster susceptibility** `chi_fin = (sum s_i^2 - S_max^2) /
+  (N - S_max)` in the transition window 0.4-1.6 edges/vertex PEAKS at
+  **363.4 +/- 16.3** (N = 2^12, 48 realizations) vs
+  **1898.1 +/- 116.0** (N = 2^15, 24 realizations): growth x5.22 with a
+  13.1-sigma separation — the signature of a CONTINUOUS transition (a
+  discontinuous one would keep the susceptibility O(1)).
+- **No O(1) jump**: the max single-window increase of the mean
+  `S_max/N` curve SHRINKS as the window is refined (a discontinuous
+  transition would saturate at a fixed jump): N = 2^12 — 0.224 over
+  32-edge windows vs 0.626 over 128-edge (shrink ratio 0.36); N = 2^15 —
+  0.401 over 256-edge vs 0.722 over 1024-edge (shrink ratio 0.56). All
+  absolute jumps < 1. The 2^15 curve is genuinely steep — "explosive" at
+  finite N, exactly why the Riordan-Warnke proof was needed; the window
+  refinement and the susceptibility growth together are the
+  accessible-size continuity evidence.
+
+### Allocation probe
+
+`report_achlioptas_case` in `benches/percolation_allocations.rs`
+(`cargo bench -p cmc-rs --bench percolation_allocations --features
+allocation-probe`): one realization = V vertex re-activations + E
+candidate steps (2 draws, 2 `component_size` scorings, 1 union each) to
+complete occupation. **Zero allocations per realization are asserted** on
+all five benchmark topologies (chain/square/cubic/sparse-er/power-law at
+V = 4096, 128 realizations each; measured 0.000 allocations and bytes).
+
+### Benchmark
+
+`cargo bench -p cmc-rs --bench achlioptas_process` (one iteration = 2
+complete realizations, product rule m = 2 without replacement, `Every`
+grid of 64 windows; throughput unit = process steps):
+
+| Topology | V | E | Steps/realization | Throughput |
+|---|---|---|---|---|
+| chain | 4096 | 4095 | 4095 | ~9.3 M steps/s |
+| square | 4096 | 8064 | 8064 | ~8.9-9.5 M steps/s |
+| cubic | 4096 | 11520 | 11520 | ~9.9-10.4 M steps/s |
+| sparse ER | 4096 | 16384 | 16384 | ~11.4-11.8 M steps/s |
+| preferential attachment | 4096 | 16374 | 16374 | ~10-11 M steps/s |
+
+(Measured on a busy shared machine; ~0.9-2.9 ms per iteration. Each step
+= 2 candidate draws + 2 root-walk scorings + 1 union-find union + curve
+bookkeeping.)
+
+### Limitations
+
+The percolation scalar is the explicit half-of-V criterion only; a
+boundary-query arm (a component touching caller-defined vertex sets)
+needs cross-component identity queries the G1 substrate does not expose
+(`component_size` gives sizes; two distinct components may share a size),
+and fabricating a second union-find to answer them would duplicate G1 —
+deferred until the substrate grows a `same_component` query. The
+without-replacement pool is an unordered set (draws are position-uniform),
+so pool ARRANGEMENT after `step_with_candidates` may differ from a
+drawing sweep at the same point (same content, same law, bitwise-identical
+accepted sequences; only a sweep continuing to draw after a partial replay
+would notice). Self-loops and parallel edges follow the platform
+convention (a self-loop is a permitted edge that never merges anything).
+The adapter owns its lattice (clone for repeated use); driving borrowed
+views means calling the G1 substrate plus this module's step logic
+manually.
+
+## G3 invasion percolation
+
+Status: **Experimental — awaiting independent review** (roadmap §13 G3).
+
+One realization freezes a threshold field — one `f64` per vertex (site
+mode) or per physical edge (bond mode) — and grows an invasion cluster
+from explicit seeds through the **minimum-threshold frontier**: every step
+accepts the frontier's smallest entry, its un-invaded endpoint joins the
+cluster, and the entry's edge becomes the invasion-tree edge. The founding
+reference is Wilkinson & Willemsen, J. Phys. A 16, 3365 (1983) — it
+predates arXiv, so no PDF is archivable (the same Tarjan precedent as D2);
+the delivered rule set is instead anchored to exact in-repo verification
+and to the archived Sweeney & Middleton, Phys. Rev. E 88, 032129 (2013)
+(`docs/ref/SweeneyMiddleton_2013_PRE_mst_percolation_threshold.pdf`),
+which states the invasion-percolation/MST correspondence.
+
+### API
+
+- `invasion_run(graph, mode, thresholds, seeds, stop, trapping, workspace)`:
+  the RNG-free core. Any finite thresholds are legal (the law does not
+  require uniformity); NaN/infinity are typed rejections (`total_cmp`
+  needs a total order). The workspace is re-prepared idempotently, so a
+  correctly sized workspace never allocates in steady state. Returns an
+  `InvasionOutcome` (seed count, accepted total, invaded vertices,
+  trapped sites, max accepted threshold — the invasion barrier — stop
+  reason and stop step); the workspace exposes `invaded_order()`,
+  `parent()`, `accepted_edges()`, `accepted_thresholds()`, and the driven
+  G1 `substrate()`.
+- `InvasionMode::Site` / `InvasionMode::Bond`: which element carries the
+  frozen field. Site mode queues each site once — when the first invader
+  reaches it — carrying that invader's first incidence as the tree edge;
+  bond mode queues boundary edges (exactly one invaded endpoint) and
+  discards stale pops whose far endpoint was invaded meanwhile; parallel
+  edges are independent frontier entries; self-loops never enter.
+- `InvasionStop`: `GrowAll` (until frontier exhaustion — with non-trapping
+  growth this invades the seeds' whole components), `FirstSpanning { from,
+  to }` (checked after planting and after every accepted step, so two
+  seeds already satisfying it stop at step zero), `Steps(n)` (exactly n
+  accepted steps, zero legal). A frontier exhausted first stops with
+  `FrontierExhausted` and the full accepted count as the stop step.
+- `InvasionTrapping`: `NonTrapping` (default) or `Trapping { exit }` — the
+  Wilkinson-Willemsen rule. A candidate site is invadable iff it is
+  connected to an un-invaded exit vertex through un-invaded sites (an
+  invaded outlet no longer provides escape; exit vertices are invadable
+  through the normal minimum rule). The defending phase only shrinks, so a
+  trapped verdict is final: sites retire permanently, each verdict costing
+  one early-exit DFS of the defending region (O(V·(V+E)) worst case — the
+  honest cost model, stated in the module docs rather than hidden).
+- `InvasionPercolationMC`: the scheduler adapter over an owned
+  `UndirectedGraphView`. One `sweep()` draws the field (bitwise contract:
+  one `f64` per element in ascending dense order, uniform on [0,1)) and
+  grows one realization; `measure()` records ONE C0 vector sample plus
+  scalars. Configure `thermalization_sweeps = 0`; realizations are i.i.d.
+
+### Explicit tie policy
+
+Equal thresholds resolve by the **lowest dense ID** — the vertex index in
+site mode, the physical-edge index in bond mode. The heap key is
+`f64::total_cmp` on the threshold, then dense ID ascending; keys are
+unique per entry (one heap entry per site / per edge), so the pop order is
+deterministic even though `BinaryHeap` itself is unstable. `total_cmp`
+orders `-0.0 < +0.0` as distinct keys (no tie) — documented and pinned by
+a gate that would fail under an ID tie-break.
+
+### Validation gates (roadmap §13, verbatim)
+
+`tests/physics/invasion_percolation.rs` (16 tests):
+
+- **Fixed-weight hand-worked graphs**: a 7-vertex, 9-edge multigraph
+  (parallel pair 1-3, self-loop at 3) with hand-assigned thresholds. The
+  complete sequence, the live-frontier evolution (a hand table of every
+  frontier after planting and after each step — including the three-entry
+  race for vertex 3 that the parallel edge wins, the never-queued
+  self-loop, and the stale pops), and the parent tree are asserted against
+  production in BOTH modes; the hand tables are simultaneously asserted
+  against the scan reference, closing the loop hand → reference →
+  production.
+- **Binary heap versus scanning the complete frontier each step**: an
+  independent test-side reference rebuilds the entire frontier from
+  scratch before every acceptance (all edges in bond mode, all un-invaded
+  frontier sites in site mode), sorts by the documented key, and walks it
+  (retirement included). 576+ grid comparisons — chain / square /
+  self-loop+parallel random multigraph / two-component graph × both modes
+  × continuous and five-level-quantized (tie-saturated) threshold draws ×
+  single and double seeds × GrowAll / Steps(3) / FirstSpanning — plus a
+  trapping grid (both modes, exit at the far vertex). Every comparison
+  checks order, accepted edges, accepted thresholds, parent array, stop
+  reason/step, and every outcome scalar.
+- **Tree uniqueness**: the invasion graph is a forest — exactly
+  `invaded - seeds` accepted edges, no cycle (independent union-find
+  replay: every accepted edge must merge two distinct classes), one
+  parent per invaded non-seed vertex, one tree per seed (trees never
+  merge, verified by BFS partition on two-seed same-component runs), and
+  the forest spans exactly the invaded vertices.
+- **Non-trapping bond invasion agrees with the applicable Prim/MST prefix
+  relation when thresholds are unique** — stated precisely and verified:
+  single seed ⇒ the accepted-edge sequence is exactly Prim's growth order
+  from the seed (independent test-side Prim, all-edges cut scan) and the
+  terminal tree is the unique MST of the seed's connected component
+  (independent test-side Kruskal, edge-set equality); k seeds ⇒ Prim's
+  order from a virtual super-root joined to every seed by `-inf` edges,
+  terminal forest = the min-weight spanning forest with k trees, one seed
+  each; `Steps(n)` ⇒ the exact n-edge prefix. Chain, square, and
+  self-loop+parallel multigraph × four unique-threshold draws each
+  (dyadic values, exact comparisons), all agreeing.
+- **Explicit-policy gates**: tie hand examples (star graph, full and
+  partial ties in both modes, the `-0.0 < +0.0` pin), stop policies
+  (Steps 0/3/6/over-budget; FirstSpanning at the BFS-verified spanning
+  step for every target — reachable at the stop step, unreachable one
+  step earlier — plus the two-seed step-zero stop and the exhausted
+  unreachable case), Wilkinson-Willemsen trapping hand traces (outlet
+  invaded then branch sealed; near side trapped while the chain drains to
+  a live outlet; bond mode where retiring a site consumes BOTH parallel
+  frontier entries targeting it), the G1 substrate drive (trajectory
+  steps are the invasion times, `[0, 1, 1, 2, 2, ...]`; online vertex and
+  edge counts after every complete growth; two seeds in one component
+  remain two substrate components — the substrate tracks the forest, not
+  graph connectivity), the bitwise adapter draw contract (dense-order
+  replay), C0 history compression (truncate / final-threshold padding /
+  all-zero no-acceptance), typed rejections (length mismatch, NaN,
+  infinity, empty/duplicate/out-of-domain seeds, spanning and exit
+  domains, empty graph, zero-length recorded array), and workspace reuse
+  (determinism, trapping-marks clearing, cross-topology re-prepare).
+
+### Allocation probe
+
+`report_invasion_case` in `benches/percolation_allocations.rs`: one
+complete realization (frozen-field draw, heap-frontier growth to
+exhaustion, substrate drive, C0 history compression, measurement) —
+site, bond, and the trapping variant — **asserts zero allocations per
+realization** on all five shared topologies at V = 4096 (128 measured
+realizations each; measured 0.000 allocations and bytes, matching the
+kcore/bootstrap/incremental/achlioptas probe policy). One subtlety fixed
+during delivery: `InvasionWorkspace::prepare` now drains the heap BEFORE
+`try_reserve_exact` (which budgets `len + additional`), so reuse demands
+exactly `max(V, E)` capacity instead of transiently twice that.
+
+### Criterion data
+
+`cargo bench -p cmc-rs --bench invasion_percolation` (one iteration = 4
+complete GrowAll realizations from seed 0 on the shared topologies,
+V = 4096; every realization accepts the full seed component = 4095
+growth steps; throughput unit = accepted growth steps; quick mode):
+
+| Topology | V | E | Mode | Time/iteration | Throughput |
+|---|---|---|---|---|---|
+| chain | 4096 | 4095 | site | 1.010 ms | 16.2 M steps/s |
+| chain | 4096 | 4095 | bond | 1.021 ms | 16.0 M steps/s |
+| square | 4096 | 8064 | site | 3.279 ms | 5.00 M steps/s |
+| square | 4096 | 8064 | bond | 5.311 ms | 3.08 M steps/s |
+| cubic | 4096 | 11520 | site | 3.616 ms | 4.53 M steps/s |
+| cubic | 4096 | 11520 | bond | 8.073 ms | 2.03 M steps/s |
+| sparse-er | 4096 | 16384 | site | 4.817 ms | 3.40 M steps/s |
+| sparse-er | 4096 | 16384 | bond | 12.484 ms | 1.31 M steps/s |
+| power-law | 4096 | 16374 | site | 4.196 ms | 3.90 M steps/s |
+| power-law | 4096 | 16374 | bond | 10.567 ms | 1.55 M steps/s |
+
+Bond mode is 1.6-2.6x slower than site mode at equal E: every accepted
+growth pushes all incidences of the new vertex as independent heap
+entries (bounded by E total), versus site mode's one-entry-per-site
+guarantee (bounded by V). Heap-versus-full-frontier-scan is a
+correctness gate, not a benchmark axis (the scan is O(frontier) per step
+by construction and is not production code).
+
+### Limitations
+
+`InvasionMaxAcceptedThreshold` is 0.0 for a zero-acceptance realization
+(the adapter draws [0,1), so negative maxima arise only through the core
+with caller-supplied negative thresholds — handled exactly via `reduce`).
+The trapping escape check is an early-exit DFS with monotone retirement
+(O(V·(V+E)) worst case; a split-maintaining union-find has the same
+asymptotic worst case, so the simpler mechanism is the documented
+choice). Site-mode tree edges are fixed at first push by the documented
+carrying rule — a modeling choice, not a physical asymmetry. The adapter
+owns its lattice (clone it per process); driving borrowed views means
+calling `invasion_run` directly.

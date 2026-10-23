@@ -50,6 +50,16 @@ PAPERS = {
         "Random Structures Algorithms 30, 50-62 (2007)",
         "https://arxiv.org/abs/math/0508453",
     ),
+    "Riordan_2012_Science_achlioptas_continuous": (
+        "Achlioptas Process Phase Transitions Are Continuous",
+        "Science 335, 1189-1191 (2012)",
+        "https://arxiv.org/abs/1102.5306",
+    ),
+    "Mertens_2012_PRE_continuum_percolation_thresholds_2d": (
+        "Continuum Percolation Thresholds in Two Dimensions",
+        "Phys. Rev. E 86, 061109 (2012)",
+        "https://arxiv.org/abs/1209.4936",
+    ),
 }
 
 def main() -> int:
