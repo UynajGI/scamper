@@ -207,9 +207,11 @@ requires archiving the 2D FK/Potts duality reference at T-time
 
 ## 8. Stage status
 
-All stages Not started. The first PR should be T2 (heterogeneous NZ) —
-smallest scope, exercises the anchor-first rule end to end — or T1 if an
-acceptable adaptive-attack anchor is identified first.
+T1 and T2 are delivered and independently reviewed (2026-10-22, reports in
+`docs/reviews/`, both PASS; follow-ups applied; PERCOLATION.md rows at
+Validated). The next PR is T3 (honeycomb/kagome embeddings) or T4
+(continuum winding) — both contracts are definitional/hand-derived, so
+their sequencing is free.
 
 ## 9. Archived anchors for v2 (already in docs/ref/)
 

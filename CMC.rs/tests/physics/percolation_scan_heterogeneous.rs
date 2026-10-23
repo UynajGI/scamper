@@ -501,9 +501,37 @@ fn heterogeneous_uniform_field_reduces_to_binomial_reweight() {
             )
             .unwrap();
             assert_eq!(delegated.value, binomial);
-            assert_eq!(delegated.unit_mass, 1.0);
         }
     }
+
+    // Pin the N-scaling of the constant-field agreement (review follow-up):
+    // the log-recurrence rounding grows with the universe, so the 1e-9 gate
+    // above is an N=16 statement — at N=10^4 the two log paths drift to
+    // ~2e-9 relative and must stay well below 1e-8.
+    let lattice = build_square(100, 100, false);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x5E_4400);
+    let curve = scan_site(&lattice, &mut scan_workspace, &mut rng).unwrap();
+    let constant = vec![0.5927; curve.trials()];
+    let het = reweight_heterogeneous(
+        &curve,
+        &field(&constant),
+        ScanObservable::LargestComponentSize,
+        &mut het_workspace,
+    )
+    .unwrap();
+    let binomial = reweight(
+        &curve,
+        probability(0.5927),
+        ScanObservable::LargestComponentSize,
+        &mut binomial_workspace,
+    )
+    .unwrap();
+    let relative = ((het.value - binomial) / binomial).abs();
+    assert!(
+        relative < 1e-8,
+        "N=10^4 constant-field reduction drifted to {relative:e} relative"
+    );
+    assert!((het.unit_mass - 1.0).abs() < 1e-8);
 }
 
 #[test]

@@ -781,8 +781,12 @@ fn adaptive_tie_policies_reproduce_and_differ_only_through_keys() {
 // T1 gate 5: Holme et al. (2002) Fig. 7(e) statistical bracket.
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Barabási–Albert preferential-attachment graph, the Holme et al. (2002)
-/// Sec. IV E construction: initial complete graph on `m0` vertices; every
+/// Barabási–Albert preferential-attachment graph for the Holme et al. (2002)
+/// Fig. 7(e) configuration. Their Sec. IV E starts from `m0` vertices and
+/// NO edges; with an empty core the first attachment steps would draw from
+/// an empty endpoint pool, so — like every standard BA implementation — the
+/// builder starts from the complete graph on `m0` vertices instead (a
+/// necessary deviation of m0(m0-1)/2 = 10 edges, 0.03% of E here). Every
 /// later vertex attaches to `m` DISTINCT existing vertices, each target
 /// drawn from an endpoint pool proportional to current degree (a duplicate
 /// draw is redrawn). Graph builder only — deliberately test-local, not
@@ -958,15 +962,23 @@ fn adaptive_attack_bracket_matches_holme_fig7e() {
     );
 
     // Early stage (Holme: differences among procedures "not significant"):
-    // at the first grid point the CIs must overlap (RD ~ ID before the
-    // recalculated information diverges from the initial one).
-    let (rd_mean0, rd_lo0, rd_hi0, _) = se_95(&rd[0]);
-    let (id_mean0, id_lo0, id_hi0, _) = se_95(&id[0]);
-    assert!(
-        rd_lo0 <= id_hi0 && id_lo0 <= rd_hi0,
-        "early stage must have overlapping CIs: RD {rd_mean0} [{rd_lo0},{rd_hi0}] \
-         ID {id_mean0} [{id_lo0},{id_hi0}]"
-    );
+    // at EVERY grid point with f <= 0.125 the CIs must overlap (RD ~ ID
+    // before the recalculated information diverges from the initial one) —
+    // matching the whole documented early-overlap range, not just its
+    // first point.
+    for index in 0..removals.len() {
+        if removals[index] as f64 / N as f64 > 0.125 {
+            break;
+        }
+        let (rd_mean_i, rd_lo_i, rd_hi_i, _) = se_95(&rd[index]);
+        let (id_mean_i, id_lo_i, id_hi_i, _) = se_95(&id[index]);
+        assert!(
+            rd_lo_i <= id_hi_i && id_lo_i <= rd_hi_i,
+            "early stage (f = {:.3}) must have overlapping CIs: RD {rd_mean_i} \
+             [{rd_lo_i},{rd_hi_i}] ID {id_mean_i} [{id_lo_i},{id_hi_i}]",
+            removals[index] as f64 / N as f64
+        );
+    }
 
     // Both attacks reach S ~ 0 far earlier than random failure: the
     // smallest f where BOTH attack upper CIs sit below 0.05 must leave the

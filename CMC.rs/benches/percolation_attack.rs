@@ -13,8 +13,9 @@
 //! naive full-rescan reference (every step recomputes every active
 //! vertex's residual degree from adjacency, O(V * (V + E))). The naive
 //! reference is deliberately NOT production code; it duplicates the
-//! test-local reference of `tests/physics/percolation_attack.rs` (kept in
-//! sync by the exact-parity gate there).
+//! test-local reference of `tests/physics/percolation_attack.rs` — the
+//! exact-parity gate pins THAT copy, not this one, so treat divergence
+//! between the two references as a smell and re-verify by hand.
 //!
 //! Run with: cargo bench -p cmc-rs --bench percolation_attack
 

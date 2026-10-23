@@ -295,9 +295,14 @@ pub struct HetReweightResult {
 /// terms being positive — suffer catastrophic cancellation; relative error
 /// stays at the accumulated-rounding scale of the log recurrences. Individual
 /// `u_n` that underflow to zero are negligible against the running maximum by
-/// construction. The final `exp(l_max)` restores the linear scale; it
-/// saturates to infinity only when a single scan's log-mass excursion
-/// exceeds `ln(f64::MAX) ~ 709.8`.
+/// construction. The final `exp(l_max)` restores the linear scale. Outside
+/// the variance envelope below, the reachable failure mode is underflow: a
+/// near-degenerate field can push the best single-scan log-mass below
+/// `-ln(f64 range)`, making `exp(l_max)` — and hence `value` and
+/// `unit_mass` — exactly `0.0` (observed at a half-0.01/half-0.99 field on
+/// `N = 10^4`). The mirror side, saturation to infinity past
+/// `ln(f64::MAX) ~ 709.8`, needs a positive excursion that large and has
+/// not been observed even at `N = 2 * 10^5`.
 ///
 /// # Variance caveat
 ///
