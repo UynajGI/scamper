@@ -32,3 +32,32 @@
   "Experimental — awaiting independent review" to "Integrator-verified —
   independent re-run recommended pre-merge" (a distinct, honest status;
   the support matrix and roadmap rows say exactly this).
+
+---
+
+## ADDENDUM — independent review of G3 and R3 (same day, post-audit)
+
+The G3+R3 reviewer agent launched before the usage limit survived and
+completed a full independent review after the integrator record above was
+written. Its verdicts SUPERSEDE the integrator-verified status for those
+two stages:
+
+| Stage | Independent verdict | Reviewer's independent confirmation |
+|---|---|---|
+| G3 invasion | **PASS** | Fresh hand traces on its OWN fixtures (three-way duplicate thresholds, parallel pairs, trapping with one outlet, all-negative fields); a 3600-case randomized stress against a structurally different reference (multi-source BFS from exits) INCLUDING the trapping x Steps/FirstSpanning cross-product the shipped suite lacked; the heap unique-key determinism argument accepted as verified; both resume-agent fixes confirmed present and behaviorally pinned; the Prim and Kruskal references confirmed from-scratch |
+| R3 Edwards-Sokal | **PASS** | Partition function verified BY HAND on a 2-edge parallel graph at beta=0.5 (4 cosh(0.9) agreement at 2e-16); the SW step audited line-by-line (same-spin-only opens with no variate consumed on opposite-spin edges — verified at beta=50 and at underflow; ONE draw per FK cluster — cluster coherence verified across 2000 sweeps); the exposed BondSample confirmed to be the literal RNG output (bit-for-bit stream replay); worm separation confirmed at the code level (zero percolation imports in worm/) |
+
+### Follow-ups applied from that review
+
+1. The stale "R2/R3 samplers are Not implemented" sentence in the R1
+   section of PERCOLATION.md corrected (they are delivered and consume
+   the R1 contract).
+2. The trapping x stop-policy cross-product folded into the shipped
+   invasion suite (`trapping_matches_reference_under_every_stop_policy`,
+   17th test) so the reviewer's external coverage now lives in-tree.
+3. Notes recorded without action: the R3 per-sweep BondSample rebuild
+   allocation (one allocation per sweep, ~88 µs/sweep at E=4095, no spec
+   gate requires a probe — noted for a future optimization pass); the
+   z_gap variance overestimate (conservative direction, both estimators
+   separately gated); the InvasionThresholdOrder tail-repeat mean-bias
+   caveat (documented; the scalars carry the true lengths).

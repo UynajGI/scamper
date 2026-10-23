@@ -1912,3 +1912,56 @@ fn invalid_inputs_are_typed_rejections() {
         Err(InvasionError::NoSteps)
     ));
 }
+
+/// Review follow-up 2026-10-23: the shipped trapping grid only exercised
+/// `GrowAll`; the independent review's 3600-case stress covered trapping x
+/// Steps/FirstSpanning — fold the cross-product into the repo suite so the
+/// coverage lives in-tree.
+#[test]
+fn trapping_matches_reference_under_every_stop_policy() {
+    let graphs = [
+        ("chain", build_chain(10, false)),
+        ("random-multigraph", random_multigraph(8, 9)),
+    ];
+    for (name, graph) in &graphs {
+        let vertices = graph.vertex_count();
+        let edge_count = graph.n_edges();
+        for mode in [InvasionMode::Site, InvasionMode::Bond] {
+            for seed in 0..4_u64 {
+                let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x9741 + seed);
+                let field_len = match mode {
+                    InvasionMode::Site => vertices,
+                    InvasionMode::Bond => edge_count,
+                };
+                let thresholds: Vec<f64> = (0..field_len)
+                    .map(|_| (rng.random::<f64>() * 4.0).floor() * 0.25)
+                    .collect();
+                for stop in [
+                    NaiveStop::Steps(3),
+                    NaiveStop::Steps(7),
+                    NaiveStop::FirstSpanning {
+                        from: 0,
+                        to: vertices - 1,
+                    },
+                ] {
+                    let label = match stop {
+                        NaiveStop::Steps(n) => format!("Steps({n})"),
+                        NaiveStop::FirstSpanning { .. } => "FirstSpanning".to_string(),
+                        NaiveStop::GrowAll => "GrowAll".to_string(),
+                    };
+                    let context = format!("{name} {mode:?} seed {seed} trapping {label}");
+                    assert_production_matches_naive(
+                        &context,
+                        graph,
+                        mode,
+                        &thresholds,
+                        &[0],
+                        stop,
+                        Some(&[vertices - 1]),
+                    );
+                }
+            }
+        }
+        eprintln!("trapping x stop-policy parity: {name} ok");
+    }
+}
