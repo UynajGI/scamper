@@ -154,14 +154,20 @@ Graph distance on the LRP cluster vs |x−y| in each Biskup regime:
 statistical brackets on 1D boxes. **Anchor quantities (Biskup, archived
 `docs/ref/md/Biskup_2003_long_range_chemical_distance.md`): the main
 theorem D(x,y) = (log|x−y|)^{Δ+o(1)} for s ∈ (d,2d) with Δ⁻¹ =
-log₂(2d/s) (abstract/main theorem); s = d gives D_N = Θ(log N / log log N)
-(Eq. 1.9); s < d is the stochastic-dimension power-law regime (Eq. 1.8);
+log₂(2d/s) (the sharp TYPICAL-distance statement — bracket this);
+s = d gives D_N = Θ(log N / log log N) for the DIAMETER with the
+typical distance "at most logarithmic" and the lower bound explicitly
+missing (bracket the upper-envelope only); s < d is the stochastic-
+dimension regime where Eq. (1.8) bounds the SUP/diameter distance by the
+power law — the typical distance is smaller and no sharp statement is
+proved (bracket the box DIAMETER, never the typical distance, there);
 s ≥ 2d returns to linear chemical distance with a positive time constant
 (the critical case s = 2d is explicitly not well understood — do NOT
 bracket it).** On d = 1 the regime boundaries fall at s = 1 and s = 2:
-bracket log^Δ growth inside (1,2) (Δ⁻¹ = log₂(2/s) checkable per s),
-sub-power behavior for s < 1, and linear-plus-constant for s > 2.
-C0 vector output = distance profiles.
+bracket the (log r)^Δ typical distance inside (1,2) (Δ⁻¹ = log₂(2/s)
+checkable per s), the diameter envelope at s ≤ 1, and linear-plus-
+constant typical distance for s > 2. C0 vector output = distance
+profiles.
 
 ### L3: Diameter transitions
 Box graph diameter vs s across the regime boundaries.
