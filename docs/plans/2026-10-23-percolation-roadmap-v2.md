@@ -244,11 +244,10 @@ requires archiving the 2D FK/Potts duality reference at T-time
 
 ## 8. Stage status
 
-T1 and T2 are delivered and independently reviewed (2026-10-22, reports in
-`docs/reviews/`, both PASS; follow-ups applied; PERCOLATION.md rows at
-Validated). The next PR is T3 (honeycomb/kagome embeddings) or T4
-(continuum winding) — both contracts are definitional/hand-derived, so
-their sequencing is free.
+All four T-track residue stages are delivered (T1/T2 reviewed and
+Validated 2026-10-22; T3 `9211ea5` / T4 `d663435` Experimental pending
+their independent reviews). The T track is closed; F1 (weighted-shortest-
+path layer) starts next, then L/C/Q in dependency order.
 
 ## 9. Archived anchors for v2 (already in docs/ref/)
 
