@@ -85,8 +85,9 @@
 //! one-tie-broken-path analog of that persistence question, NOT the
 //! survey's overlap object; no asymptotic claim is made. Correctness
 //! (every reconstructed path is a true geodesic and simple) is gated, and
-//! the ladder's mean persistence is reported with CIs as exploratory
-//! convergence evidence only.
+//! the ladder's mean persistence is reported with CIs as a descriptive
+//! exploratory statistic only (fresh-seed ladders are not monotone; no
+//! convergence claim is made).
 //!
 //! # Cost
 //!
@@ -674,7 +675,7 @@ pub fn geodesic_count_run<G: UndirectedGraphView>(
         for incidence in graph.incidences(VertexId::from_valid_index(u)) {
             let v = incidence.neighbor.index();
             let edge = incidence.edge.index();
-            if dist[u] + weights[edge] == dist[v] && dist[v] > dist[u] {
+            if dist[v].is_finite() && dist[u] + weights[edge] == dist[v] && dist[v] > dist[u] {
                 match workspace.ways[v].checked_add(ways_u) {
                     Some(value) => workspace.ways[v] = value,
                     None => {

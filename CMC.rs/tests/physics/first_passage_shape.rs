@@ -869,3 +869,21 @@ fn typed_rejections_leave_state_untouched() {
          — state untouched on every counting rejection"
     );
 }
+
+#[test]
+fn overflowed_path_times_are_unreachable_not_geodesics() {
+    // Review follow-up (M1): dist[u] + w can overflow to +infinity and equal
+    // an unreachable dist[v] = infinity. Such an edge is NOT tight; the
+    // target has no finite path and its geodesic count must be zero.
+    let graph = cmc_rs::build_chain(3, false);
+    let weights = [f64::MAX, f64::MAX];
+    let mut workspace = cmc_rs::GeodesicCountWorkspace::new();
+    let outcome = cmc_rs::geodesic_count_run(&graph, &weights, 0, 2, &mut workspace)
+        .expect("overflowing weights are legal finite weights");
+    assert_eq!(outcome.geodesic_count, 0);
+    assert!(!outcome.saturated);
+    eprintln!(
+        "F3 overflow guard: reached={} count={} (unreachable target)",
+        outcome.reached, outcome.geodesic_count
+    );
+}
