@@ -108,6 +108,8 @@ mod lattice_exact;
 mod long_convergence;
 #[path = "physics/long_range.rs"]
 mod long_range;
+#[path = "physics/long_range_diameter.rs"]
+mod long_range_diameter;
 #[path = "physics/long_range_distances.rs"]
 mod long_range_distances;
 #[path = "physics/molecule_equilibrium.rs"]

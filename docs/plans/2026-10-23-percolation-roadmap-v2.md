@@ -265,9 +265,13 @@ Validated. L2 is delivered, independently reviewed 2026-10-24
 pre-run `occupied_edge_count` bug — are fixed as follow-ups: the linear
 gate is now paired per realization at R=24 with 95% CIs, and `prepare`
 reserves adjacency capacity without resizing; the estimator, overflow,
-and wording minors are also applied) — Validated. Then L3/F3 (F3's gates
-to be defined with the user — research-grade) and C/Q in dependency
-order.
+and wording minors are also applied) — Validated. L3 is delivered with
+its seven diameter-regime gates green (2026-10-24: the s>2 ratio/slope/
+time-constant bracket, the sub-polynomial (1,2) bracket, the s=1
+log-envelope bracket, the bounded s<1 case, the ungated s=2 critical
+case, ladder replay parity, and typed rejections) and is awaiting
+independent review. F3 (research-grade) and the C/Q tracks are in
+progress.
 
 ## 9. Archived anchors for v2 (already in docs/ref/)
 

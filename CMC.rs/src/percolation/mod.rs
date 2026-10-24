@@ -37,6 +37,7 @@ mod first_passage;
 mod first_passage_observables;
 mod law;
 mod long_range;
+mod long_range_diameter;
 mod long_range_distances;
 mod network;
 mod observable;
@@ -84,6 +85,9 @@ pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
 pub use long_range::{
     long_range_run, LongRangeBox, LongRangeError, LongRangeOutcome, LongRangePercolationMC,
     LongRangeWorkspace,
+};
+pub use long_range_diameter::{
+    measure_diameter_ladder, DiameterLadder, DiameterLadderError, DiameterRegime, DiameterRow,
 };
 pub use long_range_distances::{
     chemical_distance_run, ChemicalDistanceError, ChemicalDistanceEstimate,
