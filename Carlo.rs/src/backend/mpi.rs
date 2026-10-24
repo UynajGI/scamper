@@ -175,6 +175,10 @@ enum ControllerCommand {
     Stop,
 }
 
+// `Results` grew with C0 vector estimates; these are short-lived wire
+// messages whose size is dominated by the completed payload, so boxing
+// would add indirection without reducing the steady-state cost.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Serialize, Deserialize)]
 enum WorkerReport {
     Ready,
@@ -1040,6 +1044,9 @@ impl MpiBackend {
 // Distributed execution
 // ============================================================================
 
+// One outcome per completed task; the C0 `Results` payload dominates the
+// enum size and is consumed immediately by the controller.
+#[allow(clippy::large_enum_variant)]
 #[cfg(feature = "mpi")]
 #[derive(Debug)]
 enum GroupOutcome {
