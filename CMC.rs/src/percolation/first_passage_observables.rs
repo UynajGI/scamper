@@ -352,6 +352,8 @@ impl PassageSampler {
             });
         }
         self.weights.copy_from_slice(weights);
+        // On a downstream rejection the sampler's internal weight buffer
+        // retains these values (the caller's slice is never mutated).
         self.run()
     }
 

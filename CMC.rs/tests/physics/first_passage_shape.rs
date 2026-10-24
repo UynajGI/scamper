@@ -365,8 +365,8 @@ fn directional_time_constants_converge_from_above() {
             );
             assert!(
                 value + T975_DF149 * sem < 1.0,
-                "{:?} n = {distance}: subadditivity gives mu <= E tau_e = 1, strictly here \
-                 (Theorem 2.4 for a non-trivial F)",
+                "{:?} n = {distance}: the axis-direction bound mu <= E tau_e = 1 is applied \
+                 here to the measured per-step mu (Theorem 2.4 for a non-trivial F)",
                 name
             );
         }
@@ -886,4 +886,34 @@ fn overflowed_path_times_are_unreachable_not_geodesics() {
         "F3 overflow guard: reached={} count={} (unreachable target)",
         outcome.reached, outcome.geodesic_count
     );
+}
+
+#[test]
+fn source_equals_target_and_parallel_edges_are_counted_correctly() {
+    use cmc_rs::{geodesic_count_run, Bond, BondType, CsrLattice, GeodesicCountWorkspace};
+    let chain = cmc_rs::build_chain(3, false);
+    let mut workspace = GeodesicCountWorkspace::new();
+    let same =
+        geodesic_count_run(&chain, &[1.0, 1.0], 1, 1, &mut workspace).expect("source == target");
+    assert_eq!(same.geodesic_count, 1);
+    assert_eq!(
+        same.reached, 3,
+        "all chain vertices are reachable from source 1"
+    );
+
+    let parallel = CsrLattice::try_from_edges(
+        2,
+        vec![
+            Bond::new(0, 1, BondType::Generic, 0.7),
+            Bond::new(0, 1, BondType::Generic, 0.7),
+        ],
+    )
+    .expect("parallel multigraph");
+    let both = geodesic_count_run(&parallel, &[0.7, 0.7], 0, 1, &mut workspace)
+        .expect("parallel equal weights");
+    assert_eq!(both.geodesic_count, 2);
+    let lighter = geodesic_count_run(&parallel, &[0.5, 1.0], 0, 1, &mut workspace)
+        .expect("parallel unequal weights");
+    assert_eq!(lighter.geodesic_count, 1);
+    eprintln!("F3 edge cases: source==target -> 1; parallel edges -> 2 equal / 1 lighter");
 }

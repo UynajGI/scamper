@@ -75,9 +75,11 @@
 //!
 //! # Exploratory aging statistic
 //!
-//! [`geodesic_aging`] measures the fraction of the geodesic to `n u` that
-//! survives as the PREFIX of the geodesic to `2 n u` in the SAME
-//! environment and under F1's deterministic predecessor tie policy. The
+//! [`geodesic_aging`] measures the fraction of the VERTEX sequence of the
+//! geodesic to `n u` that survives as the prefix of the geodesic to `2 n u`
+//! in the SAME environment and under F1's deterministic predecessor tie
+//! policy. (The survey's overlap object is a set of edges; this vertex-
+//! prefix statistic is a related but distinct exploratory proxy.) The
 //! survey's finite-horizon concern is Question 30 (~lines 5044-5046):
 //! "Consider the collection of all edges that belong to an infinite
 //! number of `Gamma(v)` ... Does `f(r) -> infinity` as `r -> infinity`;
@@ -664,7 +666,6 @@ pub fn geodesic_count_run<G: UndirectedGraphView>(
             .then_with(|| left.cmp(&right))
     });
     workspace.ways[source] = 1;
-    let mut saturated = false;
     let reached = dist.iter().filter(|distance| distance.is_finite()).count();
     for index in 0..workspace.order.len() {
         let u = workspace.order[index];
@@ -679,7 +680,6 @@ pub fn geodesic_count_run<G: UndirectedGraphView>(
                 match workspace.ways[v].checked_add(ways_u) {
                     Some(value) => workspace.ways[v] = value,
                     None => {
-                        saturated = true;
                         workspace.ways[v] = u128::MAX;
                     }
                 }
@@ -689,7 +689,7 @@ pub fn geodesic_count_run<G: UndirectedGraphView>(
     Ok(GeodesicCountOutcome {
         target,
         geodesic_count: workspace.ways[target],
-        saturated,
+        saturated: workspace.ways[target] == u128::MAX,
         reached,
     })
 }
