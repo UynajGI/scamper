@@ -214,7 +214,7 @@ impl<'a, const D: usize> CandidatePairGraph<'a, D> {
     /// Enumerate candidate pairs into an ephemeral [`PairGraph`].
     ///
     /// One transient `O(N)` coordinate copy plus the cell-list build and
-    /// stencil walk; see the [module docs](self) for the exact pair order.
+    /// stencil walk; see the module documentation for the exact pair order.
     /// Deterministic: the same borrowed inputs yield the identical pair
     /// sequence on every call.
     pub fn pairs(&self) -> Result<PairGraph, ContinuumError> {

@@ -140,8 +140,8 @@ pub enum ContinuumWindingError {
     /// [`crate::EmbeddingError::SelfLoopEdge`]).
     SelfLoopEdge { edge: usize },
     /// The implied cell offset `(d_c - r_c) / L_c` of one (edge, axis) is not
-    /// within [`OFFSET_TOLERANCE`] of an integer, is non-finite, or exceeds
-    /// [`MAX_CELL_OFFSET`] in magnitude: numerical garbage in, loud failure
+    /// within `OFFSET_TOLERANCE` of an integer, is non-finite, or exceeds
+    /// `MAX_CELL_OFFSET` in magnitude: numerical garbage in, loud failure
     /// out — never a silent rounding or saturation.
     NonIntegerCellOffset {
         edge: usize,
@@ -352,7 +352,7 @@ impl PeriodicEmbedding for ContinuumEmbedding {
 }
 
 /// Round one dimensionless cell-offset ratio to its integer, rejecting
-/// anything not within [`OFFSET_TOLERANCE`] of an integer and any magnitude
+/// anything not within `OFFSET_TOLERANCE` of an integer and any magnitude
 /// beyond [`MAX_CELL_OFFSET`] (non-finite ratios fold into the same
 /// rejection).
 fn integer_cell_offset(ratio: f64, edge: usize, axis: usize) -> Result<i32, ContinuumWindingError> {
