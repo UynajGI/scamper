@@ -140,6 +140,8 @@ mod percolation;
 mod percolation_attack;
 #[path = "physics/percolation_components.rs"]
 mod percolation_components;
+#[path = "physics/percolation_correlated.rs"]
+mod percolation_correlated;
 #[path = "physics/percolation_heterogeneous.rs"]
 mod percolation_heterogeneous;
 #[path = "physics/percolation_heterogeneous_zscore.rs"]
@@ -150,10 +152,14 @@ mod percolation_law_zscore;
 mod percolation_network;
 #[path = "physics/percolation_network_input.rs"]
 mod percolation_network_input;
+#[path = "physics/percolation_potts_phase.rs"]
+mod percolation_potts_phase;
 #[path = "physics/percolation_scan.rs"]
 mod percolation_scan;
 #[path = "physics/percolation_scan_heterogeneous.rs"]
 mod percolation_scan_heterogeneous;
+#[path = "physics/percolation_sweeny.rs"]
+mod percolation_sweeny;
 #[path = "physics/percolation_winding.rs"]
 mod percolation_winding;
 #[path = "physics/percolation_zscore.rs"]

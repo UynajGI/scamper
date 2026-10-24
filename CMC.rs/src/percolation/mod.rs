@@ -28,9 +28,12 @@ mod analyzer;
 mod bonds;
 mod boolean;
 mod carlo;
+mod chayes_machta;
 mod configuration;
 mod continuum;
 mod continuum_winding;
+mod correlated;
+mod correlated_thresholds;
 mod directed;
 mod edwards_sokal;
 mod first_passage;
@@ -42,12 +45,15 @@ mod long_range_diameter;
 mod long_range_distances;
 mod network;
 mod observable;
+mod potts_phase;
 mod probability;
 mod process;
 mod query;
 mod random_cluster;
 mod scan;
 mod summary;
+mod sweeny;
+mod weinrib_halperin;
 mod workspace;
 
 pub use activity::{EdgeActivity, VertexActivity};
@@ -61,12 +67,22 @@ pub use boolean::{
     OverlapGraph, PointProcess, Radii,
 };
 pub use carlo::{StaticLaw, StaticPercolationError, StaticPercolationMC};
+pub use chayes_machta::{ChayesMachtaError, ChayesMachtaMC};
 pub use configuration::StaticConfiguration;
 pub use continuum::{
     candidate_pairs_from_configuration, candidate_pairs_with_cell_list, CandidatePairGraph,
     ContinuumError, PairGraph,
 };
 pub use continuum_winding::{ContinuumEmbedding, ContinuumWindingError};
+pub use correlated::{
+    inverse_normal_cdf, CorrelatedError, CorrelatedFieldSpec, CorrelatedGaussianField,
+    CorrelatedPercolationMC, CorrelatedSiteLaw,
+};
+pub use correlated_thresholds::{
+    CorrelatedThresholdError, FractalDimensionEstimate, IntervalEstimate, LinearFit, NuEstimate,
+    PcExtrapolation, RungObservables, RungSlope, ThresholdLadder, ThresholdLadderSpec,
+    BOOTSTRAP_RESAMPLES,
+};
 pub use directed::{
     analyze_strong_components, analyze_weak_components, reachable, DirectedAnalysisError,
     DpProcessError, DpSeedPolicy, LayeredDirectedPercolationMC, ReachabilityWorkspace,
@@ -106,6 +122,9 @@ pub use network::{
     NetworkProfile, RandomFailureMC, SelfLoopPolicy,
 };
 pub use observable::{ObservablePlan, ObservablePlanError, StaticObservable};
+pub use potts_phase::{
+    critical_probability, phase_scan, PottsPhaseError, PottsPhaseEstimate, PottsPhaseSpec,
+};
 pub use probability::{Probability, ProbabilityError, ProbabilityField};
 pub use process::{
     invasion_run, kcore_decompose, AchlioptasError, AchlioptasGrid, AchlioptasProcessMC,
@@ -128,6 +147,10 @@ pub use scan::{
 #[doc(hidden)]
 pub use scan::{HetReweightCapacityAudit, ReweightCapacityAudit, WorkspaceScanCapacityAudit};
 pub use summary::ComponentSummary;
+pub use sweeny::{SweenyAcceptance, SweenyError, SweenyMC, SweenyProposal, SweenyRates};
+pub use weinrib_halperin::{
+    bracket, flip_bracket, FlipBracket, HarrisBracket, WeinribHalperinError, WeinribHalperinMap,
+};
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
 pub use workspace::WorkspaceCapacityAudit;

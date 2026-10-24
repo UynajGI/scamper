@@ -168,6 +168,16 @@ pub use percolation::{
     WindingError, WindingResult, WindingSummary, WindingWorkspace, DIAMETER_VERTEX_CAP,
     NO_PREDECESSOR, SHAPE_SIDE_CAP,
 };
+pub use percolation::{
+    bracket, critical_probability, flip_bracket, inverse_normal_cdf, phase_scan, ChayesMachtaError,
+    ChayesMachtaMC, CorrelatedError, CorrelatedFieldSpec, CorrelatedGaussianField,
+    CorrelatedPercolationMC, CorrelatedSiteLaw, CorrelatedThresholdError, FlipBracket,
+    FractalDimensionEstimate, HarrisBracket, IntervalEstimate, LinearFit, NuEstimate,
+    PcExtrapolation, PottsPhaseError, PottsPhaseEstimate, PottsPhaseSpec, RungObservables,
+    RungSlope, SweenyAcceptance, SweenyError, SweenyMC, SweenyProposal, SweenyRates,
+    ThresholdLadder, ThresholdLadderSpec, WeinribHalperinError, WeinribHalperinMap,
+    BOOTSTRAP_RESAMPLES,
+};
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
 pub use percolation::{

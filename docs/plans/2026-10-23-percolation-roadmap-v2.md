@@ -279,7 +279,17 @@ uniform l1-ball shapes, exact geodesic counts vs brute force and closed
 forms, directional time constants converging from above with positive
 paired shape inequalities, bitwise draw/determinism, an explicitly
 EXPLORATORY aging statistic, and typed rejections) and is awaiting
-independent review. The C/Q tracks are in progress.
+independent review. L3's independent review PASSED 2026-10-24
+(no Blocker/Major; the four minors — realization-count capacity panic,
+overlapping row RNG streams, SE wording, and validation-order wording —
+are fixed), so L3 is Validated. The C track is delivered as Experimental:
+C1's field/adapter gates are green, C2's threshold estimator does not yet
+reproduce Pruessner's table (recorded limitation, not asserted away), and
+C3's analytic map is exact while its statistical nu certification is
+open. The Q track is delivered as Experimental: Q1 passes exact-FK
+marginal and q=1 bitwise gates, Q2 agrees with Q1 at q=2 within noise, and
+Q3 anchors the exact 2D self-dual curve with an explicitly exploratory
+phase-gap scan. Independent review of C/Q and the N5 audit remain.
 
 ## 9. Archived anchors for v2 (already in docs/ref/)
 

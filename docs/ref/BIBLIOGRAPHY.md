@@ -51,3 +51,4 @@ python3 -m venv /tmp/pdfenv && /tmp/pdfenv/bin/pip install pymupdf
 
 The MinerU-based `literature-extract` skill remains the higher-fidelity path
 for tables/formulas once `mineru-open-api` and a token are available.
+| Q generic q | F. Y. Wu, *The Potts model*, Rev. Mod. Phys. 54, 235 (1982) | doi:10.1103/RevModPhys.54.235 · [anchor note](md/Potts_FK_duality_note.md) |
