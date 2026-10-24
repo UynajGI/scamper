@@ -31,7 +31,7 @@ support their strongest claim; the limitation must be explicit.
 | L2 chemical distance | `percolation/long_range_distances.rs` | `long_range_distances.rs` (9) | Validated | independent review PASS 2026-10-24; Majors fixed |
 | L3 diameter transitions | `percolation/long_range_diameter.rs` | `long_range_diameter.rs` (7) | Validated | independent review PASS 2026-10-24; 4 minors fixed |
 | C1 correlated fields | `percolation/correlated.rs` | unit tests + adapter parity | Experimental | field/variance/marginal/a=inf/a=0 gates green; binary correlation and independent review open |
-| C2 shifted thresholds | `percolation/correlated_thresholds.rs` | machinery/limitation gate | Experimental | does NOT reproduce Pruessner Table 1 (see open items) |
+| C2 shifted thresholds | `percolation/correlated_thresholds.rs` | fast smoke + ignored large-L bracket | Experimental | large-L bracket contains Pruessner 0.54299; review pending |
 | C3 Weinrib–Halperin map | `percolation/weinrib_halperin.rs` | analytic branch gate | Experimental | exact map/table branches; statistical nu certification open |
 | Q1 Sweeny sampler | `percolation/sweeny.rs` | `percolation_sweeny.rs` (3) | Experimental | exact 2^E FK marginals z<=1.36, q=1 bitwise, fuzz; review pending |
 | Q2 Chayes–Machta | `percolation/chayes_machta.rs` | q=2 agreement | Experimental | agrees with Q1 within 4 sigma; detailed balance/R3 comparison open |
@@ -63,9 +63,10 @@ support their strongest claim; the limitation must be explicit.
    gives peaks 0.509/0.524/0.526 and `p_c(inf)=0.5383`, CI (0.5246,
    0.5519), bracketing Pruessner's 0.54299. The crossing estimator is
    calibrated on white noise (0.5987 vs 0.592746). Remaining: independent
-   review, and the reference run is L=1024/R=10^4, so the bracket (not a
+   review; the reference run is L=1024/R=10^4, so the bracket (not a
    4-digit reproduction) is the claim. C3's statistical nu program is now
-   unblocked.
+   unblocked, but the current estimate at a=1.5 (nu=1.40, CI 0.27-2.52)
+   is too wide to certify the flip.
 2. **C3 statistical certification**: the analytic map and branch values
    are exact, but the finite-size `nu(a)` estimate is not yet precise
    enough to certify the a=1.5/a=1.25 flip.
@@ -73,9 +74,10 @@ support their strongest claim; the limitation must be explicit.
    comparison; Q3 needs larger L and a two-mode latent-heat estimator.
    The Q3 bimodality values (0.362 at q=2, 0.505 at q=8, L=8) are
    descriptive only.
-4. **F3 minors**: global saturation flag, diagonal bound wording, aging
-   vertex-vs-edge comparison, untested parallel/source==target cases,
-   `realize_with_weights` post-rejection state, and `geodesic_path` doc.
+4. **F3 minors**: the target-local saturation flag, diagonal-bound
+   wording, vertex-prefix aging doc, post-rejection weight state, and
+   parallel/source==target tests are FIXED. Still open: `geodesic_path`
+   validation wording and the estimator's inf/NaN domain.
 5. **Reviews**: C1/C2/C3/Q1/Q2/Q3 still need independent review before
    any Validated promotion.
 
