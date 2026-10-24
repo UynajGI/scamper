@@ -257,10 +257,11 @@ requires archiving the 2D FK/Potts duality reference at T-time
 
 All four T-track residue stages are delivered AND independently reviewed:
 T1/T2 (2026-10-22) and T3/T4 (2026-10-23, reports in `docs/reviews/`)
-are Validated. F1 and F2 are delivered and independently reviewed
-(PASS-with-follow-ups; doc-only follow-ups applied) — Validated. L1 is
-in development; then L2/F3 (F3's gates to be defined with the user —
-research-grade) and C/Q in dependency order.
+are Validated. F1, F2, and L1 are delivered and independently reviewed
+(PASS-with-follow-ups; follow-ups applied — L1's included a real
+`coordinates()` axis-reversal fix for d >= 2, caught by the review) —
+Validated. L2 is in development; then L3/F3 (F3's gates to be defined
+with the user — research-grade) and C/Q in dependency order.
 
 ## 9. Archived anchors for v2 (already in docs/ref/)
 

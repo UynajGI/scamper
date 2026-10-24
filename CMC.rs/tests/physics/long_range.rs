@@ -871,3 +871,51 @@ fn throughput_report_two_sizes() {
         );
     }
 }
+
+#[test]
+fn coordinates_round_trip_across_dimensions_and_domains() {
+    // Review follow-up (M1): coordinates() was axis-reversed for d >= 2
+    // (the mixed-radix digits were peeled with the sides reversed). The
+    // gate pins the inverse: every dense index decomposes and recomposes
+    // to itself, every decomposition is inside the box, and the domain
+    // edge rejects — across 1D/2D/3D boxes, symmetric and asymmetric.
+    for sides in [&[16_usize][..], &[3, 4], &[4, 4], &[2, 3, 4], &[5, 1, 2]] {
+        let box_ = LongRangeBox::new(sides).expect("valid sides");
+        let mut hand_checked = 0;
+        for index in 0..box_.vertices() {
+            let coords = box_.coordinates(index).expect("in-domain index");
+            assert_eq!(
+                coords.len(),
+                sides.len(),
+                "dimension of coordinates({index}) on {sides:?}"
+            );
+            for (&coordinate, &side) in coords.iter().zip(sides.iter()) {
+                assert!(
+                    coordinate < side,
+                    "coordinates({index}) = {coords:?} outside {sides:?}"
+                );
+            }
+            assert_eq!(
+                box_.vertex_index(&coords),
+                Some(index),
+                "round trip failed for index {index} on {sides:?}: {coords:?}"
+            );
+            hand_checked += 1;
+        }
+        assert!(
+            box_.coordinates(box_.vertices()).is_none(),
+            "domain edge on {sides:?}"
+        );
+        assert!(
+            box_.vertex_index(&[sides[0], 0]).is_none(),
+            "out-of-range or wrong-length coordinate must reject on {sides:?}"
+        );
+        // Spot pins from the review: [3,4] index 1 -> [0,1], index 3 -> [0,3].
+        if sides == [3, 4] {
+            assert_eq!(box_.coordinates(1).unwrap(), vec![0, 1]);
+            assert_eq!(box_.coordinates(3).unwrap(), vec![0, 3]);
+            assert_eq!(box_.coordinates(4).unwrap(), vec![1, 0]);
+        }
+        eprintln!("coordinates round trip: {sides:?} x {hand_checked} indices ok");
+    }
+}

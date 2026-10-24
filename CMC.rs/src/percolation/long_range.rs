@@ -180,14 +180,17 @@ impl LongRangeBox {
 
     /// Coordinate vector of a dense vertex index (row-major decomposition),
     /// or `None` outside `0..vertices`. Allocates — an analysis accessor,
-    /// never on the realization path.
+    /// never on the realization path. (Review follow-up 2026-10-24: the
+    /// slot/side pairing was axis-reversed for d >= 2 — the mixed-radix
+    /// digits must be peeled least-significant-first, i.e. iterate the
+    /// slot/side pairs in reverse, not the sides alone.)
     pub fn coordinates(&self, index: usize) -> Option<Vec<usize>> {
         if index >= self.vertices {
             return None;
         }
         let mut coords = vec![0_usize; self.sides.len()];
         let mut remaining = index;
-        for (slot, &side) in coords.iter_mut().zip(self.sides.iter().rev()) {
+        for (slot, &side) in coords.iter_mut().zip(self.sides.iter()).rev() {
             *slot = remaining % side;
             remaining /= side;
         }
@@ -257,7 +260,9 @@ impl LongRangeBox {
 /// Zero-materialization complete pair view of a box: vertex k is the k-th
 /// dense box vertex, edge k is the k-th pair in the documented
 /// consideration order. Only the G1 substrate reads it (vertex activations
-/// scan incidences for waiting edges; every edge endpoint lookup is O(1)).
+/// scan incidences for waiting edges; every edge endpoint lookup is an
+/// O(log V) binary search over the pair's consideration window — review
+/// follow-up: the previous "O(1)" comment overstated it).
 struct PairUniverse<'a> {
     box_: &'a LongRangeBox,
 }
