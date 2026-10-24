@@ -31,9 +31,66 @@ build:
 build-mpi:
     cargo build --release --features mpi
 
-# Test all
-test:
-    cargo test --workspace
+# Test all quick (non-ignored) workspace tests. Long #[ignore] physics tests
+# are CI-only by default; run them locally with `just test-long`.
+test: test-fast
+
+# Quick tests, parallel across crates: build every test binary once, then run
+# each crate's suite concurrently. Tests inside a binary already use libtest's
+# thread pool, so this only adds the cross-crate dimension.
+test-fast:
+    #!/usr/bin/env bash
+    set -uo pipefail
+
+    if ! cargo test --workspace --no-run; then
+        exit 1
+    fi
+
+    crates=(carlo-rs cmc-rs qmc-rs mcmc-rs scamper)
+    pids=()
+    for crate in "${crates[@]}"; do
+        cargo test -p "$crate" --no-fail-fast &
+        pids+=("$!")
+    done
+
+    status=0
+    for pid in "${pids[@]}"; do
+        wait "$pid" || status=1
+    done
+    exit "$status"
+
+# Quick tests for the crates touched since the upstream merge base. Falls back
+# to the full quick suite when no crate maps (lockfile-only or docs changes).
+test-changed:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base="$(git merge-base HEAD '@{upstream}' 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || true)"
+    if [ -n "$base" ]; then
+        changed="$(git diff --name-only --diff-filter=ACMR "$base" -- '*.rs' '*/Cargo.toml' || true)"
+    else
+        changed="$(git diff --name-only --diff-filter=ACMR HEAD -- '*.rs' '*/Cargo.toml' || true)"
+    fi
+    changed="$(printf '%s\n%s\n' "$changed" "$(git ls-files --others --exclude-standard -- '*.rs' '*/Cargo.toml')" | sed '/^$/d')"
+
+    flags="$(./.lefthook/affected-crates.sh $changed)"
+    if [ -z "$flags" ]; then
+        echo "No crate-scoped changes; running the full quick suite."
+        just test-fast
+    else
+        echo "Testing affected crates: ${flags//-p /}"
+        cargo test $flags --no-fail-fast
+    fi
+
+# Long #[ignore] physics tests (release, all features). CI runs these in
+# nightly.yml; locally they need libhdf5/libopenmpi (`just install-deps`).
+test-long:
+    cargo test --release --workspace --all-features --no-fail-fast -- --ignored --nocapture
+
+# Quick tests with every optional feature enabled (hdf5, mpi, allocation
+# probe). Requires the system libraries installed by `just install-deps`.
+test-all:
+    cargo test --workspace --all-features --no-fail-fast
 
 # Test unit tests only
 test-unit:
