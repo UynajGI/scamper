@@ -184,7 +184,11 @@ Power-law correlated Gaussian copula → thresholded occupation (the
 Schrenk generator: Fourier filtering with exponent a). A law over
 `StaticConfiguration`, not a new analyzer — the F3 engine is reused
 unchanged. Gates: two-point correlation function of the field matches the
-prescribed power law within CI; a = 0 reduces bitwise to iid Bernoulli.
+prescribed power law within CI; the white-noise limit `a -> infinity`
+reduces bitwise to iid Bernoulli. (`a = 0` is the constant-field limit
+`C(r) = 1`, not iid — Pruessner's `a = infinity` row is the uncorrelated
+reference; this corrects the earlier `a = 0` wording, which mixed the
+`C(r) = (1+r^2)^{-a/2}` and Schrenk `H` conventions.)
 
 ### C2: Shifted thresholds
 p_c(a) on square/cubic vs Pruessner's tables (statistical brackets).
@@ -270,8 +274,12 @@ its seven diameter-regime gates green (2026-10-24: the s>2 ratio/slope/
 time-constant bracket, the sub-polynomial (1,2) bracket, the s=1
 log-envelope bracket, the bounded s<1 case, the ungated s=2 critical
 case, ladder replay parity, and typed rejections) and is awaiting
-independent review. F3 (research-grade) and the C/Q tracks are in
-progress.
+independent review. F3 is delivered with its six gates green (2026-10-24:
+uniform l1-ball shapes, exact geodesic counts vs brute force and closed
+forms, directional time constants converging from above with positive
+paired shape inequalities, bitwise draw/determinism, an explicitly
+EXPLORATORY aging statistic, and typed rejections) and is awaiting
+independent review. The C/Q tracks are in progress.
 
 ## 9. Archived anchors for v2 (already in docs/ref/)
 

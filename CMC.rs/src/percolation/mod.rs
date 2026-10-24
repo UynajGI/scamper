@@ -35,6 +35,7 @@ mod directed;
 mod edwards_sokal;
 mod first_passage;
 mod first_passage_observables;
+mod first_passage_shape;
 mod law;
 mod long_range;
 mod long_range_diameter;
@@ -80,6 +81,11 @@ pub use first_passage::{
 pub use first_passage_observables::{
     EdgeWeightLaw, PassageEstimate, PassageEstimator, PassageGeometry, PassageObservablesError,
     PassageSampler,
+};
+pub use first_passage_shape::{
+    geodesic_aging, geodesic_count_run, geodesic_path, Direction, GeodesicAging,
+    GeodesicCountOutcome, GeodesicCountWorkspace, GeodesicPathOutcome, ShapeError, ShapeEstimate,
+    ShapeEstimator, ShapeGeometry, ShapeSampler, ShapeTarget, SHAPE_SIDE_CAP,
 };
 pub use law::{BondBernoulli, MixedBernoulli, SamplingError, SiteBernoulli};
 pub use long_range::{
