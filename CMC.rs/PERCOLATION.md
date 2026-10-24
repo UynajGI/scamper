@@ -54,6 +54,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Weighted shortest-path layer (v2 F1) | Validated | Roadmap v2 §3 F1: `first_passage_run` + `FirstPassageWorkspace` (`percolation/first_passage.rs`) — single-source single-pass Dijkstra with a binary heap over any `UndirectedGraphView`, edge weights a caller-owned slice of one `f64` per physical edge in dense edge order (`lattice.edges[e].weight` for a `CsrLattice`; weights are data, redrawn per call for F2's passage-time fields). Explicit policies: heap keyed `(distance total_cmp, vertex id ascending)` — the id tie key makes the pop order total under ties (equal-distance settles and equal-cost predecessor choices are deterministic, not heap-implementation detail; the same tie discipline as the invasion frontier, and a 16-byte heap entry); zero weights ALLOWED (non-negativity is Dijkstra's requirement; zero-weight cycles correct); parallel edges are independent relaxations with the lighter bond winning (strict-improvement updates); unreachable = `f64::INFINITY` with reachability the derived `is_finite()`; optional predecessor vertex+edge arrays (`GeodesicTracking`, for F2/F3 geodesics) gated off by default. Typed rejections at validation time, before the workspace is touched: negative weight (edge named), NaN/±inf weight, wrong weight length, source domain, empty graph. Gates: parity vs a test-local independent Bellman-Ford over chains/cycles/trees/dense-ER multigraphs (parallel + zero-weight edges, U[0,1) and exact-zero fields) — 249 (graph, source) cases / 3440 vertex distances, bit-exact on unique-path and dyadic-weight families, 1e-12 relative elsewhere, 0 mismatches; hand-derived 9-vertex 11-edge multigraph (parallel pair lighter wins, zero-weight triangle, equal-cost tie observable through the predecessor, self-loop, disconnected sentinel) plus zero-weight ring and single-vertex cases; rejection-with-untouched-workspace; reused-vs-fresh workspace bitwise determinism (48 comparisons) with growth/shrink and same-size graph alternation; asserted 0-allocation 0-byte probe per single-source pass on six topologies incl. E = 64 V. Criterion (V=1e5/E=3e5 ER): early-exit Bellman-Ford 2.27x FASTER than the lazy-deletion Dijkstra on the small-diameter ER (recorded honestly, T2-style) while Dijkstra is 5.81x faster on a diameter-398 open 200x200 grid with random weights — the F2-relevant regime; doubling V at fixed degree 6 costs 2.6x while the working set fits cache, 3.2-3.3x at V=4e5 where the random-graph heap leaves L3 (throughput 3.35 M vertices/s at V=2.5e4 down to 0.78 M at V=4e5). Algorithm layer only — no MonteCarlo adapter, no scheduler integration (F2 builds observables on top); the Auffinger-Damron-Hanson FPP anchor applies from F2 on. Independent review passed 2026-10-23 (docs/reviews/2026-10-23-f1-review.md; 712 fresh randomized + 55 adversarial cases vs a deliberately opposite-tie (LIFO insertion-counter) own Dijkstra plus own SPFA and rotated-rounds Bellman-Ford: bitwise agreement everywhere — stronger than the committed 1e-12 policy; the tie test non-vacuous: 2,545 vertices took different-but-valid predecessors at identical distances; E+1 heap budget tight and never exceeded incl. adversarial chains; saturation, rejection isolation, and the bench trade-off independently reproduced — grid ratio re-measured 3.68x vs the committed 5.81x, same direction, both recorded). Follow-ups applied: the GeodesicTracking::Off rustdoc now states prepare clears predecessors unconditionally (the 'stale' wording was wrong); the v1/v2 F1 name collision disambiguated. |
 | First-passage observables (v2 F2) | Validated | `percolation/first_passage_observables.rs` (roadmap v2 §3 F2) over the v2 F1 pass: `PassageGeometry::corridor(length, width)` (open (r+1) x w Z^2 box, source set = left column, target set = right column) and `PassageGeometry::segment(steps, margin, half_height)` (single origin, explicit target points along +x inside a reflection-symmetric box), each carrying one super-source vertex joined to the source set by structural zero-weight edges — ONE `first_passage_run` pass realizes the min over the source set exactly. `EdgeWeightLaw` (Exponential `w = -ln(1-u)/rate`, written `0.0 - ln(1-u)/rate` so `u = 0` yields `+0.0` never `-0.0`; Uniform `w = u`) under a bitwise draw contract: one `random::<f64>()` per box edge in dense `build_square` order, structural zeros consume no draws. `PassageSampler` (reusable weight slice + F1 workspace + profile buffer; `realize_with_weights` runs production on caller-owned fields — the exact-enumeration path), `PassageEstimator`/`PassageEstimate` (scalar mean/unbiased variance/SEM of `T_r` = min over the profile plus per-target profile mean/variance). One realization = ONE C0 vector sample: the full passage-time profile along the target boundary (w entries corridor, `steps.len()` segment); the scalar min is a derived accessor. Gates: exhaustive 2^E two-level dyadic {0.5, 1.0} enumeration vs a test-local Bellman-Ford over test-built topologies — 263,168 corridor assignments (919,552 profile entries bit-exact, incl. 128,272 tied-minimum assignments where the optimal path is non-unique: the profile entries are unique minima over path weights, degeneracy never changes content) plus 4,198,432 segment assignments, 0 mismatches; bitwise draw-contract replay (474 weight entries, both laws, both geometries); same-seed bitwise determinism incl. reseed-replays-chain-one on a history-laden sampler; SEM ~ 1/sqrt(N) (ratio 0.531, N = 128 vs 512). Physics brackets (ADH 2017 anchor, bracket language only): Var(T_r) growth on aspect-1 corridors (w = r, r in [8, 128], R = 600 per law) gives fitted chi = 0.2476 CI (0.2028, 0.2923) for Exp(1) and 0.2658 CI (0.2198, 0.3118) for U[0,1), both inside the rigorous open interval (0, 1/2) — never claimed against 1/3 (the effective exponent below 1/3 at these sizes is the documented small-r crossover); subadditivity `E[T_2r] <= 2 E[T_r]`, exact in expectation on reflection-symmetric segment boxes, holds with z = -10.41 / -13.57 / -15.10 / -10.35 at r = 8/16/32/64; the time-constant sequence mu(r) = E[T_r]/r = 0.5621(47) -> 0.5108(27) -> 0.4743(16) -> 0.4488(10) -> 0.4341(6) decreases and stabilizes (convergence from above, by subadditivity). Asserted 0-allocation 0-byte probe per realization (law draw + F1 pass + estimator add) on 64x16 and 128x32 corridors; 233 and 55 realizations/s at 64x64/128x128 aspect-1 corridors (debug test profile). No MonteCarlo adapter — F3's layer. Independent review passed 2026-10-24 (docs/reviews/2026-10-24-f2-review.md): the reviewer's own Floyd-Warshall over their own geometry and edge order ran 21.3M assignments INCLUDING the literal 4x4 corridor (2^24, 67.1M profile comparisons, 8.15M tied-minima, 0 mismatches) and non-dyadic weight families; the draw contract reproduced against a from-scratch xoshiro256++ (10,000 draws bit-equal, -0.0 bits confirmed); chi reproduced within 0.13sigma with an independent pipeline; the reflection subadditivity argument given a coupling proof and pinned pointwise (0 violations in 40,000 fields, max rel diff 6.3e-16); statistics machinery verified (t-CI df=3, SEM slope -0.5008). Follow-up: construction-cost figures marked machine-dependent (both measurements recorded). |
 | Long-range power-law edge law (L1) | Validated | `percolation/long_range.rs` (roadmap v2 §4 L1): Biskup's long-range edge law `p = min(1, beta * r^{-s})` (archived Biskup 2004 md; the explicit power-law member of `p_xy = |x-y|^{-s+o(1)}`) on a finite box of Z^d — `LongRangeBox` (per-dimension sides, row-major dense indices, ℓ1 distance: integer-exact, ℓ2-equivalent so Biskup's s-vs-d-vs-2d regime statements transfer, and equal to ℓ2 in d=1), the finite-box restriction of the infinite-measure law (pairs with BOTH endpoints in the box; boundary effects confined to the box surface). Consideration order lexicographic (x,y), x<y dense; RNG draw contract: ONE uniform f64 per pair in ascending order (saturated and near-zero pairs included), occupied iff u < min(1, beta r^-s) — `pair_probability` is the pinned bitwise expression; `min(1,.)` saturates beta>=1 nearest neighbors surely (u<1 always) and beta>=r^s shells; beta*r^-s never overflows past beta (r^-s in (0,1]). One realization = one G1 `IncrementalUnionWorkspace` construction over a zero-materialization complete pair view: all vertices activated at step coordinate 0 (G2 convention), each occupied pair activated at step = 1-based ADDED-EDGE COUNT (the process coordinate; realized count random); trajectory steps exactly [0;n]+[1..=m]. `long_range_run` RNG-free core + `LongRangePercolationMC` adapter recording ONE C0 vector sample (`LongRangeLargestSize`, fixed shape, G3 final-value padding) + scalars (AddedEdges/ComponentCount/SecondMoment). Typed rejections: empty box, zero side, negative/non-finite beta or s, wrong-length or out-of-[0,1] uniform fields, zero steps. Gates: bit-adjacent threshold replay from both sides (28 pairs x 3 combos) pinning law + pair order; per-pair frequency z-scores + pooled Pearson chi-square on 1x8 (3 laws) and 4x4 boxes, 600 realizations (max |z| 3.54; chi2 33.3/36.0/23.2/110.2 vs criticals 57.0/57.0/46.9/173.7) + joint-occupancy independence z in [-2.26, 1.96]; closed-form E[deg(center)] z-gates at s<1, s=1, s>2 (z = -0.41/-0.59/0.66, R=4000); bitwise same-seed replay + adapter-vs-manual-order parity; per-step parity vs independent union-find (773 steps) + final structure vs flood fill (30 configs); saturation regimes (r=1 always at beta>=1 across 3 laws x 40 seeds, 38 saturated pairs at beta=4/s=1, complete graph at beta=1e6, beta=0 empty, singleton box). Asserted 0-allocation probe; Criterion-less eprintln throughput below. See the L1 section. Independent review passed 2026-10-24 (docs/reviews/2026-10-24-l1-review.md): the law replayed bit-adjacent on 309 (pair, law) combos with the reviewer's own sampler matching every one of 100,000 realizations; corner/edge degree moments vs exact rationals (s=1 harmonic closed forms) within |z| <= 1.81 at R=5,000 — extending the committed center-only gate; 21 fresh independence pair-pairs exact-q z <= 2.45; overflow-safe rejection boundaries proven by induction; Biskup anchor quotes verified against the archive. The review's Major — LongRangeBox::coordinates() axis-reversed for d >= 2 (zero in-repo callers, off the realization path) — FIXED as a follow-up with the mixed-radix digit order corrected and a round-trip inverse gate added across 1D/2D/3D asymmetric boxes; the PairUniverse lookup comment corrected to O(log V). |
+| Chemical-distance regimes (v2 L2) | Validated | `percolation/long_range_distances.rs` (roadmap v2 §4 L2) over one L1 realization: the chemical distance `D(x,y)` is the unweighted graph distance on the occupied edge set. `ChemicalDistanceWorkspace::profile()` holds one `f64` per box vertex, entry `y` = `min_{x in sources} D(x,y)` (multi-source BFS; `f64::INFINITY` sentinel, reachability is `is_finite`), and one realization is one fixed-length C0-shaped profile vector — never a scalar alone. Optional `DiameterTracking::AllVertexBfs` adds the exact box diameter = max finite distance over all pairs including the diagonal (isolates 0; on a disconnected realization it is the largest within-component distance), with `DIAMETER_VERTEX_CAP = 4096` as a hard guard-rail (`O(V^3)` complete-graph worst case; the profile path is uncapped). The occupied set is the L1 draw contract replayed in-layer (one uniform per pair ascending, `pair_probability` evaluated once per ℓ1 distance — the same pinned bits), materialized as CSR; `ChemicalDistanceSampler` owns the uniform field and workspace (zero steady-state allocations; adjacency capacity is reserved WITHOUT resizing, so pre-run accessors report an empty adjacency), and `ChemicalDistanceEstimator` accumulates per-entry mean/unbiased SEM/reachable fraction (per-entry conditioning on reachability — Biskup's `x,y in C_infinity` conditioning) plus diameter mean/SEM. Typed rejections: non-finite/negative beta or s, empty source set, source domain, wrong-length or out-of-[0,1] uniforms, diameter cap, profile length, zero-vertex estimator, and dimension overflow (`vertices+1`, `distance_range+1`, `2*pairs`). Regime gates (Biskup anchor, regime-correct): (1,2) typical distance at beta=1, n=2048, R=150 for s=1.3/1.5/1.8 — monotone growth, finite-window D-vs-r log-log slope 0.172/0.219/0.329 (CI below 0.5), fitted polylog exponents 0.658/0.838/1.258 all below Delta = 1.609/2.409/6.579, CI-disjoint and increasing in s; s=2.5 linear regime at n=8192, R=24 — the gate is PAIRED per realization (24 slopes and 24 `D/r = A + c/r` fits, 95% CIs): D = 105.6/202.1/404.7/747.2, slope 0.949 +/- 0.043 CI (0.907, 0.992), A = 0.3713 +/- 0.0199 CI (0.351, 0.391) inside (0,1), c = 11.18 +/- 8.55 CI (2.63, 19.73) strictly positive, ratio 0.413 -> 0.365 non-increasing; s=0.5 diameter is a BOUNDEDNESS gate (R=8: diameter exactly 3 at n=256..2048, explicitly reported as a constant sequence with undefined R²; means in [2,4], no positive power growth, and the a.s. sup `d/(d-s)=2` is a reference scale, NOT a measured equality); s=1 diameter 5.0/5.33/5.33/6.0 over n=512..4096 against the `ln N` = 6.2..8.3 upper envelope (slope 0.079 +/- 0.096, CI (-0.017, 0.175)), upper-envelope only, no lower claim; s=2 deliberately not run. Correctness gates: 35 profiles + 35 all-vertex diameters on 1D/2D boxes (incl. beta<1 disconnections) bitwise vs a test-local BFS/all-pairs reference, with the occupied set also equal to a test-local law replay and to the L1 core's `occupied_pairs`; estimator mean/SEM/reachable parity on 40 beta<1 realizations (min reachable fraction 0.40) plus the beta=0 never-reached conventions; same-seed bitwise profiles/diameter/adjacency and L1 draw-stream parity; pre-run empty-adjacency accessors. Asserted 0-allocation probe on three topologies plus diameter mode; debug-profile throughput 192 / 12.1 realizations/s at 1x256 / 1x1024. See the L2 section. Independent review passed 2026-10-24 (docs/reviews/2026-10-24-l2-review.md): the reviewer's own mixed-radix geometry/BFS/all-pairs machinery ran 1,188 exact realizations (21,549 checks, 0 failures) incl. beta<1 disconnections, duplicate sources, odd boxes and caps; the draw stream matched a fresh xoshiro stream and the L1 adapter bitwise; the estimator and rejection/precedence matrix were re-derived; the zero-allocation closure was inspected, not just asserted. The review's Majors — seed-fragile s=2.5 gate at R=12 (now paired at R=24 with CIs) and pre-run `occupied_edge_count()` returning `pairs` (now capacity-only reservation, with a pre-run accessor gate) — are FIXED as follow-ups; the never-reached-SE doc mismatch, public `prepare`/`add_diameter` overflow, capacity-failure wording, s=0.5 boundedness wording, "slower than any power"/"from below" overclaims, diameter-probe bytes assertion, and the s>2 `D_N` citation nuance are also applied. |
 
 At F0 no family was **Validated**. Since F4 passed independent review, the
 static family and boundary crossing were the first Validated rows; N1, W2,
@@ -4242,3 +4243,223 @@ approximation inside the code). L2 chemical-distance regimes and L3
 diameter transitions are future stages; no percolation (infinite-cluster)
 claim is made on finite boxes — the observable set is component
 structure only.
+
+## L2 chemical-distance regimes
+
+Status: **Validated** — all stage-L2 gates pass 2026-10-24; independent
+review passed 2026-10-24 (no Blocker; the review's two Majors — a
+seed-fragile s=2.5 gate and a pre-run `occupied_edge_count` bug — are
+fixed as follow-ups, along with the estimator-doc, public-overflow,
+capacity-state, and wording minors; see
+`docs/reviews/2026-10-24-l2-review.md`).
+
+### Contract: graph distance on one L1 realization
+
+The chemical distance `D(x, y)` is the unweighted graph distance on the
+occupied edge set of one L1 realization (this layer has no edge weights;
+weighted shortest paths are the separate F1/F2 track). One realization
+produces:
+
+- **Distance profile** (`ChemicalDistanceWorkspace::profile()`): one
+  `f64` per box vertex, entry `y` = `min_{x in sources} D(x, y)` for a
+  caller-chosen non-empty source set. One realization is ONE
+  element-preserving vector sample of fixed shape `vertices` — never a
+  scalar distance alone. Unreachable entries carry the F1 sentinel
+  `f64::INFINITY`; reachability is the derived `is_finite` test.
+- **Exact box diameter** (optional, `DiameterTracking::AllVertexBfs`):
+  the maximum finite distance over all vertex pairs including the
+  diagonal — the maximum eccentricity. On a connected box graph this is
+  the graph diameter; on a disconnected realization it is the largest
+  within-component distance (isolates contribute 0). Always finite,
+  always defined.
+
+### Occupancy: the L1 draw contract replayed in-layer
+
+The occupied set is produced by replaying the L1 contract, never by
+re-running the L1 substrate: one uniform per pair in ascending
+consideration order (saturated and near-zero pairs included) with the
+pair at index k occupied iff
+`uniforms[k] < LongRangeBox::pair_probability(r, beta, s)`. The pinned
+expression is evaluated once per ℓ1 distance into a table — the same
+deterministic function and thus the same bits as a per-pair evaluation.
+For identical uniform fields the realized graph is bitwise the one
+`long_range_run` exposes through `occupied_pairs()`; the sampler draws the
+same stream as `LongRangePercolationMC` at the same seed. Both parities
+are validation gates.
+
+The CSR adjacency is built in two passes over the pair universe: degrees
+first, then edge placement into the prepared offsets. The
+`ChemicalDistanceSampler` reserves the complete-graph worst case
+(`2 * pairs` slots, the L1 budget convention) at construction, so
+realizations perform zero steady-state allocations.
+
+### Regime semantics (regime-correct, anchor-faithful)
+
+The anchor is Biskup, *On the scaling of the chemical distance in
+long-range percolation*, Ann. Probab. 32, 2938 (2004), archived at
+`docs/ref/md/Biskup_2003_long-range_chemical_distance.md`. In `d = 1`
+the boundaries fall at `s = 1` and `s = 2`; the statements differ by
+observable, and this layer keeps them strictly apart:
+
+| Regime | Proved statement | Gate here |
+|---|---|---|
+| `s in (1, 2)` | Typical distance `D(x,y) = (log|x-y|)^(Delta + o(1))`, `Delta^-1 = log2(2/s)` | Typical-distance profile brackets: growth, slower than any power, fitted exponent below and ordered by `Delta` |
+| `s = 1` | Diameter `D_N = Theta(log N / log log N)`; typical distance "at most logarithmic", lower bound explicitly missing | Diameter upper envelope only (`<= ln N`), no typical-distance gate |
+| `s < 1` | Sup distance `sup D(x,y) = d/(d-s)` a.s. (constant); box diameter converges to it | Box-diameter constant envelope, no typical-distance gate |
+| `s > 2` | Box diameter `D_N` expected linear in N (proved in d = 1); typical distance linear with a positive time constant | Paired log-log slope plus `D/r = A + c/r` extrapolation on the typical distance |
+| `s = 2` | Explicitly "not very well understood" | **No gate, no run** |
+
+The gates are finite-box statistical brackets of infinite-lattice
+asymptotics, not proofs; every reported exponent is quoted against the
+paper value with its finite-size direction. Biskup's statements are for
+`x, y` in the infinite cluster, so the estimator conditions each profile
+entry on reachability and reports the reachable fraction — at `beta >= 1`
+in `d = 1` every `r = 1` pair is surely occupied, the box graph is
+connected, and the reachable fraction is identically 1 (asserted per
+realization in the statistical gates).
+
+### API
+
+- `chemical_distance_run(box, beta, s, uniforms, sources, tracking, workspace)`:
+  the RNG-free core. Validates `(beta, s)`, sources, the diameter cap,
+  and the uniform field before touching the workspace; rejections leave
+  the previous profile/adjacency intact. Returns
+  `ChemicalDistanceOutcome { occupied_edges, source_component_size,
+  unreachable_count, diameter: Option<usize> }`.
+- `ChemicalDistanceWorkspace`: `prepare(vertices, pairs, distance_range)`
+  (idempotent, reserve-only growth), `reset()`, and accessors
+  `profile`, `adjacency_offsets`, `adjacency_neighbors`,
+  `occupied_edge_count`.
+- `ChemicalDistanceSampler::new(box, beta, s, sources)` with
+  `realize(rng)` (profile) and `realize_with_diameter(rng)` (profile +
+  exact diameter); accessors for geometry, parameters, sources, profile,
+  uniforms, workspace, and the last outcome.
+- `ChemicalDistanceEstimator::new(vertices)` with `add_profile`,
+  `add_diameter`, and `estimate() -> Option<ChemicalDistanceEstimate>`
+  (per-entry mean/SEM/reachable fraction, diameter mean/SEM; NaN/0.0
+  conventions documented on the type). `estimate()` allocates its
+  vectors at report time only.
+
+There is no Carlo.rs adapter at this stage (as with F1/F2): the estimator
+exposes the per-vertex C0-shaped vectors directly, and L3 composes the
+diameter track. `DIAMETER_VERTEX_CAP = 4096` bounds the
+`O(vertices * (vertices + m))` all-vertex diameter pass; the single-source
+profile path has no cap beyond memory.
+
+### Validation gates
+
+`tests/physics/long_range_distances.rs` (9 tests):
+
+- **Pre-run workspace state**: after `prepare` (and in a freshly built
+  sampler) the adjacency is empty — `occupied_edge_count() == 0`,
+  offsets all zero, no neighbor slots — while the profile is the
+  documented all-INFINITY buffer. (Review M2 follow-up: `prepare` now
+  reserves adjacency CAPACITY without resizing, so the accessor cannot
+  report the pair count before a run.)
+- **BFS and diameter correctness**: 3 configs — 1x16 at `beta = 0.3`
+  (disconnections and INFINITY live), 1x24 at `beta = 1`, 5x5 at
+  `(beta, s) = (2.2, 0.6)` — x 5 seeds x 1-3 source sets. The occupied
+  set is checked three ways (production CSR, test-local law replay,
+  L1 core `occupied_pairs`); the profile matches a test-local multi-source
+  BFS entry-by-entry bitwise (35 profiles), the diameter matches a
+  test-local all-pairs reference (35 diameters), and
+  `source_component_size`/`unreachable_count` match the reference counts.
+- **Estimator statistics**: 40 `beta = 0.3` realizations from one source;
+  mean, unbiased SEM, and reachable fraction match manual arithmetic at
+  every vertex; the far corner is unreachable in some realizations
+  (minimum reachable fraction 0.40 — the conditioning is live), the
+  source is always reachable, never-reached entries carry NaN mean and
+  0.0 error (directly exercised with `beta = 0`), and the sources' NaN
+  conventions are exercised.
+- **Bitwise contract**: same seed twice gives bit-identical profile,
+  outcome, and adjacency; the L1 adapter at the same seed realizes the
+  same occupied graph; a different seed changes the profile.
+- **(1, 2) typical distance** (`beta = 1`, `n = 2048`, 150 realizations):
+  for `s = 1.3 / 1.5 / 1.8` the pooled two-direction mean grows strictly
+  at every r in `[8, 512]` against combined SEM; the `D`-vs-`r` log-log
+  slope is 0.172 / 0.219 / 0.329 with CI upper bounds below 0.5 (a
+  finite-window empirical bound, not a proof of sub-polynomial growth);
+  the fitted `ln D`-vs-`ln ln r` exponents are 0.658 / 0.838 / 1.258,
+  each strictly below `Delta = 1.609 / 2.409 / 6.579` with CI-disjoint
+  increasing ordering in `s` — the documented finite-window approach
+  from below at `ln r <= 7`, never an equality claim.
+- **s = 2.5 linear regime** (`n = 8192`, 24 realizations, tail
+  `r in [256, 2048]`): the finite-window log-log slope sits at or below
+  1, so the gate is PAIRED — each realization contributes its own slope
+  and its own `D/r = A + c/r` fit, and the aggregate 95% CIs carry the
+  claim. D = 105.6, 202.1, 404.7, 747.2; slope 0.949 +/- 0.043, CI
+  (0.907, 0.992); `A = 0.3713 +/- 0.0199`, CI (0.351, 0.391), strictly
+  inside `(0, 1)`; `c = 11.18 +/- 8.55`, CI (2.63, 19.73), strictly
+  positive; the measured ratio is non-increasing (0.413 -> 0.395 ->
+  0.395 -> 0.365) and strictly decreases over the window. The paired
+  design was adopted after the independent review showed the previous
+  single-aggregate R=12 gate failed on 3/10 fresh seed bases.
+- **s = 0.5 diameter envelope** (`beta = 1`, n = 256/512/1024/2048,
+  8 realizations each): a BOUNDEDNESS gate, not a measurement of the
+  constant 2. Every realization gives diameter 3 at every size (the
+  constant sequence is reported explicitly instead of a degenerate
+  zero-residual fit); means stay in [2, 4] with no positive power growth.
+  The box graph is a subgraph of Z^d without outside shortcut vertices,
+  so finite-box diameters may sit above the infinite-lattice a.s. sup
+  `d/(d-s) = 2`; Biskup's `D_N` statement is quoted qualitatively. No
+  typical-distance claim.
+- **s = 1 diameter upper envelope** (n = 512/1024/2048/4096,
+  3 realizations each): diameters 5.0 / 5.33 / 5.33 / 6.0 stay below
+  `ln N = 6.24 / 6.93 / 7.62 / 8.32`; the diameter-vs-N slope is
+  0.079 +/- 0.096, CI (-0.017, 0.175) — consistent with the
+  `Theta(log N / log log N)` envelope and far below linear, with NO
+  lower-bound claim. `s = 2` is not run anywhere (documented above).
+- **Typed rejections**: 18 refusal cases — non-finite/negative beta
+  (value bits preserved), negative/NaN s, empty sources, out-of-range
+  source (position and value carried), wrong-length uniforms, out-of-range
+  uniform (index carried), the diameter cap on a 4097-vertex box, sampler
+  source domains, zero-vertex estimator, profile length mismatch, and the
+  three public dimension-overflow paths (`vertices + 1`,
+  `distance_range + 1`, `2 * pairs`; all typed before any buffer
+  mutation), plus a `usize::MAX` diameter accumulated without overflow
+  (the square is taken in f64) — all with the state-untouched assertion
+  for the workspace and the empty-estimator `None`.
+- **Throughput report** (eprintln-timed test, debug profile): below.
+
+### Allocation probe
+
+`report_chemical_distance_case` in
+`benches/percolation_allocations.rs` (`CHEMICAL_DISTANCE_ALLOC`,
+asserted): 1x256 (32,640 pairs), 1x512 (130,816 pairs), and 16x16
+(32,640 pairs) profile realizations — 0.000 allocations and 0.000 bytes
+per realization over 128 measured realizations each (uniform replay +
+CSR build + multi-source BFS + estimator add), plus the 1x256
+all-vertex-diameter mode (eccentricity scratch reuse) at 0.000
+allocations and 0.000 bytes over 128 measured realizations (both
+counters asserted on every path).
+
+### Throughput
+
+(eprintln-timed test, debug profile, `beta = 1`, `s = 1.5`): 1x256 —
+5,197 us/realization = 192 realizations/s (6.28M pair decisions/s);
+1x1024 — 82,414 us/realization = 12.1 realizations/s (6.36M pair
+decisions/s); the 1x256 all-vertex diameter mode takes 12.5-12.8 ms per
+realization (78-80/s).
+
+### Limitations
+
+The draw contract forces one full pair scan per realization (`O(pairs)`
+occupancy decisions regardless of the realized edge count), so the layer
+is quadratic in the box side lengths in `d = 1`. The exact diameter needs
+one BFS per vertex; `DIAMETER_VERTEX_CAP = 4096` is a hard guard-rail, not
+a feasibility guarantee (`O(V^3)` in the complete-graph worst case), and
+the profile path is not capped. The sampler reserves the complete-graph
+adjacency as capacity only (`2 * pairs` slots): the n = 8192 statistical
+gate reserves ~805 MB of address space (the realized sparse adjacency
+touches only a small fraction), which is worth knowing for CI. Distances
+are unweighted integers carried in `f64` (exact up to `2^53`, unreachable
+at the documented cap) — weighted first-passage distances are F1/F2, not
+this layer. All regime gates are statistical brackets on finite boxes:
+the asymptotic exponents are quoted from Biskup, never claimed as measured
+equalities, and `s = 2` is deliberately gated not at all. At `beta < 1`
+profile means condition on reachability; the reachable fraction is
+reported alongside so conditioning is never implicit. Validation
+rejections leave the workspace untouched; a capacity failure during
+re-preparation may leave earlier buffers re-prepared but never returns a
+result. There is no MonteCarlo adapter or scheduler integration yet
+(L3's layer).

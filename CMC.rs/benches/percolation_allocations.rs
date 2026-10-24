@@ -1678,6 +1678,109 @@ fn report_first_passage_observables_probe() {
     }
 }
 
+/// L2 probe: one chemical-distance realization — the L1 pair-order uniform
+/// replay, the CSR occupancy build, the multi-source BFS, and estimator
+/// accumulation — must be allocation-free in steady state (the sampler's
+/// workspace reserves the complete-graph worst case at construction). The
+/// all-vertex diameter mode reuses the same buffers plus the eccentricity
+/// scratch and is probed separately. Asserts zero on both paths.
+fn report_chemical_distance_case() {
+    use cmc_rs::{
+        ChemicalDistanceEstimator, ChemicalDistanceSampler, DiameterTracking, LongRangeBox,
+    };
+    for (label, sides) in [
+        ("chain-1d-256", &[256_usize][..]),
+        ("chain-1d-512", &[512_usize][..]),
+        ("square-2d-16x16", &[16_usize, 16_usize][..]),
+    ] {
+        let box_ = LongRangeBox::new(sides).expect("probe box");
+        let vertices = box_.vertices();
+        let mut sampler =
+            ChemicalDistanceSampler::new(box_, 1.0, 1.5, &[vertices / 2]).expect("probe sampler");
+        let mut estimator = ChemicalDistanceEstimator::new(vertices).expect("probe estimator");
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x004C_2642);
+        for _ in 0..ADAPTER_WARMUP {
+            estimator
+                .add_profile(sampler.realize(&mut rng).expect("probe warmup"))
+                .expect("probe warmup add");
+        }
+        let info = measure(|| {
+            for _ in 0..ALLOCATION_SAMPLES {
+                let profile = sampler.realize(&mut rng).expect("probe realization");
+                estimator.add_profile(profile).expect("probe add");
+                std::hint::black_box((profile, &estimator));
+            }
+        });
+        assert_eq!(
+            info.count_total, 0,
+            "chemical-distance realizations allocated {} times in steady state",
+            info.count_total
+        );
+        assert_eq!(
+            info.bytes_total, 0,
+            "chemical-distance realizations allocated {} bytes in steady state",
+            info.bytes_total
+        );
+        eprintln!(
+            "CHEMICAL_DISTANCE_ALLOC topology={} sides={sides:?} V={} pairs={} \
+             measured_realizations={} allocations_per_realization={:.3} \
+             allocated_bytes_per_realization={:.3} peak_live_allocations={} peak_live_bytes={}",
+            label,
+            vertices,
+            sampler.geometry().pairs(),
+            ALLOCATION_SAMPLES,
+            info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.count_max,
+            info.bytes_max,
+        );
+    }
+
+    // Diameter mode: the all-vertex BFS passes reuse the eccentricity
+    // scratch reserved at construction.
+    let box_ = LongRangeBox::new(&[256]).expect("probe box");
+    let mut sampler = ChemicalDistanceSampler::new(box_, 1.0, 1.5, &[0]).expect("probe sampler");
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x004C_2643);
+    for _ in 0..ADAPTER_WARMUP {
+        sampler
+            .realize_with_diameter(&mut rng)
+            .expect("probe warmup");
+    }
+    let info = measure(|| {
+        for _ in 0..ALLOCATION_SAMPLES {
+            let outcome = sampler
+                .realize_with_diameter(&mut rng)
+                .expect("probe realization");
+            assert!(
+                outcome.diameter.is_some(),
+                "diameter tracking was requested"
+            );
+            std::hint::black_box(outcome);
+        }
+    });
+    assert_eq!(
+        info.count_total, 0,
+        "chemical-distance diameter realizations allocated {} times in steady state",
+        info.count_total
+    );
+    assert_eq!(
+        info.bytes_total, 0,
+        "chemical-distance diameter realizations allocated {} bytes in steady state",
+        info.bytes_total
+    );
+    eprintln!(
+        "CHEMICAL_DISTANCE_ALLOC topology=chain-1d-256 diameter_mode={:?} \
+         measured_realizations={} allocations_per_realization={:.3} \
+         allocated_bytes_per_realization={:.3} peak_live_allocations={} peak_live_bytes={}",
+        DiameterTracking::AllVertexBfs,
+        ALLOCATION_SAMPLES,
+        info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+        info.count_max,
+        info.bytes_max,
+    );
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
@@ -1686,6 +1789,7 @@ fn main() {
     report_first_passage_probe();
     report_first_passage_observables_probe();
     report_long_range_case();
+    report_chemical_distance_case();
     let benchmark_cases = cases();
     for case in &benchmark_cases {
         report_law_case(case);

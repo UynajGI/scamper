@@ -260,8 +260,14 @@ T1/T2 (2026-10-22) and T3/T4 (2026-10-23, reports in `docs/reviews/`)
 are Validated. F1, F2, and L1 are delivered and independently reviewed
 (PASS-with-follow-ups; follow-ups applied — L1's included a real
 `coordinates()` axis-reversal fix for d >= 2, caught by the review) —
-Validated. L2 is in development; then L3/F3 (F3's gates to be defined
-with the user — research-grade) and C/Q in dependency order.
+Validated. L2 is delivered, independently reviewed 2026-10-24
+(no Blocker; the review's two Majors — a seed-fragile s=2.5 gate and a
+pre-run `occupied_edge_count` bug — are fixed as follow-ups: the linear
+gate is now paired per realization at R=24 with 95% CIs, and `prepare`
+reserves adjacency capacity without resizing; the estimator, overflow,
+and wording minors are also applied) — Validated. Then L3/F3 (F3's gates
+to be defined with the user — research-grade) and C/Q in dependency
+order.
 
 ## 9. Archived anchors for v2 (already in docs/ref/)
 
