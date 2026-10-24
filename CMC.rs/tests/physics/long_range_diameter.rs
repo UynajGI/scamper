@@ -95,7 +95,7 @@ fn ladder_replays_direct_l2_draws_bitwise() {
         for (index, &recorded) in row.diameters().iter().enumerate() {
             let outcome = sampler
                 .realize_with_diameter(&mut Xoshiro256PlusPlus::seed_from_u64(
-                    seed.wrapping_add(row_index as u64)
+                    seed.wrapping_add((row_index as u64).wrapping_mul(realizations))
                         .wrapping_add(index as u64),
                 ))
                 .expect("direct draw");

@@ -45,10 +45,10 @@
 //!
 //! # Draw contract and cost
 //!
-//! A ladder is measured row by row (`s` outer, `N` inner). Row `r` draws
-//! its realization `i` from `Xoshiro256PlusPlus::seed_from_u64(seed + r
-//! + i)` — deterministic and documented so a caller can replay one row
-//! exactly. Each realization costs the L2 replay (`O(N^2)` pair decisions)
+//! A ladder is measured row by row (`s` outer, `N` inner). Row `r`
+//! draws its realization `i` from `Xoshiro256PlusPlus::seed_from_u64(seed
+//! + r * realizations + i)` — disjoint per-row streams, deterministic and
+//! documented so a caller can replay one row exactly. Each realization costs the L2 replay (`O(N^2)` pair decisions)
 //! plus `N` BFS passes (`O(N (N + m))`).
 //!
 //! The sampler reserves its buffers at construction; the ladder itself
@@ -257,14 +257,27 @@ pub fn measure_diameter_ladder(
         }
     }
 
-    let mut rows = Vec::with_capacity(sizes.len() * exponents.len());
+    let realization_count = usize::try_from(realizations)
+        .map_err(|_| DiameterLadderError::TooManyRealizations { realizations })?;
+    let row_count = sizes
+        .len()
+        .checked_mul(exponents.len())
+        .ok_or(DiameterLadderError::TooManyRows)?;
+    let mut rows = Vec::new();
+    rows.try_reserve_exact(row_count)
+        .map_err(|_| DiameterLadderError::Capacity)?;
     let mut row_index = 0_u64;
     for &exponent in exponents {
         for &size in sizes {
             let box_ = LongRangeBox::new(&[size])?;
             let mut sampler = ChemicalDistanceSampler::new(box_, beta, exponent, &[size / 2])?;
-            let mut diameters = Vec::with_capacity(realizations as usize);
-            let base = seed.wrapping_add(row_index);
+            let mut diameters = Vec::new();
+            diameters
+                .try_reserve_exact(realization_count)
+                .map_err(|_| DiameterLadderError::Capacity)?;
+            // Disjoint per-row streams: row r starts realization_count
+            // draws after row r-1, so no two rows share a seed.
+            let base = seed.wrapping_add(row_index.wrapping_mul(realizations));
             for index in 0..realizations {
                 let outcome = sampler.realize_with_diameter(
                     &mut Xoshiro256PlusPlus::seed_from_u64(base.wrapping_add(index)),
@@ -323,6 +336,12 @@ pub enum DiameterLadderError {
     SizeAboveCap { size: usize, cap: usize },
     /// Fewer than two realizations (SEM undefined).
     TooFewRealizations { realizations: u64 },
+    /// The realization count does not fit `usize`.
+    TooManyRealizations { realizations: u64 },
+    /// The requested size x exponent row count overflows.
+    TooManyRows,
+    /// Result storage could not be reserved.
+    Capacity,
     /// A non-finite or negative exponent.
     ExponentInvalid { value: f64 },
     /// A box-geometry rejection.
@@ -357,6 +376,15 @@ impl fmt::Display for DiameterLadderError {
                 formatter,
                 "at least two realizations are required for a diameter SEM, got {realizations}"
             ),
+            Self::TooManyRealizations { realizations } => write!(
+                formatter,
+                "realization count {realizations} does not fit the platform usize"
+            ),
+            Self::TooManyRows => write!(
+                formatter,
+                "the size x exponent ladder row count overflows usize"
+            ),
+            Self::Capacity => write!(formatter, "result storage could not be reserved"),
             Self::ExponentInvalid { value } => write!(
                 formatter,
                 "exponent {value} is negative or not finite (zero is legal but degenerate)"
