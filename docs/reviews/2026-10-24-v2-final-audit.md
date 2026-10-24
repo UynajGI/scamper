@@ -81,9 +81,10 @@ support their strongest claim; the limitation must be explicit.
 
 - `cargo fmt --all --check`: clean.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`:
-  clean.
-- `cargo test --workspace --all-features --no-fail-fast`: **PASS**
-  (recorded below).
+  clean on the final committed tree (2026-10-24).
+- `cargo test --workspace --all-features --no-fail-fast`: **PASS** —
+  exit code 0 on the final committed tree (2026-10-24), including the
+  F3 overflow-fix regression and the C2 limitation gate.
 - Stage-specific runs: L1 9/9, L2 9/9, L3 7/7, F3 7/7, C 2/2 (+12 unit
   tests), Q 3/3, Q3 2/2.
 - Allocation probes: the existing percolation probes remain zero; no new
