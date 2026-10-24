@@ -118,6 +118,10 @@ pub enum CorrelatedThresholdError {
     },
     /// The susceptibility peak fell on the window boundary.
     PeakOutsideWindow { side: usize },
+    /// A crossing request named a side not present in the ladder.
+    MissingSide { side: usize },
+    /// A crossing request needs two distinct sides.
+    SameSide { side: usize },
     /// The susceptibility curve had no finite value.
     UndefinedCurve { side: usize },
     /// The correlation-length exponent must be finite and positive.
@@ -170,6 +174,14 @@ impl fmt::Display for CorrelatedThresholdError {
             Self::FitExponent { nu } => {
                 write!(formatter, "fit exponent must be finite and positive, got {nu}")
             }
+            Self::MissingSide { side } => write!(
+                formatter,
+                "side {side} is not present in this threshold ladder"
+            ),
+            Self::SameSide { side } => write!(
+                formatter,
+                "a crossing needs two distinct sides, got {side} twice"
+            ),
             Self::Capacity => write!(formatter, "threshold ladder allocation failed"),
             Self::Incremental(message) => write!(formatter, "incremental union: {message}"),
         }
@@ -444,6 +456,49 @@ impl ThresholdLadder {
     #[inline]
     pub fn rungs(&self) -> &[RungObservables] {
         &self.rungs
+    }
+
+    /// Linear-interpolated crossing of the largest-cluster-fraction curves
+    /// of two sizes on the shared probability grid.
+    ///
+    /// This is the standard finite-size crossing estimator for `p_c`; unlike
+    /// the susceptibility-peak location it is calibrated against a white-noise
+    /// ladder (which reproduces the exact iid threshold). `None` means the
+    /// curves do not cross inside the measured window.
+    pub fn largest_fraction_crossing(
+        &self,
+        left_side: usize,
+        right_side: usize,
+    ) -> Result<Option<f64>, CorrelatedThresholdError> {
+        if left_side == right_side {
+            return Err(CorrelatedThresholdError::SameSide { side: left_side });
+        }
+        let left = self
+            .rungs
+            .iter()
+            .find(|rung| rung.side == left_side)
+            .ok_or(CorrelatedThresholdError::MissingSide { side: left_side })?;
+        let right = self
+            .rungs
+            .iter()
+            .find(|rung| rung.side == right_side)
+            .ok_or(CorrelatedThresholdError::MissingSide { side: right_side })?;
+        for index in 1..self.probabilities.len() {
+            let (a, b) = (index - 1, index);
+            let left_a = left.largest_fraction[a] - right.largest_fraction[a];
+            let left_b = left.largest_fraction[b] - right.largest_fraction[b];
+            if left_a == 0.0 {
+                return Ok(Some(self.probabilities[a]));
+            }
+            if left_a.signum() != left_b.signum() {
+                let weight = left_a / (left_a - left_b);
+                return Ok(Some(
+                    self.probabilities[a]
+                        + weight * (self.probabilities[b] - self.probabilities[a]),
+                ));
+            }
+        }
+        Ok(None)
     }
 
     /// Replicas per probability point.

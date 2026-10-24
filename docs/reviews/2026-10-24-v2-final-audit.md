@@ -58,12 +58,14 @@ support their strongest claim; the limitation must be explicit.
 
 ## Open items (explicit, not hidden)
 
-1. **C2 threshold table**: at a=1.5 with 32 replicas, the susceptibility
-   peak over L=64/128/256 converges to 0.508–0.513, while
-   largest-fraction crossings give 0.558/0.572; Pruessner's 0.54299 lies
-   between them. The threshold depends on the full discrete FFM
-   correlation function, not only the exponent. Follow-up: implement
-   Pruessner's exact discrete generator or calibrate a crossing estimator.
+1. **C2 threshold table**: the largest-fraction crossing estimator is now
+   calibrated on white noise (0.5987 vs the exact 0.592746 at L=64/128),
+   but at a=1.5 the susceptibility peak over L=64/128/256 converges to
+   0.508–0.513 and the L=64/128 curves have no stable crossing.
+   Pruessner's 0.54299 is not reproduced. The threshold depends on the
+   full discrete FFM correlation function, not only the exponent.
+   Follow-up: implement Pruessner's exact discrete generator and rerun the
+   calibrated crossing.
 2. **C3 statistical certification**: the analytic map and branch values
    are exact, but the finite-size `nu(a)` estimate is not yet precise
    enough to certify the a=1.5/a=1.25 flip.

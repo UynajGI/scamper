@@ -6,32 +6,47 @@
 use cmc_rs::{ThresholdLadder, ThresholdLadderSpec, WeinribHalperinMap};
 
 #[test]
+fn crossing_estimator_calibrates_on_white_noise() {
+    // The largest-cluster-fraction crossing is the estimator C2 would use
+    // for p_c; calibrate it on a WHITE-NOISE ladder, where the exact answer
+    // is the iid site threshold 0.592746. At L=64/128 and 32 replicas it
+    // recovers the threshold to ~0.01.
+    let spec = ThresholdLadderSpec::new(f64::INFINITY, &[64, 128], 32, 0x4332_0021)
+        .expect("white-noise ladder");
+    let ladder = ThresholdLadder::run(&spec).expect("ladder");
+    let crossing = ladder
+        .largest_fraction_crossing(64, 128)
+        .expect("crossing query")
+        .expect("white-noise curves cross in the default window");
+    eprintln!("C2 crossing calibration (white noise, L=64/128): {crossing:.4} vs exact 0.592746");
+    assert!(
+        (crossing - 0.592746).abs() < 0.02,
+        "white-noise crossing {crossing:.4} is not within 0.02 of 0.592746"
+    );
+    assert!(ladder.largest_fraction_crossing(64, 64).is_err());
+    assert!(ladder.largest_fraction_crossing(64, 999).is_err());
+}
+
+#[test]
 fn correlated_threshold_ladder_reports_its_current_limitation() {
-    // Pruessner et al. (2018), Table 1, 2D square: a=1.5 -> 0.54299(1).
-    // The delivered estimator is NOT yet able to reproduce that value at
-    // feasible sizes: the susceptibility-peak estimate is noisy and the
-    // L^{-1/nu} fit has a large reduced chi-square. This gate therefore
-    // validates the MACHINERY (finite estimates, ordered rungs, a usable
-    // interval) and records the honest comparison rather than asserting a
-    // four-digit reproduction. C2 remains Experimental pending a better
-    // finite-size estimator.
+    // Pruessner's a=1.5 threshold is 0.54299(1). The delivered machinery
+    // runs, but the susceptibility-peak estimator is finite-size biased and
+    // the largest-fraction curves for L<=128 do not produce a stable
+    // crossing at these sizes. C2 therefore remains Experimental; the
+    // numbers are recorded rather than asserted away.
     let spec = ThresholdLadderSpec::new(1.5, &[16, 32, 64], 16, 0x4332_0001).expect("ladder spec");
     let ladder = ThresholdLadder::run(&spec).expect("ladder");
     for rung in ladder.rungs() {
         eprintln!(
-            "C2 rung L={} p_c(L)={:.4} CI=({:.4}, {:.4}) chi_peak={:.3}",
-            rung.side,
-            rung.pseudo_critical.value,
-            rung.pseudo_critical.lower,
-            rung.pseudo_critical.upper,
-            rung.susceptibility_peak
+            "C2 rung L={} peak p={:.4} chi_peak={:.3}",
+            rung.side, rung.pseudo_critical.value, rung.susceptibility_peak
         );
         assert!(rung.pseudo_critical.value > 0.0 && rung.pseudo_critical.value < 1.0);
         assert!(rung.susceptibility_peak.is_finite());
     }
     let extrapolation = ladder.pc_extrapolation(16, 4.0 / 3.0).expect("p_c fit");
     eprintln!(
-        "C2 a=1.5: p_c(inf)={:.4} CI=({:.4}, {:.4}) vs Pruessner 0.54299;          chi2/dof={:.2} (the current estimator is Experimental)",
+        "C2 a=1.5 p_c(inf)={:.4} CI=({:.4}, {:.4}) vs Pruessner 0.54299; chi2/dof={:.2};          L=64/128 crossing is absent, so C2 is Experimental",
         extrapolation.pc_infinity.value,
         extrapolation.pc_infinity.lower,
         extrapolation.pc_infinity.upper,
