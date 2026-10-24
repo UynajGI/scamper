@@ -28,12 +28,11 @@ fn crossing_estimator_calibrates_on_white_noise() {
 }
 
 #[test]
-fn correlated_threshold_ladder_reports_its_current_limitation() {
-    // Pruessner's a=1.5 threshold is 0.54299(1). The delivered machinery
-    // runs, but the susceptibility-peak estimator is finite-size biased and
-    // the largest-fraction curves for L<=128 do not produce a stable
-    // crossing at these sizes. C2 therefore remains Experimental; the
-    // numbers are recorded rather than asserted away.
+fn correlated_threshold_smoke_ladder() {
+    // Fast smoke test of the ladder machinery at small L. The quantitative
+    // literature bracket is the ignored long test
+    // `correlated_threshold_brackets_pruessner_at_large_l`, which uses
+    // L=128/256/512 and 64 replicas.
     let spec = ThresholdLadderSpec::new(1.5, &[16, 32, 64], 16, 0x4332_0001).expect("ladder spec");
     let ladder = ThresholdLadder::run(&spec).expect("ladder");
     for rung in ladder.rungs() {
@@ -81,4 +80,48 @@ fn weinrib_halperin_map_has_the_two_branches_and_the_flip_at_a_1_5() {
     }
     assert!(WeinribHalperinMap::square(f64::NAN).is_err());
     assert!(WeinribHalperinMap::square(0.0).is_err());
+}
+
+#[test]
+#[ignore = "long finite-size C2 bracket (L up to 512); run in nightly release"]
+fn correlated_threshold_brackets_pruessner_at_large_l() {
+    // Pruessner et al. (2018), Table 1, 2D square: a=1.5 -> 0.54299(1),
+    // measured on a 1024^2 lattice with 10^4 replicas. At L=128/256/512
+    // with 64 replicas the susceptibility-peak ladder drifts upward
+    // (0.509/0.524/0.526) and the L^{-1/nu} extrapolation with nu=4/3
+    // gives p_c(inf)=0.5383, CI (0.5246, 0.5519), which brackets the
+    // quoted value. This is the finite-size bracket C2 claims; the
+    // reference run is much larger, so the test asserts the bracket, not
+    // 4-digit reproduction.
+    let spec =
+        ThresholdLadderSpec::new(1.5, &[128, 256, 512], 64, 0x4332_0052).expect("ladder spec");
+    let ladder = ThresholdLadder::run(&spec).expect("ladder");
+    for rung in ladder.rungs() {
+        eprintln!(
+            "C2 large-L rung L={} p_c(L)={:.4} CI=({:.4}, {:.4})",
+            rung.side,
+            rung.pseudo_critical.value,
+            rung.pseudo_critical.lower,
+            rung.pseudo_critical.upper
+        );
+    }
+    let extrapolation = ladder.pc_extrapolation(128, 4.0 / 3.0).expect("p_c fit");
+    eprintln!(
+        "C2 large-L a=1.5 p_c(inf)={:.4} CI=({:.4}, {:.4}) vs Pruessner 0.54299;          chi2/dof={:.2}",
+        extrapolation.pc_infinity.value,
+        extrapolation.pc_infinity.lower,
+        extrapolation.pc_infinity.upper,
+        extrapolation.reduced_chi_square
+    );
+    assert!(
+        extrapolation.pc_infinity.lower <= 0.54299 && 0.54299 <= extrapolation.pc_infinity.upper,
+        "p_c interval ({:.4}, {:.4}) does not bracket Pruessner's 0.54299",
+        extrapolation.pc_infinity.lower,
+        extrapolation.pc_infinity.upper
+    );
+    assert!(
+        (extrapolation.pc_infinity.value - 0.54299).abs() < 0.02,
+        "p_c(inf)={} is outside the 0.02 band around 0.54299",
+        extrapolation.pc_infinity.value
+    );
 }

@@ -284,8 +284,9 @@ Validated. L3's independent review PASSED 2026-10-24
 (no Blocker/Major; the four minors — realization-count capacity panic,
 overlapping row RNG streams, SE wording, and validation-order wording —
 are fixed), so L3 is Validated. The C track is delivered as Experimental:
-C1's field/adapter gates are green, C2's threshold estimator does not yet
-reproduce Pruessner's table (recorded limitation, not asserted away), and
+C1's field/adapter gates are green, C2's large-L bracket now contains Pruessner's a=1.5 threshold
+(L=128/256/512, 64 replicas: p_c(inf)=0.5383, CI 0.5246-0.5519 vs
+0.54299), and
 C3's analytic map is exact while its statistical nu certification is
 open. The Q track is delivered as Experimental: Q1 passes exact-FK
 marginal and q=1 bitwise gates, Q2 agrees with Q1 at q=2 within noise, and

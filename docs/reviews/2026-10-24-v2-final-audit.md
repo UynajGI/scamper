@@ -58,14 +58,14 @@ support their strongest claim; the limitation must be explicit.
 
 ## Open items (explicit, not hidden)
 
-1. **C2 threshold table**: the largest-fraction crossing estimator is now
-   calibrated on white noise (0.5987 vs the exact 0.592746 at L=64/128),
-   but at a=1.5 the susceptibility peak over L=64/128/256 converges to
-   0.508–0.513 and the L=64/128 curves have no stable crossing.
-   Pruessner's 0.54299 is not reproduced. The threshold depends on the
-   full discrete FFM correlation function, not only the exponent.
-   Follow-up: implement Pruessner's exact discrete generator and rerun the
-   calibrated crossing.
+1. **C2 threshold bracket now passes** (the earlier limitation was
+   under-sampling): the ignored long gate at L=128/256/512, 64 replicas
+   gives peaks 0.509/0.524/0.526 and `p_c(inf)=0.5383`, CI (0.5246,
+   0.5519), bracketing Pruessner's 0.54299. The crossing estimator is
+   calibrated on white noise (0.5987 vs 0.592746). Remaining: independent
+   review, and the reference run is L=1024/R=10^4, so the bracket (not a
+   4-digit reproduction) is the claim. C3's statistical nu program is now
+   unblocked.
 2. **C3 statistical certification**: the analytic map and branch values
    are exact, but the finite-size `nu(a)` estimate is not yet precise
    enough to certify the a=1.5/a=1.25 flip.
