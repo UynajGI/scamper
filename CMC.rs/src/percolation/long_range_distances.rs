@@ -107,6 +107,7 @@ use std::collections::TryReserveError;
 
 use rand::{Rng, RngExt};
 
+use super::estimator::Moments;
 use super::long_range::LongRangeBox;
 use super::process::ProcessError;
 
@@ -649,12 +650,8 @@ impl ChemicalDistanceSampler {
 pub struct ChemicalDistanceEstimator {
     vertices: usize,
     profile_samples: usize,
-    reachable: Vec<usize>,
-    profile_sum: Vec<f64>,
-    profile_sum_sq: Vec<f64>,
-    diameter_samples: usize,
-    diameter_sum: f64,
-    diameter_sum_sq: f64,
+    profile: Vec<Moments>,
+    diameter: Moments,
 }
 
 impl ChemicalDistanceEstimator {
@@ -664,26 +661,13 @@ impl ChemicalDistanceEstimator {
         if vertices == 0 {
             return Err(ChemicalDistanceError::NoVertices);
         }
-        let mut reachable = Vec::new();
-        reserve_exact(&mut reachable, vertices, 0, "reachable counts")?;
-        let mut profile_sum = Vec::new();
-        reserve_exact(&mut profile_sum, vertices, 0.0, "profile sums")?;
-        let mut profile_sum_sq = Vec::new();
-        reserve_exact(
-            &mut profile_sum_sq,
-            vertices,
-            0.0,
-            "profile sums of squares",
-        )?;
+        let mut profile = Vec::new();
+        reserve_exact(&mut profile, vertices, Moments::new(), "profile moments")?;
         Ok(Self {
             vertices,
             profile_samples: 0,
-            reachable,
-            profile_sum,
-            profile_sum_sq,
-            diameter_samples: 0,
-            diameter_sum: 0.0,
-            diameter_sum_sq: 0.0,
+            profile,
+            diameter: Moments::new(),
         })
     }
 
@@ -701,8 +685,8 @@ impl ChemicalDistanceEstimator {
 
     /// Diameters accumulated so far.
     #[inline]
-    pub const fn diameter_samples(&self) -> usize {
-        self.diameter_samples
+    pub fn diameter_samples(&self) -> usize {
+        self.diameter.samples()
     }
 
     /// Add one realization's profile. Length mismatches are typed
@@ -715,11 +699,9 @@ impl ChemicalDistanceEstimator {
             });
         }
         self.profile_samples += 1;
-        for (index, &value) in profile.iter().enumerate() {
+        for (moments, &value) in self.profile.iter_mut().zip(profile) {
             if value.is_finite() {
-                self.reachable[index] += 1;
-                self.profile_sum[index] += value;
-                self.profile_sum_sq[index] += value * value;
+                moments.add(value);
             }
         }
         Ok(())
@@ -729,10 +711,7 @@ impl ChemicalDistanceEstimator {
     /// The square is taken in `f64`, so no `usize` overflow is possible
     /// for any caller-supplied value.
     pub fn add_diameter(&mut self, diameter: usize) {
-        self.diameter_samples += 1;
-        let value = diameter as f64;
-        self.diameter_sum += value;
-        self.diameter_sum_sq += value * value;
+        self.diameter.add(diameter as f64);
     }
 
     /// Sample statistics, or `None` before any profile and any pair of
@@ -741,55 +720,45 @@ impl ChemicalDistanceEstimator {
     /// samples); entries reached once have zero error. Allocates the
     /// estimate's vectors (report-time, never per realization).
     pub fn estimate(&self) -> Option<ChemicalDistanceEstimate> {
-        if self.profile_samples == 0 && self.diameter_samples < 2 {
+        if self.profile_samples == 0 && self.diameter.samples() < 2 {
             return None;
         }
         let profile_mean = self
-            .profile_sum
+            .profile
             .iter()
-            .zip(&self.reachable)
-            .map(|(&sum, &count)| {
-                if count > 0 {
-                    sum / count as f64
-                } else {
-                    f64::NAN
-                }
-            })
+            .map(|moments| moments.mean().unwrap_or(f64::NAN))
             .collect();
         let profile_standard_error = self
-            .profile_sum_sq
+            .profile
             .iter()
-            .zip(self.profile_sum.iter())
-            .zip(&self.reachable)
-            .map(|((&sum_sq, &sum), &count)| {
-                if count < 2 {
+            .map(|moments| {
+                if moments.samples() < 2 {
                     0.0
                 } else {
-                    let count = count as f64;
-                    let variance = ((sum_sq - sum * sum / count) / (count - 1.0)).max(0.0);
-                    (variance / count).sqrt()
+                    moments
+                        .standard_error()
+                        .expect("at least two reachable samples")
                 }
             })
             .collect();
         let reachable_fraction = self
-            .reachable
+            .profile
             .iter()
-            .map(|&count| {
+            .map(|moments| {
                 if self.profile_samples > 0 {
-                    count as f64 / self.profile_samples as f64
+                    moments.samples() as f64 / self.profile_samples as f64
                 } else {
                     f64::NAN
                 }
             })
             .collect();
-        let (diameter_mean, diameter_standard_error) = if self.diameter_samples >= 2 {
-            let samples = self.diameter_samples as f64;
-            let mean = self.diameter_sum / samples;
-            let variance = ((self.diameter_sum_sq
-                - self.diameter_sum * self.diameter_sum / samples)
-                / (samples - 1.0))
-                .max(0.0);
-            (mean, (variance / samples).sqrt())
+        let (diameter_mean, diameter_standard_error) = if self.diameter.samples() >= 2 {
+            (
+                self.diameter.mean().expect("at least two diameters"),
+                self.diameter
+                    .standard_error()
+                    .expect("at least two diameters"),
+            )
         } else {
             (f64::NAN, f64::NAN)
         };
@@ -798,7 +767,7 @@ impl ChemicalDistanceEstimator {
             profile_mean,
             profile_standard_error,
             reachable_fraction,
-            diameter_samples: self.diameter_samples,
+            diameter_samples: self.diameter.samples(),
             diameter_mean,
             diameter_standard_error,
         })

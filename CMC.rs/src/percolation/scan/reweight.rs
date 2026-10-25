@@ -5,6 +5,7 @@ use std::mem::size_of;
 
 use crate::{Probability, ProbabilityField};
 
+use super::super::estimator::Moments;
 use super::{ScanCurve, ScanPoint};
 
 /// Scalar observable requested from a scan curve.
@@ -409,44 +410,32 @@ pub fn reweight_heterogeneous(
 /// uncertainty; they are not the binomial occupation-count variance.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScanEstimator {
-    count: usize,
-    sum: f64,
-    sum_sq: f64,
+    moments: Moments,
 }
 
 impl ScanEstimator {
     pub const fn new() -> Self {
         Self {
-            count: 0,
-            sum: 0.0,
-            sum_sq: 0.0,
+            moments: Moments::new(),
         }
     }
 
     pub const fn samples(&self) -> usize {
-        self.count
+        self.moments.samples()
     }
 
     pub fn add(&mut self, value: f64) {
-        self.count += 1;
-        self.sum += value;
-        self.sum_sq += value * value;
+        self.moments.add(value);
     }
 
     /// Sample mean, unbiased sample variance and standard error, or `None`
     /// until at least two independent scans have been added.
     pub fn estimate(&self) -> Option<ReweightedEstimate> {
-        if self.count < 2 {
-            return None;
-        }
-        let samples = self.count as f64;
-        let mean = self.sum / samples;
-        let variance = ((self.sum_sq - self.sum * self.sum / samples) / (samples - 1.0)).max(0.0);
         Some(ReweightedEstimate {
-            mean,
-            variance,
-            standard_error: (variance / samples).sqrt(),
-            samples: self.count,
+            mean: self.moments.mean()?,
+            variance: self.moments.sample_variance()?,
+            standard_error: self.moments.standard_error()?,
+            samples: self.moments.samples(),
         })
     }
 }

@@ -72,6 +72,7 @@ use core::fmt;
 
 use rand::{Rng, RngExt};
 
+use super::estimator::Moments;
 use super::first_passage::{
     first_passage_run, FirstPassageError, FirstPassageWorkspace, GeodesicTracking,
 };
@@ -442,69 +443,50 @@ impl PassageSampler {
 /// allocates nothing per realization.
 #[derive(Clone, Debug)]
 pub struct PassageEstimator {
-    samples: usize,
-    sum: f64,
-    sum_sq: f64,
-    profile_sum: Vec<f64>,
-    profile_sum_sq: Vec<f64>,
+    passage: Moments,
+    profile: Vec<Moments>,
 }
 
 impl PassageEstimator {
     /// Reserve the accumulators for profiles of `boundary_size` entries.
     pub fn new(boundary_size: usize) -> Result<Self, PassageObservablesError> {
-        let mut profile_sum = Vec::new();
-        profile_sum
+        let mut profile = Vec::new();
+        profile
             .try_reserve_exact(boundary_size)
             .map_err(|source| PassageObservablesError::Capacity(ProcessError::from(source)))?;
-        profile_sum.resize(boundary_size, 0.0);
-        let mut profile_sum_sq = Vec::new();
-        profile_sum_sq
-            .try_reserve_exact(boundary_size)
-            .map_err(|source| PassageObservablesError::Capacity(ProcessError::from(source)))?;
-        profile_sum_sq.resize(boundary_size, 0.0);
+        profile.resize(boundary_size, Moments::new());
         Ok(Self {
-            samples: 0,
-            sum: 0.0,
-            sum_sq: 0.0,
-            profile_sum,
-            profile_sum_sq,
+            passage: Moments::new(),
+            profile,
         })
     }
 
     /// Realizations accumulated so far.
     #[inline]
-    pub const fn samples(&self) -> usize {
-        self.samples
+    pub fn samples(&self) -> usize {
+        self.passage.samples()
     }
 
     /// The reserved boundary size.
     #[inline]
     pub fn boundary_size(&self) -> usize {
-        self.profile_sum.len()
+        self.profile.len()
     }
 
     /// Add one realization's profile (the scalar passage time is its
     /// minimum, computed here). Length mismatches are typed rejections;
     /// nothing is added on rejection.
     pub fn add(&mut self, profile: &[f64]) -> Result<(), PassageObservablesError> {
-        if profile.len() != self.profile_sum.len() {
+        if profile.len() != self.profile.len() {
             return Err(PassageObservablesError::ProfileLength {
-                expected: self.profile_sum.len(),
+                expected: self.profile.len(),
                 actual: profile.len(),
             });
         }
         let passage = profile.iter().copied().fold(f64::INFINITY, f64::min);
-        self.samples += 1;
-        self.sum += passage;
-        self.sum_sq += passage * passage;
-        for ((sum, sum_sq), &value) in self
-            .profile_sum
-            .iter_mut()
-            .zip(self.profile_sum_sq.iter_mut())
-            .zip(profile)
-        {
-            *sum += value;
-            *sum_sq += value * value;
+        self.passage.add(passage);
+        for (moments, &value) in self.profile.iter_mut().zip(profile) {
+            moments.add(value);
         }
         Ok(())
     }
@@ -514,26 +496,27 @@ impl PassageEstimator {
     /// Allocates the two profile vectors of the returned estimate (a
     /// report-time cost, never per realization).
     pub fn estimate(&self) -> Option<PassageEstimate> {
-        if self.samples < 2 {
-            return None;
-        }
-        let samples = self.samples as f64;
-        let mean = self.sum / samples;
-        let variance = ((self.sum_sq - self.sum * self.sum / samples) / (samples - 1.0)).max(0.0);
-        let profile_mean = self.profile_sum.iter().map(|&sum| sum / samples).collect();
-        let profile_variance = self
-            .profile_sum_sq
-            .iter()
-            .zip(self.profile_sum.iter())
-            .map(|(&sum_sq, &sum)| ((sum_sq - sum * sum / samples) / (samples - 1.0)).max(0.0))
-            .collect();
+        let samples = self.passage.samples();
+        let mean = self.passage.mean()?;
         Some(PassageEstimate {
-            samples: self.samples,
+            samples,
             mean,
-            variance,
-            standard_error: (variance / samples).sqrt(),
-            profile_mean,
-            profile_variance,
+            variance: self.passage.sample_variance()?,
+            standard_error: self.passage.standard_error()?,
+            profile_mean: self
+                .profile
+                .iter()
+                .map(|moments| moments.mean().expect("same sample count as the scalar"))
+                .collect(),
+            profile_variance: self
+                .profile
+                .iter()
+                .map(|moments| {
+                    moments
+                        .sample_variance()
+                        .expect("same sample count as the scalar")
+                })
+                .collect(),
         })
     }
 }

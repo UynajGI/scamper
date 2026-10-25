@@ -6,9 +6,13 @@
 //! realization without editing CMC.rs. The generic adapter that drives such a
 //! law is A3; here the law feeds the public analyzer directly.
 
+use std::sync::Arc;
+
+use carlo_rs::{Context, Run, RunConfig, RunId, TaskId};
 use cmc_rs::{
-    analyze, build_chain, ComponentWorkspace, CsrLattice, GraphView, OccupationLaw, SamplingError,
-    StaticConfiguration, UndirectedGraphView,
+    analyze, build_chain, ComponentWorkspace, CsrLattice, GraphView, ObservablePlan, OccupationLaw,
+    PercolationAdapter, SampleView, SamplingError, ScalarObservable, StaticConfiguration,
+    StaticObservable, UndirectedGraphView,
 };
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -36,6 +40,57 @@ impl OccupationLaw<CsrLattice> for AlternateSites {
         }
         Ok(())
     }
+}
+
+#[derive(Debug)]
+struct DoubleActiveVertices;
+
+impl ScalarObservable for DoubleActiveVertices {
+    fn name(&self) -> &str {
+        "CustomDoubleActiveVertices"
+    }
+
+    fn evaluate(&self, sample: &SampleView<'_>) -> Option<f64> {
+        Some(2.0 * sample.summary().active_vertex_count as f64)
+    }
+}
+
+#[test]
+fn custom_law_and_custom_observable_compose_through_the_generic_adapter() {
+    let graph = build_chain(6, false);
+    let plan = ObservablePlan::new([StaticObservable::ActiveVertexCount], Vec::new())
+        .with_custom([Arc::new(DoubleActiveVertices) as Arc<dyn ScalarObservable>])
+        .expect("custom plan");
+    let adapter = PercolationAdapter::new(graph, AlternateSites, plan).expect("adapter");
+
+    let seed = 0x4133_0002;
+    let context = Context::new_with_binsize(Xoshiro256PlusPlus::seed_from_u64(seed), 0, 1);
+    let mut run = Run::from_parts(
+        context,
+        adapter,
+        TaskId::new(0),
+        RunId::new(0),
+        RunConfig {
+            thermalization_sweeps: 0,
+            measurement_sweeps: 4,
+            binsize: 1,
+            base_seed: seed,
+            ..Default::default()
+        },
+    );
+    run.run(4);
+    let results = run.finalize(seed);
+    assert_eq!(
+        results.get("ActiveVertexCount").expect("built-in").mean,
+        3.0
+    );
+    assert_eq!(
+        results
+            .get("CustomDoubleActiveVertices")
+            .expect("custom column")
+            .mean,
+        6.0
+    );
 }
 
 #[test]

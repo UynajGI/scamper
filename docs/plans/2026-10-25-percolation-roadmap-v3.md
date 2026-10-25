@@ -136,6 +136,18 @@ observable composed through the generic adapter.
 Deps: A2. Risks: `FromParams` uniform-only constraint; column naming;
 special cases (winding, i.i.d. sampling, sequential processes).
 
+Progress note (2026-10-25): A3a adds `Moments` (count/sum/sum_sq,
+unbiased variance, SEM) used by the passage, shape, chemical-distance, and
+scan estimators. A3b makes the static adapter generic:
+`PercolationAdapter<L = StaticLaw>` keeps `StaticPercolationMC` as a
+compatibility alias, and a custom law composes with a custom observable
+through `Run::from_parts`. Custom laws use the F2 `SamplingError`
+vabulary (`Error = SamplingError`) so construction-time rejections keep
+their typed `LawDomain` variant; laws with richer error contracts (the
+correlated field) keep dedicated adapters for now. The generic C0 writer
+and the remaining preset collapse (bond dynamics, continuum, scans) are
+outstanding.
+
 ### A4 — Policy traits for processes, scans, and attacks
 
 Problem: `AttackPolicy`, `AttackGrid`, `ScanObservable`, and the
@@ -332,7 +344,7 @@ roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
 |---|---|
 | A1 Observable trait/open plan | Done (A1a+A1b: `ScalarObservable` + `SampleView`, capability-driven label/winding/moment requests, built-in `ObservableSpec` impls, `StaticObservable` shim; external-crate, golden, and 0-allocation gates green) |
 | A2 SampleView/OccupationLaw/WeightLaw | Done (A2a: `OccupationLaw` for Bernoulli/correlated laws, `WeightLaw` for FPP with bitwise replay; A2b: public `SampleView::new`/`vacuum`/`from_analysis`, workspace-lifetime analyzer accessors, and checked public activity setters; external-crate law, golden, and rustdoc gates green) |
-| A3 generic adapter/estimator/C0 | Not started |
+| A3 generic adapter/estimator/C0 | In progress (A3a: shared `Moments` accumulator replaces four duplicated count/sum/sum_sq estimators; A3b: `PercolationAdapter<L>` with `StaticPercolationMC` preset and external custom-law composition; C0 writer and remaining preset collapse pending) |
 | A4 policy traits | Not started |
 | A5 FSS toolkit | Not started |
 | A6 specification/provenance | Not started |

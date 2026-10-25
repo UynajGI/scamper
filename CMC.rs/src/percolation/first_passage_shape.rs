@@ -103,6 +103,7 @@ use core::fmt;
 
 use rand::{Rng, RngExt};
 
+use super::estimator::Moments;
 use super::first_passage::{
     first_passage_run, FirstPassageError, FirstPassageWorkspace, GeodesicTracking, NO_PREDECESSOR,
 };
@@ -452,8 +453,7 @@ impl ShapeSampler {
 pub struct ShapeEstimator {
     targets: usize,
     samples: usize,
-    sum: Vec<f64>,
-    sum_sq: Vec<f64>,
+    moments: Vec<Moments>,
 }
 
 impl ShapeEstimator {
@@ -462,26 +462,18 @@ impl ShapeEstimator {
         if targets == 0 {
             return Err(ShapeError::NoTargets);
         }
-        let mut sum = Vec::new();
-        sum.try_reserve_exact(targets)
-            .map_err(|source| ShapeError::Capacity {
-                buffer: "shape sums",
-                source: ProcessError::from(source),
-            })?;
-        sum.resize(targets, 0.0);
-        let mut sum_sq = Vec::new();
-        sum_sq
+        let mut moments = Vec::new();
+        moments
             .try_reserve_exact(targets)
             .map_err(|source| ShapeError::Capacity {
-                buffer: "shape sums of squares",
+                buffer: "shape moments",
                 source: ProcessError::from(source),
             })?;
-        sum_sq.resize(targets, 0.0);
+        moments.resize(targets, Moments::new());
         Ok(Self {
             targets,
             samples: 0,
-            sum,
-            sum_sq,
+            moments,
         })
     }
 
@@ -497,8 +489,9 @@ impl ShapeEstimator {
         self.samples
     }
 
-    /// Add one realization's profile. Length mismatches are typed
-    /// rejections; nothing is added on rejection.
+    /// Add one realization's profile. Length mismatches and negative or
+    /// non-finite entries are typed rejections; nothing is added on
+    /// rejection.
     pub fn add(&mut self, profile: &[f64]) -> Result<(), ShapeError> {
         if profile.len() != self.targets {
             return Err(ShapeError::ProfileLength {
@@ -512,10 +505,8 @@ impl ShapeEstimator {
             }
         }
         self.samples += 1;
-        for ((sum, sum_sq), &value) in self.sum.iter_mut().zip(self.sum_sq.iter_mut()).zip(profile)
-        {
-            *sum += value;
-            *sum_sq += value * value;
+        for (moments, &value) in self.moments.iter_mut().zip(profile) {
+            moments.add(value);
         }
         Ok(())
     }
@@ -526,23 +517,23 @@ impl ShapeEstimator {
         if self.samples < 2 {
             return None;
         }
-        let samples = self.samples as f64;
-        let means: Vec<f64> = self.sum.iter().map(|&sum| sum / samples).collect();
-        let variances: Vec<f64> = self
-            .sum_sq
-            .iter()
-            .zip(self.sum.iter())
-            .map(|(&sum_sq, &sum)| ((sum_sq - sum * sum / samples) / (samples - 1.0)).max(0.0))
-            .collect();
-        let standard_errors = variances
-            .iter()
-            .map(|&variance| (variance / samples).sqrt())
-            .collect();
         Some(ShapeEstimate {
             samples: self.samples,
-            means,
-            variances,
-            standard_errors,
+            means: self
+                .moments
+                .iter()
+                .map(|moments| moments.mean().expect("at least two samples"))
+                .collect(),
+            variances: self
+                .moments
+                .iter()
+                .map(|moments| moments.sample_variance().expect("at least two samples"))
+                .collect(),
+            standard_errors: self
+                .moments
+                .iter()
+                .map(|moments| moments.standard_error().expect("at least two samples"))
+                .collect(),
         })
     }
 }

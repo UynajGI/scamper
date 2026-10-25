@@ -182,30 +182,42 @@ impl<G: UndirectedGraphView> OccupationLaw<G> for StaticLaw {
 }
 
 /// Owned convenience adapter for i.i.d. site, bond, or mixed percolation with
-/// uniform or heterogeneous (per-vertex/per-edge) probabilities.
+/// Generic owned percolation adapter for independent occupation laws on a
+/// [`CsrLattice`].
 ///
-/// One `sweep()` draws one complete realization and the following `measure()`
-/// analyzes it. Configure `thermalization_sweeps = 0`; the adapter cannot see
-/// scheduler configuration and therefore cannot enforce this runtime setting.
-/// Heterogeneous laws reach this adapter only through the constructor (and
-/// `Run::from_parts()` for scheduling); the `FromParams` parameter schema
-/// stays uniform-only (N1 adds no graph/probability-list input format).
-/// Borrowed graphs and custom laws use the core APIs directly, optionally with
-/// `Run::from_parts()`.
-pub struct StaticPercolationMC {
+/// One `sweep()` asks the law for one complete realization and the following
+/// `measure()` analyzes it and records the plan. Configure
+/// `thermalization_sweeps = 0`; the adapter cannot see scheduler configuration
+/// and therefore cannot enforce this runtime setting.
+///
+/// [`StaticLaw`] is the built-in preset ([`StaticPercolationMC`]). A custom
+/// law implements [`OccupationLaw<CsrLattice>`] with `Error = SamplingError`,
+/// the F2 law-error vocabulary: the adapter constructor surfaces
+/// `validate_domain` rejections as [`StaticPercolationError::LawDomain`] and
+/// `sweep` treats a post-validation sampling error as a contract violation
+/// (a panic, exactly as the uniform preset did). Laws with richer error
+/// contracts (for example the correlated field geometry) keep dedicated
+/// adapters.
+pub struct PercolationAdapter<L = StaticLaw> {
     lattice: CsrLattice,
     embedding: Option<LatticeEmbedding>,
-    law: StaticLaw,
+    law: L,
     configuration: StaticConfiguration,
     workspace: ComponentWorkspace,
     winding_workspace: WindingWorkspace,
     plan: ObservablePlan,
 }
 
-impl StaticPercolationMC {
+/// Compatibility name for the uniform/heterogeneous Bernoulli preset.
+pub type StaticPercolationMC<L = StaticLaw> = PercolationAdapter<L>;
+
+impl<L> PercolationAdapter<L>
+where
+    L: OccupationLaw<CsrLattice, Error = SamplingError>,
+{
     pub fn new(
         lattice: CsrLattice,
-        law: StaticLaw,
+        law: L,
         plan: ObservablePlan,
     ) -> Result<Self, StaticPercolationError> {
         if plan.requests_winding() {
@@ -231,7 +243,7 @@ impl StaticPercolationMC {
     pub fn with_embedding(
         lattice: CsrLattice,
         embedding: LatticeEmbedding,
-        law: StaticLaw,
+        law: L,
         plan: ObservablePlan,
     ) -> Result<Self, StaticPercolationError> {
         Self::from_parts(lattice, Some(embedding), law, plan)
@@ -240,7 +252,7 @@ impl StaticPercolationMC {
     fn from_parts(
         lattice: CsrLattice,
         embedding: Option<LatticeEmbedding>,
-        law: StaticLaw,
+        law: L,
         plan: ObservablePlan,
     ) -> Result<Self, StaticPercolationError> {
         lattice
@@ -315,7 +327,7 @@ impl StaticPercolationMC {
         self.embedding.as_ref()
     }
 
-    pub const fn law(&self) -> &StaticLaw {
+    pub const fn law(&self) -> &L {
         &self.law
     }
 
@@ -350,7 +362,10 @@ fn max_abs_displacement(
     Ok(max_component)
 }
 
-impl MonteCarlo for StaticPercolationMC {
+impl<L> MonteCarlo for PercolationAdapter<L>
+where
+    L: OccupationLaw<CsrLattice, Error = SamplingError>,
+{
     type Rng = Xoshiro256PlusPlus;
 
     fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
@@ -410,7 +425,7 @@ impl MonteCarlo for StaticPercolationMC {
     }
 }
 
-impl FromParams for StaticPercolationMC {
+impl FromParams for PercolationAdapter<StaticLaw> {
     fn validate_params(params: &Params) -> Result<(), CarloError> {
         parse_law(params)?;
         let observables = parse_observables(params)?;

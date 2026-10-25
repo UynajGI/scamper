@@ -36,6 +36,7 @@ mod correlated;
 mod correlated_thresholds;
 mod directed;
 mod edwards_sokal;
+mod estimator;
 mod first_passage;
 mod first_passage_observables;
 mod first_passage_shape;
@@ -69,7 +70,7 @@ pub use boolean::{
     overlap_pairs, overlap_pairs_from_configuration, BooleanError, BooleanPercolationMC,
     OverlapGraph, PointProcess, Radii,
 };
-pub use carlo::{StaticLaw, StaticPercolationError, StaticPercolationMC};
+pub use carlo::{PercolationAdapter, StaticLaw, StaticPercolationError, StaticPercolationMC};
 pub use chayes_machta::{ChayesMachtaError, ChayesMachtaMC};
 pub use configuration::StaticConfiguration;
 pub use continuum::{
@@ -93,6 +94,7 @@ pub use directed::{
     WeakComponentSummary, WeakComponentWorkspace,
 };
 pub use edwards_sokal::{AllActiveVertices, EdwardsSokalError, EdwardsSokalMC};
+pub use estimator::Moments;
 pub use first_passage::{
     first_passage_run, FirstPassageError, FirstPassageOutcome, FirstPassageWorkspace,
     GeodesicTracking, NO_PREDECESSOR,
