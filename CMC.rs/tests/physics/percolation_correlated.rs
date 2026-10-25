@@ -4,6 +4,8 @@
 //! against Pruessner's Table 1 and the C3 Weinrib–Halperin branch map.
 
 use cmc_rs::{ThresholdLadder, ThresholdLadderSpec, WeinribHalperinMap};
+use rand::SeedableRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 #[test]
 fn crossing_estimator_calibrates_on_white_noise() {
@@ -105,6 +107,11 @@ fn correlated_threshold_brackets_pruessner_at_large_l() {
             rung.pseudo_critical.upper
         );
     }
+    let nu = ladder.nu_from_log_derivative(128).expect("nu fit");
+    eprintln!(
+        "C2/C3 large-L a=1.5 nu={:.3} CI=({:.3}, {:.3}) (predicted 4/3=1.333)",
+        nu.nu.value, nu.nu.lower, nu.nu.upper
+    );
     let extrapolation = ladder.pc_extrapolation(128, 4.0 / 3.0).expect("p_c fit");
     eprintln!(
         "C2 large-L a=1.5 p_c(inf)={:.4} CI=({:.4}, {:.4}) vs Pruessner 0.54299;          chi2/dof={:.2}",
@@ -123,5 +130,71 @@ fn correlated_threshold_brackets_pruessner_at_large_l() {
         (extrapolation.pc_infinity.value - 0.54299).abs() < 0.02,
         "p_c(inf)={} is outside the 0.02 band around 0.54299",
         extrapolation.pc_infinity.value
+    );
+}
+
+#[test]
+fn thresholded_binary_correlation_orders_by_exponent() {
+    // The Gaussian-field correlation is gated in the module unit tests; this
+    // gate checks the BINARY occupation field after thresholding at p=0.5.
+    // Stronger correlations (smaller a) must give a larger nearest/short-range
+    // correlation, and the white-noise limit must be uncorrelated.
+    fn binary_correlation(exponent: f64, lag: usize) -> f64 {
+        let spec = cmc_rs::CorrelatedFieldSpec::new(&[32, 32], exponent).expect("spec");
+        let mut field = cmc_rs::CorrelatedGaussianField::new(spec).expect("field");
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4333_0001 + lag as u64);
+        let side = 32_usize;
+        let replicas = 120_usize;
+        let mut sum = 0.0;
+        for _ in 0..replicas {
+            field.sample(&mut rng);
+            let values = field.values();
+            for y in 0..side {
+                for x in 0..side {
+                    let here = if values[x + side * y] > 0.0 {
+                        0.5
+                    } else {
+                        -0.5
+                    };
+                    let shifted_x = (x + lag) % side;
+                    let shifted = if values[shifted_x + side * y] > 0.0 {
+                        0.5
+                    } else {
+                        -0.5
+                    };
+                    sum += here * shifted;
+                }
+            }
+        }
+        sum / (replicas * side * side) as f64
+    }
+    let strong = binary_correlation(1.5, 1);
+    let strong_mid = binary_correlation(1.5, 4);
+    let weak = binary_correlation(2.5, 4);
+    let iid = binary_correlation(f64::INFINITY, 1);
+    let iid_mid = binary_correlation(f64::INFINITY, 4);
+    eprintln!(
+        "C1 binary correlation: a=1.5 r=1 {strong:.4}, r=4 {strong_mid:.4}; \
+         a=2.5 r=4 {weak:.4}; a=inf r=1 {iid:.4}, r=4 {iid_mid:.4}"
+    );
+    assert!(
+        strong > 0.02,
+        "a=1.5 nearest-neighbour binary correlation must be positive"
+    );
+    assert!(
+        strong_mid < strong,
+        "binary correlation must decay with distance"
+    );
+    assert!(
+        strong_mid > weak,
+        "a=1.5 must be more correlated than a=2.5 at r=4 ({strong_mid:.4} vs {weak:.4})"
+    );
+    assert!(
+        iid.abs() < 0.01,
+        "white-noise binary correlation must vanish, got {iid:.4}"
+    );
+    assert!(
+        iid_mid.abs() < 0.01,
+        "white-noise binary correlation at r=4 must vanish, got {iid_mid:.4}"
     );
 }

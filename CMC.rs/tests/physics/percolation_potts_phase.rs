@@ -55,3 +55,54 @@ fn phase_scan_reports_bond_density_and_bimodality_at_the_exact_curve() {
     // Exploratory only: the finite-size bimodality coefficient is reported
     // for q=2 and q=8; no ordering or threshold is asserted at L=8.
 }
+
+#[test]
+#[ignore = "long exploratory Q3 scan at L=16"]
+fn q_eight_bimodality_ordering_at_l16() {
+    let mut estimates = Vec::new();
+    for &q in &[2.0_f64, 4.0, 6.0, 8.0] {
+        let spec = PottsPhaseSpec::new(q, 16, 400, 3000, 0x5133_1001 + q as u64).expect("spec");
+        let estimate = phase_scan(spec).expect("scan");
+        eprintln!(
+            "Q3 L=16 q={q} p_c={:.4}: mean={:.4} var={:.5} skew={:.3} kurt={:.3} bimodality={:.3}",
+            estimate.critical_probability,
+            estimate.density_mean,
+            estimate.density_variance,
+            estimate.skewness,
+            estimate.kurtosis,
+            estimate.bimodality
+        );
+        estimates.push(estimate);
+    }
+    // Descriptive classification: below the 5/9 bimodality threshold for
+    // q <= 4 (continuous), above it for q > 4 (first order at this L).
+    const BIMODAL: f64 = 5.0 / 9.0;
+    for estimate in &estimates[..2] {
+        assert!(
+            estimate.bimodality < BIMODAL,
+            "q={} bimodality {:.3} should stay below 5/9 at L=16",
+            estimate.q,
+            estimate.bimodality
+        );
+    }
+    // q=6 sits below 5/9 at L=16 (0.519): the first-order signal for the
+    // intermediate case needs a larger lattice, so it is reported, not
+    // asserted. q=8 is clearly bimodal at this size.
+    assert!(
+        estimates[3].bimodality > BIMODAL,
+        "q=8 bimodality {:.3} should exceed 5/9 at L=16",
+        estimates[3].bimodality
+    );
+    for pair in estimates.windows(2) {
+        assert!(
+            pair[1].bimodality > pair[0].bimodality,
+            "bimodality must increase with q: {:.3} then {:.3}",
+            pair[0].bimodality,
+            pair[1].bimodality
+        );
+    }
+    eprintln!(
+        "Q3 q=6 bimodality {:.3} is below 5/9 at L=16 (intermediate case unresolved)",
+        estimates[2].bimodality
+    );
+}

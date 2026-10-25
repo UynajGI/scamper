@@ -42,8 +42,10 @@ support their strongest claim; the limitation must be explicit.
 - **q = 1**: one all-closed heat-bath Sweeny sweep is bitwise the F2
   `BondBernoulli` draw at the same seed (gate passes).
 - **Correlated-field limits**: `a = +infinity` is the bitwise iid
-  delegate; `a = 0` is the constant-field limit (both gated). This
-  corrects the roadmap's earlier `a = 0` wording.
+  delegate; `a = 0` is the constant-field limit (both gated). The
+  thresholded binary correlation is also gated (a=1.5: 0.0993 at r=1,
+  0.0212 at r=4; a=2.5: 0.0049 at r=4; iid ~0). This corrects the
+  roadmap's earlier `a = 0` wording.
 - **Reuse, not duplication**: L3 drives L2's exact all-vertex diameter;
   F3 drives F1's Dijkstra; C1/C2 reuse the F3 `analyze`/`ObservablePlan`;
   Q1/Q2 reuse the platform's topology, `BondSample`, `ComponentWorkspace`
@@ -51,7 +53,8 @@ support their strongest claim; the limitation must be explicit.
 - **Draw contracts**: L1/L2/L3 share the L1 pair order and pinned
   `pair_probability`; F2/F3 share the one-uniform-per-box-edge contract;
   C1 fixes its FFT mode order and Box-Muller draws; Q1/Q2 document their
-  sweep-order draws.
+  sweep-order draws. Q1 additionally passes a rate-level detailed-balance
+  audit over all 4096 masks x 12 edges x q=1,2,3 (1e-12).
 - **Time constant**: white-noise calibration of the C2 estimator gives
   `p_c(inf) ~ 0.580` against the exact iid 0.592746, exposing a
   finite-size estimator bias separate from the field generator.
@@ -70,10 +73,10 @@ support their strongest claim; the limitation must be explicit.
 2. **C3 statistical certification**: the analytic map and branch values
    are exact, but the finite-size `nu(a)` estimate is not yet precise
    enough to certify the a=1.5/a=1.25 flip.
-3. **Q2/Q3**: Q2 needs a full detailed-balance audit and the q=2 R3
-   comparison; Q3 needs larger L and a two-mode latent-heat estimator.
-   The Q3 bimodality values (0.362 at q=2, 0.505 at q=8, L=8) are
-   descriptive only.
+3. **Q2/Q3**: Q1 now has the rate-level detailed-balance audit; Q2 still
+   needs its own audit and the q=2 R3 comparison. Q3's L=16 scan separates
+   q<=4 (bimodality <5/9) from q=8 (>5/9), but q=6 is unresolved and the
+   statistic is descriptive, not a latent heat.
 4. **F3 minors**: the target-local saturation flag, diagonal-bound
    wording, vertex-prefix aging doc, post-rejection weight state, and
    parallel/source==target tests are FIXED. Still open: `geodesic_path`
