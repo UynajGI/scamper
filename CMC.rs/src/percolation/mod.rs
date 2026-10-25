@@ -40,6 +40,7 @@ mod estimator;
 mod first_passage;
 mod first_passage_observables;
 mod first_passage_shape;
+mod fss;
 mod law;
 mod long_range;
 mod long_range_diameter;
@@ -107,6 +108,9 @@ pub use first_passage_shape::{
     geodesic_aging, geodesic_count_run, geodesic_path, Direction, GeodesicAging,
     GeodesicCountOutcome, GeodesicCountWorkspace, GeodesicPathOutcome, ShapeError, ShapeEstimate,
     ShapeEstimator, ShapeGeometry, ShapeSampler, ShapeTarget, SHAPE_SIDE_CAP,
+};
+pub use fss::{
+    crossing, BinderCumulant, BinderEstimator, CrossingEstimate, FssCurve, FssError, FssPoint,
 };
 pub use law::{BondBernoulli, MixedBernoulli, OccupationLaw, SamplingError, SiteBernoulli};
 pub use long_range::{
