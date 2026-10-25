@@ -177,11 +177,12 @@ pub use percolation::{
     multiplex_from_edges, phase_scan, second_moment_correlation_length, ChayesMachtaError,
     ChayesMachtaMC, CorrelatedError, CorrelatedFieldSpec, CorrelatedGaussianField,
     CorrelatedPercolationMC, CorrelatedSiteLaw, CorrelatedThresholdError, FlipBracket,
-    FractalDimensionEstimate, HarrisBracket, IntervalEstimate, LinearFit, NuEstimate,
-    PcExtrapolation, PcShiftNuEstimate, PcShiftRung, PottsPhaseError, PottsPhaseEstimate,
-    PottsPhaseSpec, RungObservables, RungSlope, SweenyAcceptance, SweenyError, SweenyMC,
-    SweenyProposal, SweenyRates, ThresholdLadder, ThresholdLadderSpec, WeinribHalperinError,
-    WeinribHalperinMap, BOOTSTRAP_RESAMPLES, PEAK_FIT_RADIUS,
+    FractalDimensionEstimate, HarrisBracket, Hypergraph, HypergraphError, HypergraphSummary,
+    IntervalEstimate, LinearFit, NuEstimate, PcExtrapolation, PcShiftNuEstimate, PcShiftRung,
+    PottsPhaseError, PottsPhaseEstimate, PottsPhaseSpec, RungObservables, RungSlope,
+    SweenyAcceptance, SweenyError, SweenyMC, SweenyProposal, SweenyRates, ThresholdLadder,
+    ThresholdLadderSpec, WeinribHalperinError, WeinribHalperinMap, BOOTSTRAP_RESAMPLES,
+    PEAK_FIT_RADIUS,
 };
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]

@@ -41,6 +41,7 @@ mod first_passage;
 mod first_passage_observables;
 mod first_passage_shape;
 mod fss;
+mod hypergraph;
 mod law;
 mod long_range;
 mod long_range_diameter;
@@ -113,6 +114,7 @@ pub use fss::{
     bootstrap, crossing, second_moment_correlation_length, BinderCumulant, BinderEstimator,
     BootstrapInterval, CorrelationPoint, CrossingEstimate, FssCurve, FssError, FssPoint,
 };
+pub use hypergraph::{Hypergraph, HypergraphError, HypergraphSummary};
 pub use law::{BondBernoulli, MixedBernoulli, OccupationLaw, SamplingError, SiteBernoulli};
 pub use long_range::{
     long_range_run, LongRangeBox, LongRangeError, LongRangeOutcome, LongRangePercolationMC,

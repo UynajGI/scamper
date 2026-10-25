@@ -367,7 +367,7 @@ roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
 | A6 specification/provenance | Not started |
 | X1 network I/O | Done (feature-gated `io`: weighted edge-list v1 text + multiplex JSON v1 over one validated document; round-trip, reference-graph, rejection, and Criterion gates green; independent review pending) |
 | X2 multiplex/interdependent | In progress (two-layer one-to-one mutual-component/cascade analysis over a shared vertex set, with an independent reference-map enumeration and typed rejections; quantitative bracket and preset adapters pending) |
-| X3 hypergraph/simplicial | Not started |
+| X3 hypergraph/simplicial | Done (dense incidence hypergraph with Bernoulli vertex/hyperedge activity, union-find component analysis, canonical lowest-ID rule, per-vertex labels; exact incidence-BFS enumeration and rejection matrix; independent review pending) |
 | X4 temporal/directed dynamics | Not started |
 | R1 C3 certification | Not started |
 | R2 Q3 phase diagram | Not started |
