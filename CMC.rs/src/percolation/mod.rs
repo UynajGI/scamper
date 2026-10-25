@@ -160,9 +160,10 @@ pub use process::{
 pub use query::{BoundaryQuery, BoundaryQueryError};
 pub use random_cluster::{ClusterQ, RandomClusterError, RandomClusterMC};
 pub use scan::{
-    reweight, reweight_heterogeneous, scan_bond, scan_site, HetReweightResult,
-    HetReweightWorkspace, NewmanZiffWorkspace, ReweightError, ReweightWorkspace,
-    ReweightedEstimate, ScanCurve, ScanError, ScanEstimator, ScanMode, ScanObservable, ScanPoint,
+    reweight, reweight_heterogeneous, reweight_heterogeneous_with, reweight_with, scan_bond,
+    scan_site, HetReweightResult, HetReweightWorkspace, NewmanZiffWorkspace, ReweightError,
+    ReweightWorkspace, ReweightedEstimate, ScanCurve, ScanError, ScanEstimator, ScanMode,
+    ScanObservable, ScanObservableSpec, ScanPoint,
 };
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]

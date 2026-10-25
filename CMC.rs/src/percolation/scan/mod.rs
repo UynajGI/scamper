@@ -23,6 +23,7 @@ pub use reweight::HetReweightCapacityAudit;
 #[doc(hidden)]
 pub use reweight::ReweightCapacityAudit;
 pub use reweight::{
-    reweight, reweight_heterogeneous, HetReweightResult, HetReweightWorkspace, ReweightError,
-    ReweightWorkspace, ReweightedEstimate, ScanEstimator, ScanObservable,
+    reweight, reweight_heterogeneous, reweight_heterogeneous_with, reweight_with,
+    HetReweightResult, HetReweightWorkspace, ReweightError, ReweightWorkspace, ReweightedEstimate,
+    ScanEstimator, ScanObservable, ScanObservableSpec,
 };

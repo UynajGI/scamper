@@ -42,6 +42,50 @@ impl ScanObservable {
     }
 }
 
+/// Open extension point for a scan observable (v3 A4b).
+///
+/// The built-in [`ScanObservable`] enum stays the zero-cost preset. A
+/// custom observable maps one [`ScanPoint`] to a scalar; `is_defined`
+/// rejects topologies where the value has no meaning, and
+/// `requires_exact_moments` enables the same `V^2 > 2^53` exactness gate as
+/// the built-in raw second moment. Names are provenance labels, not Results
+/// columns: reweighting returns one scalar per call.
+pub trait ScanObservableSpec: fmt::Debug {
+    /// Stable provenance name.
+    fn name(&self) -> &str;
+
+    /// The observable's value at one occupation count.
+    fn value(&self, point: &ScanPoint, total_vertices: usize) -> f64;
+
+    /// Whether the observable is defined for this topology size.
+    fn is_defined(&self, _total_vertices: usize) -> bool {
+        true
+    }
+
+    /// Whether the value consumes moments that must stay exact in `f64`.
+    fn requires_exact_moments(&self) -> bool {
+        false
+    }
+}
+
+impl ScanObservableSpec for ScanObservable {
+    fn name(&self) -> &str {
+        ScanObservable::name(*self)
+    }
+
+    fn value(&self, point: &ScanPoint, total_vertices: usize) -> f64 {
+        ScanObservable::value(*self, point, total_vertices)
+    }
+
+    fn is_defined(&self, total_vertices: usize) -> bool {
+        !(matches!(self, ScanObservable::GiantFraction) && total_vertices == 0)
+    }
+
+    fn requires_exact_moments(&self) -> bool {
+        matches!(self, ScanObservable::RawSecondMoment)
+    }
+}
+
 /// Reusable buffer for binomial reweighting.
 ///
 /// Call [`Self::prepare`] once for a curve length; repeated reweighting at
@@ -183,7 +227,36 @@ pub fn reweight(
     observable: ScanObservable,
     workspace: &mut ReweightWorkspace,
 ) -> Result<f64, ReweightError> {
-    let trials = validate_curve(curve, observable)?;
+    reweight_spec(curve, probability, &observable, workspace, || {
+        ReweightError::UndefinedObservable(observable)
+    })
+}
+
+/// Reweight one scan curve with a user-defined observable.
+///
+/// Shares the whole binomial-weight path with [`reweight`]; only the
+/// observable evaluation and its definedness/exactness declarations differ.
+pub fn reweight_with(
+    curve: &ScanCurve<'_>,
+    probability: Probability,
+    observable: &dyn ScanObservableSpec,
+    workspace: &mut ReweightWorkspace,
+) -> Result<f64, ReweightError> {
+    reweight_spec(curve, probability, observable, workspace, || {
+        ReweightError::UndefinedCustomObservable {
+            name: observable.name().to_owned(),
+        }
+    })
+}
+
+fn reweight_spec(
+    curve: &ScanCurve<'_>,
+    probability: Probability,
+    observable: &dyn ScanObservableSpec,
+    workspace: &mut ReweightWorkspace,
+    undefined: impl Fn() -> ReweightError,
+) -> Result<f64, ReweightError> {
+    let trials = validate_curve_spec(curve, observable, undefined)?;
     let points = curve.points();
     let total_vertices = curve.total_vertices();
 
@@ -206,11 +279,10 @@ pub fn reweight(
     Ok(weighted_sum / weight_sum)
 }
 
-/// Curve and observable checks shared by the uniform and heterogeneous paths.
-/// Returns the trial count on success.
-fn validate_curve(
+fn validate_curve_spec(
     curve: &ScanCurve<'_>,
-    observable: ScanObservable,
+    observable: &dyn ScanObservableSpec,
+    undefined: impl Fn() -> ReweightError,
 ) -> Result<usize, ReweightError> {
     let trials = curve.trials();
     let expected = trials.saturating_add(1);
@@ -221,10 +293,10 @@ fn validate_curve(
         });
     }
     let total_vertices = curve.total_vertices();
-    if observable == ScanObservable::GiantFraction && total_vertices == 0 {
-        return Err(ReweightError::UndefinedObservable(observable));
+    if !observable.is_defined(total_vertices) {
+        return Err(undefined());
     }
-    if observable == ScanObservable::RawSecondMoment {
+    if observable.requires_exact_moments() {
         let vertices = total_vertices as u128;
         if vertices.saturating_mul(vertices) > (1_u128 << 53) {
             return Err(ReweightError::InexactMomentConversion { total_vertices });
@@ -332,10 +404,43 @@ pub fn reweight_heterogeneous(
     observable: ScanObservable,
     workspace: &mut HetReweightWorkspace,
 ) -> Result<HetReweightResult, ReweightError> {
-    let trials = validate_curve(curve, observable)?;
+    reweight_heterogeneous_spec(curve, field, &observable, workspace, || {
+        ReweightError::UndefinedObservable(observable)
+    })
+}
+
+/// Heterogeneous reweighting with a user-defined observable; see
+/// [`reweight_heterogeneous`] for the weight construction.
+pub fn reweight_heterogeneous_with(
+    curve: &ScanCurve<'_>,
+    field: &ProbabilityField<'_>,
+    observable: &dyn ScanObservableSpec,
+    workspace: &mut HetReweightWorkspace,
+) -> Result<HetReweightResult, ReweightError> {
+    reweight_heterogeneous_spec(curve, field, observable, workspace, || {
+        ReweightError::UndefinedCustomObservable {
+            name: observable.name().to_owned(),
+        }
+    })
+}
+
+fn reweight_heterogeneous_spec(
+    curve: &ScanCurve<'_>,
+    field: &ProbabilityField<'_>,
+    observable: &dyn ScanObservableSpec,
+    workspace: &mut HetReweightWorkspace,
+    undefined: impl Fn() -> ReweightError,
+) -> Result<HetReweightResult, ReweightError> {
+    let trials = validate_curve_spec(curve, observable, &undefined)?;
 
     if let Some(probability) = field.uniform() {
-        let value = reweight(curve, probability, observable, &mut workspace.uniform)?;
+        let value = reweight_spec(
+            curve,
+            probability,
+            observable,
+            &mut workspace.uniform,
+            &undefined,
+        )?;
         return Ok(HetReweightResult {
             value,
             unit_mass: 1.0,
@@ -455,6 +560,7 @@ pub enum ReweightError {
     Capacity(TryReserveError),
     CurveLength { expected: usize, actual: usize },
     UndefinedObservable(ScanObservable),
+    UndefinedCustomObservable { name: String },
     InexactMomentConversion { total_vertices: usize },
     ProbabilityFieldLength { expected: usize, actual: usize },
     BoundaryProbability { index: usize, value: f64 },
@@ -473,6 +579,12 @@ impl fmt::Display for ReweightError {
                 "observable {} is undefined for this scan curve",
                 observable.name()
             ),
+            Self::UndefinedCustomObservable { name } => {
+                write!(
+                    formatter,
+                    "custom observable {name:?} is undefined for this scan curve"
+                )
+            }
             Self::InexactMomentConversion { total_vertices } => write!(
                 formatter,
                 "raw second moment for {total_vertices} vertices exceeds exact f64 integer range"
@@ -567,6 +679,108 @@ mod tests {
             &[],
             points,
         )
+    }
+
+    #[derive(Debug)]
+    struct DoubleLargest;
+
+    impl ScanObservableSpec for DoubleLargest {
+        fn name(&self) -> &str {
+            "DoubleLargest"
+        }
+
+        fn value(&self, point: &ScanPoint, _total_vertices: usize) -> f64 {
+            2.0 * point.largest_component_size as f64
+        }
+    }
+
+    #[derive(Debug)]
+    struct NeverDefined;
+
+    impl ScanObservableSpec for NeverDefined {
+        fn name(&self) -> &str {
+            "NeverDefined"
+        }
+
+        fn value(&self, _point: &ScanPoint, _total_vertices: usize) -> f64 {
+            0.0
+        }
+
+        fn is_defined(&self, _total_vertices: usize) -> bool {
+            false
+        }
+    }
+
+    #[derive(Debug)]
+    struct ExactMoments;
+
+    impl ScanObservableSpec for ExactMoments {
+        fn name(&self) -> &str {
+            "ExactMoments"
+        }
+
+        fn value(&self, _point: &ScanPoint, _total_vertices: usize) -> f64 {
+            0.0
+        }
+
+        fn requires_exact_moments(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn custom_observable_matches_a_scaled_builtin() {
+        let points = [point(0), point(1), point(4)];
+        let curve = scan_curve(&points, 2);
+        let mut workspace = ReweightWorkspace::new();
+        let probability = Probability::new(0.5).unwrap();
+        let custom = reweight_with(&curve, probability, &DoubleLargest, &mut workspace)
+            .expect("custom reweight");
+        let builtin = reweight(
+            &curve,
+            probability,
+            ScanObservable::LargestComponentSize,
+            &mut workspace,
+        )
+        .expect("builtin reweight");
+        assert!((custom - 2.0 * builtin).abs() < 1e-12);
+
+        let mut heterogeneous = HetReweightWorkspace::new();
+        let field = ProbabilityField::Uniform(probability);
+        let het_custom =
+            reweight_heterogeneous_with(&curve, &field, &DoubleLargest, &mut heterogeneous)
+                .expect("custom heterogeneous");
+        assert!((het_custom.value - 2.0 * builtin).abs() < 1e-12);
+        assert_eq!(het_custom.unit_mass, 1.0);
+    }
+
+    #[test]
+    fn custom_observable_rejections_are_typed() {
+        let points = [point(0), point(1)];
+        let curve = scan_curve(&points, 2);
+        let mut workspace = ReweightWorkspace::new();
+        assert!(matches!(
+            reweight_with(
+                &curve,
+                Probability::new(0.5).unwrap(),
+                &NeverDefined,
+                &mut workspace
+            ),
+            Err(ReweightError::UndefinedCustomObservable { name }) if name == "NeverDefined"
+        ));
+
+        let large = scan_curve(&points, 94_906_266);
+        assert!(matches!(
+            reweight_with(
+                &large,
+                Probability::new(0.5).unwrap(),
+                &ExactMoments,
+                &mut workspace
+            ),
+            Err(ReweightError::InexactMomentConversion {
+                total_vertices: 94_906_266
+            })
+        ));
     }
 
     #[test]
