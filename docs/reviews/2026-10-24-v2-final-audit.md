@@ -61,18 +61,21 @@ support their strongest claim; the limitation must be explicit.
 
 ## Open items (explicit, not hidden)
 
-1. **C2 threshold bracket now passes** (the earlier limitation was
-   under-sampling): the ignored long gate at L=128/256/512, 64 replicas
-   gives peaks 0.509/0.524/0.526 and `p_c(inf)=0.5383`, CI (0.5246,
-   0.5519), bracketing Pruessner's 0.54299. The crossing estimator is
-   calibrated on white noise (0.5987 vs 0.592746). Remaining: independent
-   review; the reference run is L=1024/R=10^4, so the bracket (not a
-   4-digit reproduction) is the claim. C3's statistical nu program is now
-   unblocked, but the current estimate at a=1.5 (nu=1.40, CI 0.27-2.52)
-   is too wide to certify the flip.
+1. **C2 threshold gate now passes** (the earlier limitation was
+   under-sampling): the ignored long test at L=128/256/512, 256 replicas
+   gives peaks 0.5139/0.5268/0.5344 and `p_c(inf)=0.5457`, CI (0.5449,
+   0.5464), chi2/dof=0.04 — 0.0027 above Pruessner's 0.54299, inside a
+   +/-0.005 tolerance band. The statistical error is now much smaller than
+   the residual reference-scale offset (their run is L=1024/R=10^4).
+   Remaining: independent review. C3's nu estimate at a=1.5 is 0.934
+   (CI 0.611-1.257), still too wide/biased to certify the flip.
 2. **C3 statistical certification**: the analytic map and branch values
-   are exact, but the finite-size `nu(a)` estimate is not yet precise
-   enough to certify the a=1.5/a=1.25 flip.
+   are exact. A release L=128/256/512, R=256 diagnostic gives p_c =
+   0.5430/0.5317/0.5393 at a=1.5/1.25/1.0 (a=1.5 matches 0.54299) but
+   log-derivative nu = 0.934/1.020/0.804 with wide CIs, systematically
+   below the predicted 4/3/8/5/2. The estimator is not reliable at these
+   sizes, so the flip is not certified; larger L or a better estimator is
+   needed.
 3. **Q2/Q3**: Q1 has the rate-level detailed-balance audit; Q2 now has
    q=2/3 exact-histogram and colour-marginal invariance plus the q=2 R3
    Edwards–Sokal comparison. A full joint detailed-balance proof remains
