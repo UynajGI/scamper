@@ -296,6 +296,11 @@ anchors the exact 2D self-dual curve with an exploratory phase scan. The N5 audi
 in `docs/reviews/2026-10-24-v2-final-audit.md` (14 Validated + 2
 Experimental).
 
+The next stage is the [v3 pluggable-framework
+roadmap](2026-10-25-percolation-roadmap-v3.md): architecture traits
+first, then multiplex/hypergraph/temporal/I/O domains and the C3/Q3/F3
+research items; GPU remains issue #2's separate track.
+
 ## 9. Archived anchors for v2 (already in docs/ref/)
 
 | Stage family | Paper | File |

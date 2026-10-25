@@ -4,8 +4,10 @@
 > `feat/cmc-percolation` reference implementation and freezes vocabulary for the
 > staged platform roadmap. It does not make the provisional API stable.
 
-The normative design and phase order are the [platform philosophy](../docs/metaphysics/2026-09-03-percolation-platform-philosophy.md)
-and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadmap.md).
+The normative design and phase order are the [platform philosophy](../docs/metaphysics/2026-09-03-percolation-platform-philosophy.md),
+the [v1 implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadmap.md),
+the [v2 research roadmap](../docs/plans/2026-10-23-percolation-roadmap-v2.md),
+and the [v3 pluggable-framework roadmap](../docs/plans/2026-10-25-percolation-roadmap-v3.md).
 
 ## Status vocabulary
 
