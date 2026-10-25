@@ -87,7 +87,10 @@ support their strongest claim; the limitation must be explicit.
    2.529 (1.741-3.318). The ordering is right but the fit is
    prior-dominated (d nu/d p_c(inf) ~ 0.12 per 0.001) and the
    nu(1.25)-nu(1.5) gap is 0.226 +/- 0.208 (1.1 sigma), so the flip is
-   NOT certified. Needs L >= 2048-8192 or an independent 0.001-level
+   NOT certified. A one-off extension to L=2048 (four pooled ladders of
+   128 replicas) gives nu(1.5)=1.620 (CI 1.356-1.884) and an iid control
+   ranging 1.334-1.512 with the fit radius, so the larger box does not
+   certify it either. Needs L >= 4096-8192 or an independent 0.001-level
    p_c(inf), or both. The nightly gate asserts only the iid calibration.
 3. **Q3**: Q1 and Q2 are Validated (Q2 now has exact joint
    stationarity on 706/1458 states, max deviation 1.3e-17, plus the q=2
