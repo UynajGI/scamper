@@ -80,8 +80,8 @@ pub use correlated::{
 };
 pub use correlated_thresholds::{
     CorrelatedThresholdError, FractalDimensionEstimate, IntervalEstimate, LinearFit, NuEstimate,
-    PcExtrapolation, RungObservables, RungSlope, ThresholdLadder, ThresholdLadderSpec,
-    BOOTSTRAP_RESAMPLES,
+    PcExtrapolation, PcShiftNuEstimate, PcShiftRung, RungObservables, RungSlope, ThresholdLadder,
+    ThresholdLadderSpec, BOOTSTRAP_RESAMPLES, PEAK_FIT_RADIUS,
 };
 pub use directed::{
     analyze_strong_components, analyze_weak_components, reachable, DirectedAnalysisError,

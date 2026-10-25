@@ -34,30 +34,69 @@
 //!
 //! ## Estimator (stated before use)
 //!
-//! The C2 ladder already contains, for every size, the ensemble-averaged
-//! finite-cluster susceptibility `chi(p)`. At a continuous transition
-//! `chi(L,p) = L^{gamma/nu} X((p - p_c) L^{1/nu})`, so
+//! The C3 validation uses [`ThresholdLadder::nu_from_pc_shift`] on a
+//! [`ThresholdLadder::pool`] of independent ladders:
 //!
 //! ```text
-//! max_p d ln chi / dp  ~  L^{1/nu}  X'(0) / X(0)  ~  L^{1/nu}
+//! p_c(inf) - p_c(L) = A L^{-1/nu},    p_c(inf) fixed
 //! ```
 //!
-//! up to a universal amplitude. This "logarithmic-derivative" estimator
-//! needs no separate estimate of `gamma` and no prior `p_c(inf)`; it is the
-//! susceptibility-peak-scaling route named in the stage text. C2's
-//! [`ThresholdLadder::nu_from_log_derivative`] fits `ln(slope)` against
-//! `ln(L)`. Its statistical interval is the 95% bootstrap interval of the
-//! fitted slope; the fit-window sensitivity must be inspected by varying
-//! `minimum_side` and is never folded into a single number.
+//! with `p_c(L)` the **order-parameter** susceptibility peak
+//! `N Var(S_max/N)`, refined by a local log-quadratic fit of `ln chi_op`
+//! over [`PEAK_FIT_RADIUS`](super::correlated_thresholds::PEAK_FIT_RADIUS).
+//! The fixed `p_c(inf)` is the table value under
+//! test (`0.592746` for the exact iid control, `0.54299/0.53895/0.53452`
+//! for `a = 1.5/1.25/1.0`). Pooling eight independent ladders of 512
+//! replicas each (4096 replicas per size, `L = 128/256/512/1024`) gives a
+//! between-ladder peak error that the within-ladder bootstrap misses.
 //!
-//! **What this establishes and what it does not.** A bracket consistent
-//! with `4/3` above the criterion and with `2/a` below it, plus a positive
-//! gap between the two branches, is evidence for the flip at the ladder's
-//! statistical resolution. It is not a proof of the conjecture, and a
-//! single ladder cannot exclude that both branches are pulled by the same
-//! finite-size correction. [`HarrisBracket`] carries the fit's reduced
-//! chi-square so poor scaling fits are visible, and the tests report the
-//! per-size slopes.
+//! **Control, 2026-10-25.** At `a = +infinity` the generator is exactly
+//! iid site percolation and `p_c(inf)` is exact. The refined peaks are
+//! `0.582975/0.586747/0.589137/0.590577` and the estimator returns
+//! `nu = 1.379`, 95% CI `(1.325, 1.433)`, `chi2/dof = 0.11`: the interval
+//! contains `4/3 = 1.333` with a `+3.4%` bias. The earlier
+//! [`ThresholdLadder::nu_from_log_derivative`] returns `1.215`
+//! `(0.739, 1.690)` on the same pooled ladder and `3.04` on a coarse
+//! default window, so it is not a usable estimator; its maximum is
+//! selected on a noisy flank with a one-grid-spacing difference. That
+//! failure mode, not a physical branch shift, explains the earlier
+//! `0.934/1.020/0.804` values.
+//!
+//! **Correlated rows, 2026-10-25.** The same pooled configuration gives
+//!
+//! | `a` | `p_c(inf)` table | refined peaks `L=128..1024` | `nu` (95% CI) | predicted |
+//! |---|---|---|---|---|
+//! | 1.5 | 0.54299 | 0.51481, 0.52226, 0.53057, 0.53499 | 1.592 (1.413, 1.771) | 4/3 |
+//! | 1.25 | 0.53895 | 0.50223, 0.51571, 0.52093, 0.52754 | 1.819 (1.542, 2.095) | 8/5 |
+//! | 1.0 | 0.53452 | 0.50230, 0.50922, 0.51448, 0.52117 | 2.529 (1.741, 3.318) | 2 |
+//!
+//! `chi2/dof = 1.42/1.47/0.58`. The ordering is correct and every value is
+//! biased high, increasingly so as `a` decreases. The fit is
+//! **prior-dominated**: `d nu / d p_c(inf) ~ 0.12` per `0.001`, so the
+//! effective `p_c(inf)` would have to be only `0.002-0.003` below the
+//! table (comparable to the finite-`L` zero-cutoff/reference-scale spread
+//! already recorded by C2) for all three rows to agree with the
+//! predictions. The free three-parameter fit `(p_c(inf), A, nu)` is
+//! ill-conditioned at these sizes: on the iid control it returns
+//! `p_c(inf) = 0.5932` and `nu = 1.43` instead of the exact
+//! `0.592746/1.333`, and on the correlated rows it runs to the scan
+//! boundary. The gap `nu(1.25) - nu(1.5) = 0.226 +/- 0.208` (`1.1 sigma`)
+//! does **not** separate the branches.
+//!
+//! **Status: not certified.** C3 keeps the analytic map and the calibrated
+//! control, but the finite-size `nu` flip is an explicit negative result:
+//! `L <= 1024` with a fixed literature `p_c(inf)` cannot distinguish the
+//! branches at 95%. What would be needed is either `L >= 2048-8192`
+//! (Pruessner used `8192` with `10^5` replicas) to suppress the
+//! zero-cutoff/finite-size corrections, or an independent `p_c(inf)` for
+//! this finite-`L` FFM implementation at the `0.001` level (a
+//! Binder-cumulant or very-large-`L` crossing), or both.
+//!
+//! [`HarrisBracket`] carries the fit's reduced chi-square so poor scaling
+//! fits are visible. A bracket consistent with `4/3` above the criterion
+//! and with `2/a` below it, plus a positive gap, would be evidence for the
+//! flip at the ladder's resolution; it would not be a proof of the
+//! conjecture.
 //!
 //! ## Harris criterion product
 //!

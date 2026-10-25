@@ -58,7 +58,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | Chemical-distance regimes (v2 L2) | Validated | `percolation/long_range_distances.rs` (roadmap v2 §4 L2) over one L1 realization: the chemical distance `D(x,y)` is the unweighted graph distance on the occupied edge set. `ChemicalDistanceWorkspace::profile()` holds one `f64` per box vertex, entry `y` = `min_{x in sources} D(x,y)` (multi-source BFS; `f64::INFINITY` sentinel, reachability is `is_finite`), and one realization is one fixed-length C0-shaped profile vector — never a scalar alone. Optional `DiameterTracking::AllVertexBfs` adds the exact box diameter = max finite distance over all pairs including the diagonal (isolates 0; on a disconnected realization it is the largest within-component distance), with `DIAMETER_VERTEX_CAP = 4096` as a hard guard-rail (`O(V^3)` complete-graph worst case; the profile path is uncapped). The occupied set is the L1 draw contract replayed in-layer (one uniform per pair ascending, `pair_probability` evaluated once per ℓ1 distance — the same pinned bits), materialized as CSR; `ChemicalDistanceSampler` owns the uniform field and workspace (zero steady-state allocations; adjacency capacity is reserved WITHOUT resizing, so pre-run accessors report an empty adjacency), and `ChemicalDistanceEstimator` accumulates per-entry mean/unbiased SEM/reachable fraction (per-entry conditioning on reachability — Biskup's `x,y in C_infinity` conditioning) plus diameter mean/SEM. Typed rejections: non-finite/negative beta or s, empty source set, source domain, wrong-length or out-of-[0,1] uniforms, diameter cap, profile length, zero-vertex estimator, and dimension overflow (`vertices+1`, `distance_range+1`, `2*pairs`). Regime gates (Biskup anchor, regime-correct): (1,2) typical distance at beta=1, n=2048, R=150 for s=1.3/1.5/1.8 — monotone growth, finite-window D-vs-r log-log slope 0.172/0.219/0.329 (CI below 0.5), fitted polylog exponents 0.658/0.838/1.258 all below Delta = 1.609/2.409/6.579, CI-disjoint and increasing in s; s=2.5 linear regime at n=8192, R=24 — the gate is PAIRED per realization (24 slopes and 24 `D/r = A + c/r` fits, 95% CIs): D = 105.6/202.1/404.7/747.2, slope 0.949 +/- 0.043 CI (0.907, 0.992), A = 0.3713 +/- 0.0199 CI (0.351, 0.391) inside (0,1), c = 11.18 +/- 8.55 CI (2.63, 19.73) strictly positive, ratio 0.413 -> 0.365 non-increasing; s=0.5 diameter is a BOUNDEDNESS gate (R=8: diameter exactly 3 at n=256..2048, explicitly reported as a constant sequence with undefined R²; means in [2,4], no positive power growth, and the a.s. sup `d/(d-s)=2` is a reference scale, NOT a measured equality); s=1 diameter 5.0/5.33/5.33/6.0 over n=512..4096 against the `ln N` = 6.2..8.3 upper envelope (slope 0.079 +/- 0.096, CI (-0.017, 0.175)), upper-envelope only, no lower claim; s=2 deliberately not run. Correctness gates: 35 profiles + 35 all-vertex diameters on 1D/2D boxes (incl. beta<1 disconnections) bitwise vs a test-local BFS/all-pairs reference, with the occupied set also equal to a test-local law replay and to the L1 core's `occupied_pairs`; estimator mean/SEM/reachable parity on 40 beta<1 realizations (min reachable fraction 0.40) plus the beta=0 never-reached conventions; same-seed bitwise profiles/diameter/adjacency and L1 draw-stream parity; pre-run empty-adjacency accessors. Asserted 0-allocation probe on three topologies plus diameter mode; debug-profile throughput 192 / 12.1 realizations/s at 1x256 / 1x1024. See the L2 section. Independent review passed 2026-10-24 (docs/reviews/2026-10-24-l2-review.md): the reviewer's own mixed-radix geometry/BFS/all-pairs machinery ran 1,188 exact realizations (21,549 checks, 0 failures) incl. beta<1 disconnections, duplicate sources, odd boxes and caps; the draw stream matched a fresh xoshiro stream and the L1 adapter bitwise; the estimator and rejection/precedence matrix were re-derived; the zero-allocation closure was inspected, not just asserted. The review's Majors — seed-fragile s=2.5 gate at R=12 (now paired at R=24 with CIs) and pre-run `occupied_edge_count()` returning `pairs` (now capacity-only reservation, with a pre-run accessor gate) — are FIXED as follow-ups; the never-reached-SE doc mismatch, public `prepare`/`add_diameter` overflow, capacity-failure wording, s=0.5 boundedness wording, "slower than any power"/"from below" overclaims, diameter-probe bytes assertion, and the s>2 `D_N` citation nuance are also applied. |
 | Correlated activity fields (C1) | Validated | `percolation/correlated.rs` (roadmap v2 §5 C1): the Schrenk/Pruessner Fourier-filtering generator, quoted exactly (spectrum `S(f) ~ |f|^{-beta_c}`, `beta_c = 2(H+1)`, `c(r) ~ |r|^{2H}`, i.e. `C(r) ~ |r|^{-a}` with `a = -2H`; target `C(r) = (1+r^2)^{-a/2}`). A radix-2 Cooley-Tukey transform per power-of-two axis writes the fixed draw contract (mode order, Hermitian pairing, normalization, one or two uniforms per mode); the field has unit site variance, and occupation is the `Phi^{-1}(1-p)` threshold so the marginal is exactly p. `CorrelatedPercolationMC` reuses the unchanged F3 analyzer/ObservablePlan; `a = +infinity` is the white-noise/iid delegate (bitwise `SiteBernoulli`, the `a=inf` table row), while `a = 0` is the constant-field limit (all-or-nothing, no iid claim). Gates (unit): design correlation and unit variance in the ensemble, marginal p with super-binomial fraction fluctuations, adapter-vs-direct parity, bitwise determinism, `a=0` constant field, `a=inf` iid delegate, typed rejections. A binary (thresholded) correlation gate measures a=1.5 r=1/r=4 = 0.0993/0.0212, a=2.5 r=4 = 0.0049, and white noise r=1/r=4 = -0.0004/-0.0002: positive, decaying, exponent-ordered, and vanishing in the iid limit. |
 | Shifted thresholds (C2) | Validated | `percolation/correlated_thresholds.rs`: periodic `L x L` ladders, one threshold-sorted incremental union-find pass per replica, order-parameter susceptibility peak, bootstrap intervals, `p_c(inf)` extrapolation and log-derivative `nu` fit. The quantitative gate is an ignored long test using L=128/256/512 and 256 replicas (Pruessner's table uses L=64-8192, 10^5 replicas, and a WRAPPING threshold; our estimator is the order-parameter susceptibility peak `N Var(S_max/N)`, not their wrapping estimator): the peaks are 0.5139/0.5268/0.5344 and the `L^{-1/nu}` extrapolation with nu=4/3 gives `p_c(inf)=0.5457`, CI (0.5355, 0.5558), chi2/dof=0.00. The 0.0027 offset from 0.54299 is ~0.65 bootstrap sigma and the reference value lies inside the CI; the gate also keeps a +/-0.005 tolerance band. The largest-fraction crossing estimator is independently calibrated on white noise (0.5987 vs the exact 0.592746). C2 remains Experimental pending independent review. |
-| Weinrib–Halperin map (C3) | Experimental — statistical nu unresolved | `percolation/weinrib_halperin.rs`: the extended Harris criterion `a nu_iid = 2`, `a_H = 2/nu_iid = 1.5` for `nu_iid = 4/3`, and the two branches `nu = 4/3` (a >= 1.5) and `nu = 2/a` (a < 1.5), with bracketing helpers. Gates: the analytic branch/nu values at a = 2, 1.5, 1.25, 1, 0.75, 0.5 and typed rejections. A release-mode L=128/256/512, R=256 diagnostic gives p_c = 0.5430/0.5317/0.5393 for a = 1.5/1.25/1.0 (the a=1.5 value matches 0.54299) but nu = 0.934/1.020/0.804 with wide CIs, systematically below the predicted 4/3, 8/5, 2: the finite-size log-derivative estimator is not reliable at these sizes, so the flip is not certified statistically. |
+| Weinrib–Halperin map (C3) | Experimental — calibrated nu estimator; flip not certified | `percolation/weinrib_halperin.rs`: the extended Harris criterion `a nu_iid = 2`, `a_H = 2/nu_iid = 1.5` for `nu_iid = 4/3`, and the two branches `nu = 4/3` (a >= 1.5) and `nu = 2/a` (a < 1.5), with bracketing helpers. Gates: the analytic branch/nu values at a = 2, 1.5, 1.25, 1, 0.75, 0.5 and typed rejections. The old log-derivative nu estimator is diagnosed as non-scale-covariant (its max is taken on a noisy flank with a one-grid-step difference): on the exact iid control it returns 1.215 (0.739, 1.690) with chi2/dof 11.7, so the old 0.934/1.020/0.804 values were estimator failure, not physics. The replacement (`ThresholdLadder::nu_from_pc_shift` on `ThresholdLadder::pool`) refines each order-parameter susceptibility peak with a local log-quadratic fit over `PEAK_FIT_RADIUS = 0.004` and fits `p_c(inf)-p_c(L) = A L^{-1/nu}` with `p_c(inf)` fixed. Pooled 8x512 replicas at L=128/256/512/1024: iid control nu = 1.379 (1.325, 1.433), chi2/dof 0.11, contains 4/3; a=1.5 1.592 (1.413, 1.771); a=1.25 1.819 (1.542, 2.095); a=1.0 2.529 (1.741, 3.318). The ordering is right but the values are prior-dominated (`d nu/d p_c(inf) ~ 0.12` per 0.001) and the 1.5-vs-1.25 gap is 0.226 +/- 0.208 (1.1 sigma), so the branch flip is NOT certified. The nightly control gate asserts only the iid calibration. |
 | Sweeny sampler (Q1) | Validated | `percolation/sweeny.rs` (roadmap v2 §6 Q1): single-bond heat-bath/Metropolis dynamics for arbitrary real q>0, with the Geyer Eq. 4/5 acceptance, the `1/2 <= pHB/pMH < 1` bound, and the unconditional accept/reject shortcut. `Delta n` queries use a spanning forest with union-by-size and an interleaved smaller-side replacement search; the worst-case bridge cost is O(V) and the docs say it is not the asymptotically optimal dynamic-connectivity structure. Gates: exact 2^E FK enumeration on 3x3 for q=0.5, 0.75, 1, 2, 3 with own union-find and full Z — empirical |A| and k(A) marginals within |z| <= 1.36 (the q<1 cases caught and fixed the unconditional-shortcut ordering bug, whose two acceptance values are now explicitly sorted); q=1 one all-closed heat-bath sweep is bitwise `BondBernoulli`; update fuzz vs full recomputation; the pHB/pMH bound; typed rejections; and a rate-level detailed-balance audit over all 4096 masks x 12 edges x q=1,2,3, where the heat-bath and Metropolis rates equal the exact FK two-state conditional to 1e-12. |
 | Chayes–Machta for integer q (Q2) | Validated | `percolation/chayes_machta.rs`: integer-q activate/sleep with per-cluster colour resampling and awake-color bond updates, one uniform per awake edge, deterministic sweep order. Gates: on a periodic 3x3 at p=0.45, q=2/3 agree with Q1's Sweeny chain within 4 sigma (q=2 diff 0.075 vs noise 0.173; q=3 diff 0.0007 vs noise 0.164), the |A| histogram against the exact FK distribution has max |z| 2.96/3.74, colour marginals have max |z| 1.48/2.93, and at q=2 the CM chain agrees with R3's Edwards–Sokal chain (diff 0.041 vs noise 0.191). Exact joint stationarity is now a gate: on a periodic 2x2 the full (bond-mask, colouring) space has 706 states at q=2 and 1458 at q=3, and one CM step preserves the Edwards-Sokal measure to max |mu P - mu| <= 1.3e-17 for every active colour. |
 | q phase diagram (Q3) | Experimental — exploratory | `percolation/potts_phase.rs`: the exact 2D FK/Potts self-dual curve `p_c(q) = sqrt(q)/(1+sqrt(q))` (Fortuin-Kasteleyn; Wu, Rev. Mod. Phys. 54, 235 (1982)) is the anchor and is never fitted. `phase_scan` runs Q1 at p_c(q) on a periodic square and reports bond-density mean/variance plus the descriptive bimodality coefficient `(skew^2+1)/kurt`; q=4 is the marginal case, q>4 is first order. Gates: exact p_c at q=1,2,4,8; the scan machinery at q=2/8 reports finite density statistics (L=8: bimodality 0.362 vs 0.505); and an ignored nightly L=16 scan gives bimodality 0.363 (q=2), 0.400 (q=4), 0.519 (q=6), 0.654 (q=8) — below 5/9 for q<=4, above for q=8, with q=6 unresolved at L=16 and monotone ordering in q. No latent-heat or finite-size-scaling claim at this stage. |
@@ -4701,8 +4701,9 @@ Status: **C1 and C2 Validated; C3 Experimental.** Independent review
 (docs/reviews/2026-10-24-cq-review.md) passed C1; the C2 bootstrap-CI,
 anchor, and estimator-narrative Majors are fixed, and the 256-replica
 ladder gives `p_c(inf)=0.5457`, CI (0.5355, 0.5558), ~0.65 sigma from
-Pruessner's 0.54299. C3's analytic map is exact while its finite-size
-`nu` certification remains open.
+Pruessner's 0.54299. C3's analytic map is exact and its `nu` estimator is
+now calibrated on the exact iid control, but the correlated branch flip
+is not statistically certified at L <= 1024 (a precise negative result).
 
 ### Anchors and conventions
 
@@ -4759,13 +4760,51 @@ The analytic map implements `a nu_iid = 2`, `a_H = 2/nu_iid`, and the
 two branches (`nu_iid` above, `2/a` below). For the 2D square,
 `nu_iid = 4/3`, `a_H = 1.5`, and the predicted sequence is
 4/3, 4/3, 8/5, 2, 8/3, 4 at a = 2, 1.5, 1.25, 1, 0.75, 0.5 — exactly
-Pruessner's `nu_a` column. A release-mode diagnostic at L=128/256/512
-with 256 replicas gives p_c = 0.5430/0.5317/0.5393 for a = 1.5/1.25/1.0
-(the first matches Pruessner's 0.54299), but the log-derivative nu
-estimates are 0.934/1.020/0.804 with wide CIs — systematically below
-4/3, 8/5 and 2 and without a clean ordering. That estimator is therefore
-NOT certified at these sizes; the flip remains an explicit open item
-(larger L or a better nu estimator is required).
+Pruessner's `nu_a` column.
+
+The earlier log-derivative `nu` estimator is diagnosed and retired. Its
+maximum of the central difference of `ln chi_op` is selected on a noisy
+flank with a one-grid-spacing difference window, so it is not scale
+covariant: on the exact iid control it returns 1.215 (0.739, 1.690) with
+`chi2/dof = 11.7` on a pooled ladder, and 3.04 on the coarse default
+window. The old `0.934/1.020/0.804` values are that failure mode, not a
+physical branch shift.
+
+The replacement is `ThresholdLadder::nu_from_pc_shift` on a
+`ThresholdLadder::pool` of independent ladders: refine each order-
+parameter susceptibility peak with a local log-quadratic fit over
+`PEAK_FIT_RADIUS = 0.004`, then fit
+`p_c(inf) - p_c(L) = A L^{-1/nu}` with `p_c(inf)` fixed. Eight pooled
+ladders of 512 replicas (4096 per size) at L=128/256/512/1024 give:
+
+| a | fixed p_c(inf) | refined peaks L=128..1024 | nu (95% CI) | predicted |
+|---|---|---|---|---|
+| +inf (control) | 0.592746 exact | 0.582975, 0.586747, 0.589137, 0.590577 | 1.379 (1.325, 1.433), chi2/dof 0.11 | 4/3 |
+| 1.5 | 0.54299 | 0.51481, 0.52226, 0.53057, 0.53499 | 1.592 (1.413, 1.771), chi2/dof 1.42 | 4/3 |
+| 1.25 | 0.53895 | 0.50223, 0.51571, 0.52093, 0.52754 | 1.819 (1.542, 2.095), chi2/dof 1.47 | 8/5 |
+| 1.0 | 0.53452 | 0.50230, 0.50922, 0.51448, 0.52117 | 2.529 (1.741, 3.318), chi2/dof 0.58 | 2 |
+
+The iid control now brackets 4/3 (bias +3.4%), which the old estimator
+could not do. The correlated values are ordered correctly but all sit
+high, increasingly so as `a` decreases. The fit is prior-dominated:
+`d nu / d p_c(inf) ~ 0.12` per 0.001, so an effective `p_c(inf)` only
+0.002-0.003 below the table would bring all three rows onto the
+predictions; that offset is comparable to the finite-L zero-cutoff /
+reference-scale spread C2 already records, but it is not independently
+measured. A free `(p_c(inf), A, nu)` fit is ill-conditioned here (on the
+iid control it returns 0.5932/1.43 instead of 0.592746/1.333). The gap
+`nu(1.25) - nu(1.5) = 0.226 +/- 0.208` is 1.1 sigma, and the a=1.0
+interval (1.741, 3.318) contains 2.
+
+**Status: Experimental, flip NOT certified.** The estimator is
+calibrated and usable, but L <= 1024 with a fixed table `p_c(inf)` cannot
+distinguish the branches at 95%. Certification needs L >= 2048-8192
+(Pruessner used 8192 with 10^5 replicas) to suppress the zero-cutoff and
+correction terms, or an independent 0.001-level `p_c(inf)` for this
+finite-L FFM (a Binder-cumulant or very-large-L crossing), or both. The
+nightly control gate
+`c3_nu_pc_shift_calibrates_on_the_white_noise_control` asserts only the
+iid calibration; no branch-value gate is claimed.
 
 ### Limitations
 

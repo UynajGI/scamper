@@ -3,7 +3,7 @@
 //! a = +infinity iid delegate); this file adds the C2 threshold ladder
 //! against Pruessner's Table 1 and the C3 Weinrib–Halperin branch map.
 
-use cmc_rs::{ThresholdLadder, ThresholdLadderSpec, WeinribHalperinMap};
+use cmc_rs::{ThresholdLadder, ThresholdLadderSpec, WeinribHalperinMap, PEAK_FIT_RADIUS};
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
@@ -138,6 +138,78 @@ fn correlated_threshold_brackets_pruessner_at_large_l() {
         "the L^-1/nu fit is poor: chi2/dof={}",
         extrapolation.reduced_chi_square
     );
+}
+
+/// Pooled white-noise control ladder: eight independent L=128/256/512/1024
+/// ladders, 512 replicas each (4096 per size), on one narrow grid.
+///
+/// Pooling is the supported way to reach C3's replica counts without
+/// changing `ThresholdLadder::run`'s draw stream (C2's numbers depend on
+/// it). The seeds reproduce the recorded C3 control run.
+fn pooled_white_noise_control() -> ThresholdLadder {
+    let sides = [128_usize, 256, 512, 1024];
+    let specs: Vec<ThresholdLadderSpec> = (0..8_u64)
+        .map(|index| {
+            ThresholdLadderSpec::with_probability_window(
+                f64::INFINITY,
+                &sides,
+                0.565,
+                0.605,
+                201,
+                512,
+                9501_u64.wrapping_add(index * 0x9e37_79b9_7f4a_7c15),
+            )
+            .expect("pooled spec")
+        })
+        .collect();
+    let ladders: Vec<ThresholdLadder> = std::thread::scope(|scope| {
+        let handles: Vec<_> = specs
+            .into_iter()
+            .map(|spec| scope.spawn(move || ThresholdLadder::run(&spec).expect("ladder")))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("ladder thread"))
+            .collect()
+    });
+    ThresholdLadder::pool(&ladders).expect("pooled ladder")
+}
+
+#[test]
+#[ignore = "long C3 calibration (pooled L=128..1024, 4096 replicas per size); nightly release"]
+fn c3_nu_pc_shift_calibrates_on_the_white_noise_control() {
+    // The pc-shift estimator is useless without a control where p_c(inf)
+    // is exact. At a = +infinity the ladder is exactly iid site
+    // percolation and p_c(inf) = 0.592746, so a `nu` interval that
+    // excludes 4/3 would mean the estimator is still biased.
+    let ladder = pooled_white_noise_control();
+    let estimate = ladder
+        .nu_from_pc_shift(128, 0.592746, PEAK_FIT_RADIUS)
+        .expect("white-noise pc-shift fit");
+    eprintln!(
+        "C3 control a=inf: nu={:.4} CI=({:.4}, {:.4}) chi2/dof={:.2} peaks={:?}",
+        estimate.nu.value,
+        estimate.nu.lower,
+        estimate.nu.upper,
+        estimate.reduced_chi_square,
+        estimate
+            .rungs
+            .iter()
+            .map(|rung| (rung.side, rung.pseudo_critical))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        estimate.nu.lower <= 4.0 / 3.0 && 4.0 / 3.0 <= estimate.nu.upper,
+        "white-noise control must bracket nu=4/3, got ({}, {})",
+        estimate.nu.lower,
+        estimate.nu.upper
+    );
+    assert!(
+        estimate.nu.value > 1.2 && estimate.nu.value < 1.5,
+        "white-noise control nu={} is outside the calibrated band",
+        estimate.nu.value
+    );
+    assert!(estimate.reduced_chi_square < 2.0);
 }
 
 #[test]

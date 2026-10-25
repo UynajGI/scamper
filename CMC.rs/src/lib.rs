@@ -173,10 +173,10 @@ pub use percolation::{
     ChayesMachtaMC, CorrelatedError, CorrelatedFieldSpec, CorrelatedGaussianField,
     CorrelatedPercolationMC, CorrelatedSiteLaw, CorrelatedThresholdError, FlipBracket,
     FractalDimensionEstimate, HarrisBracket, IntervalEstimate, LinearFit, NuEstimate,
-    PcExtrapolation, PottsPhaseError, PottsPhaseEstimate, PottsPhaseSpec, RungObservables,
-    RungSlope, SweenyAcceptance, SweenyError, SweenyMC, SweenyProposal, SweenyRates,
-    ThresholdLadder, ThresholdLadderSpec, WeinribHalperinError, WeinribHalperinMap,
-    BOOTSTRAP_RESAMPLES,
+    PcExtrapolation, PcShiftNuEstimate, PcShiftRung, PottsPhaseError, PottsPhaseEstimate,
+    PottsPhaseSpec, RungObservables, RungSlope, SweenyAcceptance, SweenyError, SweenyMC,
+    SweenyProposal, SweenyRates, ThresholdLadder, ThresholdLadderSpec, WeinribHalperinError,
+    WeinribHalperinMap, BOOTSTRAP_RESAMPLES, PEAK_FIT_RADIUS,
 };
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
