@@ -156,6 +156,8 @@ mod percolation_law_zscore;
 mod percolation_network;
 #[path = "physics/percolation_network_input.rs"]
 mod percolation_network_input;
+#[path = "physics/percolation_policy_extension.rs"]
+mod percolation_policy_extension;
 #[path = "physics/percolation_potts_phase.rs"]
 mod percolation_potts_phase;
 #[path = "physics/percolation_scan.rs"]

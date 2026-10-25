@@ -129,10 +129,10 @@ pub use long_range_distances::{
     ChemicalDistanceWorkspace, DiameterTracking, DIAMETER_VERTEX_CAP,
 };
 pub use network::{
-    csr_from_edge_list, multiplex_from_edges, AttackGrid, AttackPolicy, DegreeAttackMC,
-    DegreeScratch, DuplicateEdgePolicy, EdgeListSpec, MultiplexError, MultiplexNetwork,
-    MutualComponent, NetworkError, NetworkInputError, NetworkPercolationError, NetworkProfile,
-    RandomFailureMC, SelfLoopPolicy,
+    csr_from_edge_list, multiplex_from_edges, AttackGrid, AttackOrder, AttackOrderContext,
+    AttackPolicy, DegreeAttackMC, DegreeScratch, DuplicateEdgePolicy, EdgeListSpec, MultiplexError,
+    MultiplexNetwork, MutualComponent, NetworkError, NetworkInputError, NetworkPercolationError,
+    NetworkProfile, RandomFailureMC, SelfLoopPolicy,
 };
 #[cfg(feature = "io")]
 pub use network::{

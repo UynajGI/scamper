@@ -10,7 +10,7 @@ mod io;
 mod multiplex;
 mod profile;
 
-pub use attack::{AttackGrid, AttackPolicy, DegreeAttackMC};
+pub use attack::{AttackGrid, AttackOrder, AttackOrderContext, AttackPolicy, DegreeAttackMC};
 pub use failure::{DegreeScratch, RandomFailureMC};
 pub use input::{
     csr_from_edge_list, DuplicateEdgePolicy, EdgeListSpec, NetworkInputError, SelfLoopPolicy,

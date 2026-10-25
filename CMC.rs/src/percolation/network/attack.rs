@@ -49,6 +49,7 @@
 //! Holme, Kim, Yoon, Han, PRE 65, 056109 (2002) — their Fig. 7(e)
 //! BA-model configuration. Evidence in `CMC.rs/PERCOLATION.md` (N3, T1).
 
+use core::fmt;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -124,6 +125,173 @@ impl AttackPolicy {
             self,
             Self::ResidualDegreeDescendingStableId | Self::ResidualDegreeDescendingSeededKey
         )
+    }
+}
+
+/// Pluggable removal-order policy for the degree attack (v3 A4).
+///
+/// The built-in [`AttackPolicy`] enum is the zero-cost preset; implement
+/// this trait to supply an external ordering. The adapter reserves its
+/// residual-degree workspaces only when [`Self::is_residual`] is true;
+/// an external adaptive policy may allocate inside [`Self::order`] (the
+/// reused order vector itself is supplied in the context).
+///
+/// `order` must emit every dense vertex exactly once. The adapter walks the
+/// returned order without validating it, so a malformed order is a caller
+/// contract violation (it would panic during the trajectory walk).
+pub trait AttackOrder: fmt::Debug {
+    /// Stable name for provenance.
+    fn name(&self) -> &str;
+
+    /// Whether this policy needs the adapter's residual-degree workspaces.
+    fn is_residual(&self) -> bool {
+        false
+    }
+
+    /// Fill the order vector in [`AttackOrderContext::order_mut`].
+    fn order<R: Rng + ?Sized>(&mut self, context: &mut AttackOrderContext<'_>, rng: &mut R);
+}
+
+/// Topology, profile, and reusable buffers handed to an [`AttackOrder`].
+///
+/// External policies use [`Self::graph`], [`Self::profile`], and
+/// [`Self::order_mut`]; the remaining buffers are adapter-private plumbing
+/// for the built-in residual-degree policies.
+pub struct AttackOrderContext<'a> {
+    graph: &'a CsrLattice,
+    profile: &'a NetworkProfile,
+    order: &'a mut Vec<usize>,
+    residual: &'a mut Vec<u32>,
+    residual_active: &'a mut Vec<bool>,
+    tie_keys: &'a mut Vec<u64>,
+    residual_heap: &'a mut BinaryHeap<ResidualEntry>,
+}
+
+impl<'a> AttackOrderContext<'a> {
+    pub const fn graph(&self) -> &'a CsrLattice {
+        self.graph
+    }
+
+    pub const fn profile(&self) -> &'a NetworkProfile {
+        self.profile
+    }
+
+    pub fn order_mut(&mut self) -> &mut Vec<usize> {
+        self.order
+    }
+}
+
+impl AttackOrder for AttackPolicy {
+    fn name(&self) -> &str {
+        self.as_provenance()
+    }
+
+    fn is_residual(&self) -> bool {
+        AttackPolicy::is_residual(*self)
+    }
+
+    fn order<R: Rng + ?Sized>(&mut self, context: &mut AttackOrderContext<'_>, rng: &mut R) {
+        if self.is_residual() {
+            self.residual_order(context, rng);
+            return;
+        }
+        let order = &mut *context.order;
+        order.clear();
+        order.extend(0..context.graph.vertex_count());
+        order.sort_unstable_by(|&left, &right| {
+            let left_degree = context.profile.degree(left);
+            let right_degree = context.profile.degree(right);
+            right_degree
+                .cmp(&left_degree)
+                .then_with(|| left.cmp(&right))
+        });
+        if matches!(self, AttackPolicy::DegreeDescendingSeededShuffle) {
+            // Uniformly shuffle every maximal equal-degree run in place.
+            let mut start = 0;
+            while start < order.len() {
+                let degree = context.profile.degree(order[start]);
+                let mut end = start + 1;
+                while end < order.len() && context.profile.degree(order[end]) == degree {
+                    end += 1;
+                }
+                // Fisher-Yates over order[start..end]; random_range already
+                // returns an absolute index in [position, end).
+                for position in start..end {
+                    let pick = rng.random_range(position..end);
+                    order.swap(position, pick);
+                }
+                start = end;
+            }
+        }
+    }
+}
+
+impl AttackPolicy {
+    /// Build the adaptive removal order for one realization (T1): the
+    /// maximum is recomputed from residual degree after every removal.
+    ///
+    /// Seeded-key draws come first (one `u64` per vertex, ascending dense
+    /// order — the bitwise draw contract the parity gate replays); the
+    /// stable policy draws nothing.
+    fn residual_order<R: Rng + ?Sized>(&self, context: &mut AttackOrderContext<'_>, rng: &mut R) {
+        let vertices = context.graph.vertex_count();
+        if matches!(self, AttackPolicy::ResidualDegreeDescendingSeededKey) {
+            for key in context.tie_keys.iter_mut() {
+                *key = rng.random::<u64>();
+            }
+        }
+        let order = &mut *context.order;
+        order.clear();
+        context.residual_heap.clear();
+        for vertex in 0..vertices {
+            let degree = context.profile.degree(vertex);
+            context.residual[vertex] = degree;
+            context.residual_active[vertex] = true;
+            context.residual_heap.push(ResidualEntry {
+                degree,
+                key: context.tie_keys[vertex],
+                vertex,
+            });
+        }
+        while order.len() < vertices {
+            // Stale-entry skipping is sound because a residual degree only
+            // decreases: after every decrement the heap holds a fresh
+            // `(residual[v], key, v)` entry for every still-active v, so
+            // the heap maximum always dominates every active vertex's
+            // current entry. Stale entries (degree above the tracked
+            // residual, or an already-removed vertex) are over-estimates —
+            // discarding one never loses a candidate, because that
+            // vertex's fresh entry remains in the heap. Hence the first
+            // fresh entry popped IS the argmax under (degree desc, key
+            // asc, id asc): if some active u ranked above it, u's fresh
+            // entry would still be in the heap and would have popped
+            // first.
+            let victim = loop {
+                let entry = context
+                    .residual_heap
+                    .pop()
+                    .expect("every active vertex keeps one fresh heap entry");
+                if context.residual_active[entry.vertex]
+                    && entry.degree == context.residual[entry.vertex]
+                {
+                    break entry.vertex;
+                }
+            };
+            context.residual_active[victim] = false;
+            order.push(victim);
+            for &neighbor in context.graph.neighbors(victim) {
+                if context.residual_active[neighbor] {
+                    // A self-loop's two incidences point back at the
+                    // already-deactivated victim and are skipped here.
+                    context.residual[neighbor] -= 1;
+                    context.residual_heap.push(ResidualEntry {
+                        degree: context.residual[neighbor],
+                        key: context.tie_keys[neighbor],
+                        vertex: neighbor,
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -212,10 +380,10 @@ impl AttackGrid {
 /// Configure `thermalization_sweeps = 0`; each sweep is one complete
 /// trajectory realization. There is no boundary query or scalar plan here:
 /// the trajectory arrays above are the adapter's entire output.
-pub struct DegreeAttackMC {
+pub struct DegreeAttackMC<P = AttackPolicy> {
     lattice: CsrLattice,
     profile: NetworkProfile,
-    policy: AttackPolicy,
+    policy: P,
     checkpoints: Vec<usize>,
     /// Dense vertex indices in removal order; rebuilt every sweep.
     order: Vec<usize>,
@@ -241,14 +409,14 @@ pub struct DegreeAttackMC {
     residual_heap: BinaryHeap<ResidualEntry>,
 }
 
-impl DegreeAttackMC {
+impl<P: AttackOrder> DegreeAttackMC<P> {
     /// Build the adapter over an owned lattice.
     ///
     /// `V^2` must fit the exact `f64` integer range because the
     /// susceptibility curve squares component sizes (the F4 moment gate).
     pub fn new(
         lattice: CsrLattice,
-        policy: AttackPolicy,
+        policy: P,
         grid: AttackGrid,
     ) -> Result<Self, NetworkPercolationError> {
         let vertices = lattice.vertex_count();
@@ -324,9 +492,9 @@ impl DegreeAttackMC {
         &self.profile
     }
 
-    /// The removal-order policy.
-    pub const fn policy(&self) -> AttackPolicy {
-        self.policy
+    /// The removal-order policy object.
+    pub const fn order_policy(&self) -> &P {
+        &self.policy
     }
 
     /// Removal counts recorded per trajectory (the grid).
@@ -363,104 +531,29 @@ impl DegreeAttackMC {
         &self.order
     }
 
-    /// Build the removal order for one realization (tie randomness only).
+    /// Build the removal order for one realization through the policy.
     fn sample_order<R: Rng + ?Sized>(&mut self, rng: &mut R) {
-        if self.policy.is_residual() {
-            self.sample_residual_order(rng);
-            return;
-        }
-        self.order.clear();
-        self.order.extend(0..self.lattice.vertex_count());
-        self.order.sort_unstable_by(|&left, &right| {
-            let left_degree = self.profile.degree(left);
-            let right_degree = self.profile.degree(right);
-            right_degree
-                .cmp(&left_degree)
-                .then_with(|| left.cmp(&right))
-        });
-        if matches!(self.policy, AttackPolicy::DegreeDescendingSeededShuffle) {
-            // Uniformly shuffle every maximal equal-degree run in place.
-            let mut start = 0;
-            while start < self.order.len() {
-                let degree = self.profile.degree(self.order[start]);
-                let mut end = start + 1;
-                while end < self.order.len() && self.profile.degree(self.order[end]) == degree {
-                    end += 1;
-                }
-                // Fisher-Yates over order[start..end]; random_range already
-                // returns an absolute index in [position, end).
-                for position in start..end {
-                    let pick = rng.random_range(position..end);
-                    self.order.swap(position, pick);
-                }
-                start = end;
-            }
-        }
-    }
-
-    /// Build the adaptive removal order for one realization (T1): the
-    /// maximum is recomputed from residual degree after every removal.
-    ///
-    /// Seeded-key draws come first (one `u64` per vertex, ascending dense
-    /// order — the bitwise draw contract the parity gate replays); the
-    /// stable policy draws nothing.
-    fn sample_residual_order<R: Rng + ?Sized>(&mut self, rng: &mut R) {
-        let vertices = self.lattice.vertex_count();
-        if matches!(self.policy, AttackPolicy::ResidualDegreeDescendingSeededKey) {
-            for key in self.tie_keys.iter_mut() {
-                *key = rng.random::<u64>();
-            }
-        }
-        self.order.clear();
-        self.residual_heap.clear();
-        for vertex in 0..vertices {
-            let degree = self.profile.degree(vertex);
-            self.residual[vertex] = degree;
-            self.residual_active[vertex] = true;
-            self.residual_heap.push(ResidualEntry {
-                degree,
-                key: self.tie_keys[vertex],
-                vertex,
-            });
-        }
-        while self.order.len() < vertices {
-            // Stale-entry skipping is sound because a residual degree only
-            // decreases: after every decrement the heap holds a fresh
-            // `(residual[v], key, v)` entry for every still-active v, so
-            // the heap maximum always dominates every active vertex's
-            // current entry. Stale entries (degree above the tracked
-            // residual, or an already-removed vertex) are over-estimates —
-            // discarding one never loses a candidate, because that
-            // vertex's fresh entry remains in the heap. Hence the first
-            // fresh entry popped IS the argmax under (degree desc, key
-            // asc, id asc): if some active u ranked above it, u's fresh
-            // entry would still be in the heap and would have popped
-            // first.
-            let victim = loop {
-                let entry = self
-                    .residual_heap
-                    .pop()
-                    .expect("every active vertex keeps one fresh heap entry");
-                if self.residual_active[entry.vertex] && entry.degree == self.residual[entry.vertex]
-                {
-                    break entry.vertex;
-                }
-            };
-            self.residual_active[victim] = false;
-            self.order.push(victim);
-            for &neighbor in self.lattice.neighbors(victim) {
-                if self.residual_active[neighbor] {
-                    // A self-loop's two incidences point back at the
-                    // already-deactivated victim and are skipped here.
-                    self.residual[neighbor] -= 1;
-                    self.residual_heap.push(ResidualEntry {
-                        degree: self.residual[neighbor],
-                        key: self.tie_keys[neighbor],
-                        vertex: neighbor,
-                    });
-                }
-            }
-        }
+        let Self {
+            lattice,
+            profile,
+            policy,
+            order,
+            residual,
+            residual_active,
+            tie_keys,
+            residual_heap,
+            ..
+        } = self;
+        let mut context = AttackOrderContext {
+            graph: lattice,
+            profile,
+            order,
+            residual,
+            residual_active,
+            tie_keys,
+            residual_heap,
+        };
+        policy.order(&mut context, rng);
     }
 
     /// Walk the trajectory once, filling the curve buffers.
@@ -514,7 +607,14 @@ impl DegreeAttackMC {
     }
 }
 
-impl MonteCarlo for DegreeAttackMC {
+impl DegreeAttackMC<AttackPolicy> {
+    /// The preset removal-order policy (compatibility accessor).
+    pub const fn policy(&self) -> AttackPolicy {
+        self.policy
+    }
+}
+
+impl<P: AttackOrder> MonteCarlo for DegreeAttackMC<P> {
     type Rng = Xoshiro256PlusPlus;
 
     fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
