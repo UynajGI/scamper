@@ -1,7 +1,7 @@
 # v2 final audit (N5)
 
 Status: **complete for delivery** — all 16 v2 stages are implemented,
-wired, documented, and covered by tests; 10 are Validated and 6 are
+wired, documented, and covered by tests; 13 are Validated and 3 are
 Experimental with recorded limitations. This audit is the v2 equivalent
 of the v1 M6 coverage audit: it records what is validated, what is
 experimental by design, and what remains open. It does not promote an
@@ -30,10 +30,10 @@ support their strongest claim; the limitation must be explicit.
 | L1 long-range edge law | `percolation/long_range.rs` | `long_range.rs` | Validated | independent review PASS 2026-10-24 |
 | L2 chemical distance | `percolation/long_range_distances.rs` | `long_range_distances.rs` (9) | Validated | independent review PASS 2026-10-24; Majors fixed |
 | L3 diameter transitions | `percolation/long_range_diameter.rs` | `long_range_diameter.rs` (7) | Validated | independent review PASS 2026-10-24; 4 minors fixed |
-| C1 correlated fields | `percolation/correlated.rs` | unit tests + adapter parity | Experimental | field/variance/marginal/a=inf/a=0 gates green; binary correlation and independent review open |
-| C2 shifted thresholds | `percolation/correlated_thresholds.rs` | fast smoke + ignored large-L bracket | Experimental | large-L bracket contains Pruessner 0.54299; review pending |
+| C1 correlated fields | `percolation/correlated.rs` | unit tests + binary gate | Validated | independent review PASS; field/variance/marginal/a=inf/a=0/binary gates green |
+| C2 shifted thresholds | `percolation/correlated_thresholds.rs` | fast smoke + ignored large-L gate | Validated | review Majors fixed; p_c(inf)=0.5457, corrected CI (0.5355, 0.5558) contains 0.54299 |
 | C3 Weinrib–Halperin map | `percolation/weinrib_halperin.rs` | analytic branch gate | Experimental | exact map/table branches; statistical nu certification open |
-| Q1 Sweeny sampler | `percolation/sweeny.rs` | `percolation_sweeny.rs` (3) | Experimental | exact 2^E FK marginals z<=1.36, q=1 bitwise, fuzz; review pending |
+| Q1 Sweeny sampler | `percolation/sweeny.rs` | `percolation_sweeny.rs` (5) | Validated | review Blocker (q<1) fixed; exact-FK marginals q=0.5-3, q=1 bitwise, rate-level DB 1e-12 |
 | Q2 Chayes–Machta | `percolation/chayes_machta.rs` | invariance + R3 | Experimental | q=2/3 exact histogram/colour marginal gates, Q1 agreement, q=2 R3 comparison pass; independent review PASS |
 | Q3 q phase diagram | `percolation/potts_phase.rs` | `percolation_potts_phase.rs` (2) | Experimental | exact p_c curve; exploratory bimodality only |
 
@@ -121,9 +121,10 @@ support their strongest claim; the limitation must be explicit.
 
 ## Verdict
 
-All 16 v2 stages are delivered and audited. 10 are Validated after
-independent review; 6 are Experimental because their strongest claims
-(C3 statistical nu, Q3 latent heat, and the remaining C2/C3 re-review) are not yet
-established. This matches the v1 M6 convention: Experimental-by-design
-or explicitly limited rows do not block the v2 delivery audit, but they
-are not counted as Validated.
+All 16 v2 stages are delivered and audited. 13 are Validated after
+independent review; 3 are Experimental because their strongest claims
+are not yet established: C3's statistical nu, Q2's committed exact
+joint-stationarity gate, and Q3's latent-heat/finite-size program. This
+matches the v1 M6 convention: Experimental-by-design or explicitly
+limited rows do not block the v2 delivery audit, but they are not counted
+as Validated.
