@@ -94,9 +94,16 @@ support their strongest claim; the limitation must be explicit.
 - `cargo fmt --all --check`: clean.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`:
   clean on the final committed tree (2026-10-24).
+- `RUSTDOCFLAGS="-D warnings" cargo doc -p cmc-rs --no-deps
+  --all-features`: clean (the three T4 private-link errors are fixed).
 - `cargo test --workspace --all-features --no-fail-fast`: **PASS** —
   exit code 0 on the final committed tree (2026-10-24), including the
-  F3 overflow-fix regression and the C2 limitation gate.
+  F3 overflow-fix regression and the C2 gates.
+- `just test-fast` (cross-crate parallel quick suite): **PASS** — exit
+  code 0 on the final tree, including the new C1 binary-correlation, Q1
+  rate-balance, Q2 invariance/R3, and Q3 phase-scan gates.
+- Nightly long gates: the release C2 ladder (L=128/256/512, R=256) passes
+  with `p_c(inf)=0.5457`, and the Q3 L=16 q=2/4/6/8 scan passes.
 - Stage-specific runs: L1 9/9, L2 9/9, L3 7/7, F3 7/7, C 2/2 (+12 unit
   tests), Q 3/3, Q3 2/2.
 - Allocation probes: the existing percolation probes remain zero; no new
