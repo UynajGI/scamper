@@ -54,7 +54,9 @@ support their strongest claim; the limitation must be explicit.
   `pair_probability`; F2/F3 share the one-uniform-per-box-edge contract;
   C1 fixes its FFT mode order and Box-Muller draws; Q1/Q2 document their
   sweep-order draws. Q1 additionally passes a rate-level detailed-balance
-  audit over all 4096 masks x 12 edges x q=1,2,3 (1e-12).
+  audit over all 4096 masks x 12 edges x q=0.5,1,2,3 (1e-12); the
+  independent review found and we fixed a q<1 unconditional-shortcut
+  ordering bug (q=0.5/0.75 now match exact FK marginals, |z| <= 0.89).
 - **Time constant**: white-noise calibration of the C2 estimator gives
   `p_c(inf) ~ 0.580` against the exact iid 0.592746, exposing a
   finite-size estimator bias separate from the field generator.
@@ -62,13 +64,14 @@ support their strongest claim; the limitation must be explicit.
 ## Open items (explicit, not hidden)
 
 1. **C2 threshold gate now passes** (the earlier limitation was
-   under-sampling): the ignored long test at L=128/256/512, 256 replicas
-   gives peaks 0.5139/0.5268/0.5344 and `p_c(inf)=0.5457`, CI (0.5449,
-   0.5464), chi2/dof=0.04 — 0.0027 above Pruessner's 0.54299, inside a
-   +/-0.005 tolerance band. The statistical error is now much smaller than
-   the residual reference-scale offset (their run is L=1024/R=10^4).
-   Remaining: independent review. C3's nu estimate at a=1.5 is 0.934
-   (CI 0.611-1.257), still too wide/biased to certify the flip.
+   under-sampling and a bootstrap-CI bug): the independent review found
+   that the bootstrap SD was divided by sqrt(B); the corrected CI is
+   (0.5355, 0.5558), so p_c(inf)=0.5457 differs from Pruessner's 0.54299
+   by ~0.65 sigma and the reference value lies inside the CI. Anchor
+   details corrected (Pruessner uses L=64-8192, 10^5 replicas, and a
+   wrapping threshold; this module peaks the order-parameter
+   susceptibility). Remaining: independent re-review. C3's nu estimate at
+   a=1.5 is 0.934 (CI 0.516-1.352), still not certifying the flip.
 2. **C3 statistical certification**: the analytic map and branch values
    are exact. A release L=128/256/512, R=256 diagnostic gives p_c =
    0.5430/0.5317/0.5393 at a=1.5/1.25/1.0 (a=1.5 matches 0.54299) but
@@ -111,6 +114,10 @@ support their strongest claim; the limitation must be explicit.
 - Anchors: Schrenk 2013, Pruessner 2018, Saberi 2016, Geyer 2015,
   Biskup 2004, ADH 2017 are archived; Wu 1982 / FK duality has a new
   markdown anchor note and bibliography row.
+- Independent C/Q review (docs/reviews/2026-10-24-cq-review.md): C1 PASS,
+  Q2 PASS, Q3 PASS; C2's bootstrap CI and Q1's q<1 shortcut were the two
+  real defects and are fixed here. C3's a=1.25/1.0 numbers are still
+  under investigation by a dedicated estimator task.
 
 ## Verdict
 

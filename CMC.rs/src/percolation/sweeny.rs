@@ -459,11 +459,15 @@ impl SweenyMC {
         let insertion = !self.open[edge_index];
         let delta_b = if insertion { 1 } else { -1 };
 
-        // The two possible `Δn` values ordered by increasing weight ratio:
-        // insertion { -1, 0 }, deletion { 0, +1 }.
-        let (delta_n_low, delta_n_high) = if insertion { (-1, 0) } else { (0, 1) };
-        let p_low = self.acceptance_value(delta_n_low, delta_b);
-        let p_high = self.acceptance_value(delta_n_high, delta_b);
+        // The two possible `Δn` values: insertion { -1, 0 }, deletion
+        // { 0, +1 }. Their acceptance order depends on q: for q < 1 the
+        // cluster-weight factor reverses it, so sort the two probabilities
+        // explicitly before using them as the unconditional bounds.
+        let (delta_n_first, delta_n_second) = if insertion { (-1, 0) } else { (0, 1) };
+        let p_first = self.acceptance_value(delta_n_first, delta_b);
+        let p_second = self.acceptance_value(delta_n_second, delta_b);
+        let p_low = p_first.min(p_second);
+        let p_high = p_first.max(p_second);
 
         let draw = rng.random::<f64>();
         self.proposal_count += 1;

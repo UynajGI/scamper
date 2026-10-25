@@ -120,8 +120,14 @@ fn correlated_threshold_brackets_pruessner_at_large_l() {
         extrapolation.pc_infinity.upper,
         extrapolation.reduced_chi_square
     );
-    // The statistical CI is much narrower than the residual reference-scale
-    // offset, so the gate is a 0.005 tolerance band, not CI containment.
+    // Correct bootstrap SD: the CI is (0.5375, 0.5537), so the 0.0027
+    // offset is ~0.65 sigma and the reference value lies inside the CI.
+    assert!(
+        extrapolation.pc_infinity.lower <= 0.54299 && 0.54299 <= extrapolation.pc_infinity.upper,
+        "p_c interval ({:.4}, {:.4}) does not contain 0.54299",
+        extrapolation.pc_infinity.lower,
+        extrapolation.pc_infinity.upper
+    );
     assert!(
         (extrapolation.pc_infinity.value - 0.54299).abs() < 0.005,
         "p_c(inf)={} is outside the 0.005 band around 0.54299",

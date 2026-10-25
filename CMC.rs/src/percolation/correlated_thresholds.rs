@@ -44,17 +44,19 @@
 //! ranking. For each grid point the summary gives
 //!
 //! ```text
-//! chi(p) = (M2 - S_max^2) / (V_active - S_max)
+//! chi_order(p) = N Var(S_max / N)        (primary)
+//! chi_finite(p) = (M2 - S_max^2) / (V_active - S_max)   (secondary)
 //! ```
 //!
-//! the F3 per-sample finite-cluster susceptibility (mean cluster size with
-//! one largest cluster excluded), and `S_max / N`. `chi(p)` is averaged over
-//! realizations (undefined samples are skipped and their fraction is
-//! reported). The pseudo-critical point `p_c(L)` is the **peak of the
-//! ensemble-averaged `chi(p)`**, refined by a parabola through the three
-//! grid points around the maximum. The secondary "large-cluster" curve is
-//! reported for context; the susceptibility peak is the primary estimator
-//! because the largest-cluster fraction is monotone rather than peaked.
+//! The pseudo-critical point `p_c(L)` is the **peak of the ensemble-averaged
+//! order-parameter susceptibility `chi_order(p)`**, refined by a parabola
+//! through the three grid points around the maximum. The F3 finite-cluster
+//! susceptibility and the largest-cluster fraction are recorded as secondary
+//! curves; the largest fraction is monotone rather than peaked, so it is not
+//! used as the primary estimator. Pruessner's table uses a different
+//! observable (wrapping threshold) on much larger lattices; this module's
+//! `p_c` is therefore a susceptibility-peak estimator, and comparisons are
+//! finite-size brackets, not 4-digit reproductions.
 //!
 //! Statistical intervals are 95% percentile bootstrap intervals over
 //! realizations (200 resamples, fixed seeds derived from the spec seed).
@@ -319,7 +321,7 @@ pub struct RungObservables {
     pub side: usize,
     /// Susceptibility peak location (the primary `p_c(L)` estimator).
     pub pseudo_critical: IntervalEstimate,
-    /// Peak value of the ensemble-averaged finite-cluster susceptibility.
+    /// Peak value of the ensemble-averaged order-parameter susceptibility `N Var(S_max/N)` (the primary estimator).
     pub susceptibility_peak: f64,
     /// Ensemble-averaged largest-cluster fraction at the peak location
     /// (linearly interpolated between grid points).
@@ -616,7 +618,7 @@ impl ThresholdLadder {
                     side: self.rungs[index].side,
                 });
             }
-            let error = standard_error(&values).max(1e-9);
+            let error = standard_deviation(&values).max(1e-9);
             let side = self.rungs[index].side;
             let sorted_values = sorted(&values);
             rung_slopes.push(RungSlope {
@@ -877,7 +879,7 @@ fn run_rung(
         value: pseudo_critical.value,
         lower: percentile(&sorted_pc, 0.025),
         upper: percentile(&sorted_pc, 0.975),
-        standard_error: standard_error(&finite_pc),
+        standard_error: standard_deviation(&finite_pc),
     };
     let slope_values: Vec<f64> = bootstrap_slope
         .iter()
@@ -1019,7 +1021,10 @@ fn mean(values: &[f64]) -> f64 {
     values.iter().sum::<f64>() / values.len() as f64
 }
 
-fn standard_error(values: &[f64]) -> f64 {
+/// Sample standard deviation of bootstrap replicates. This IS the bootstrap
+/// standard-error estimate; dividing it by `sqrt(B)` (as a standard error of
+/// the mean of the replicates) would understate the CI by a factor `sqrt(B)`.
+fn standard_deviation(values: &[f64]) -> f64 {
     if values.len() < 2 {
         return 0.0;
     }
@@ -1029,7 +1034,7 @@ fn standard_error(values: &[f64]) -> f64 {
         .map(|value| (value - average) * (value - average))
         .sum::<f64>()
         / (values.len() - 1) as f64;
-    (variance / values.len() as f64).sqrt()
+    variance.sqrt()
 }
 
 fn sorted(values: &[f64]) -> Vec<f64> {

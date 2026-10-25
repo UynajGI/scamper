@@ -84,7 +84,13 @@ fn exact_moments(lattice: &cmc_rs::CsrLattice, q: f64, p: f64) -> (f64, f64, f64
 #[test]
 fn sweeny_marginals_match_exact_fk_enumeration() {
     let lattice = build_square(3, 3, false);
-    for &(q, p) in &[(1.0_f64, 0.4_f64), (2.0, 0.4), (3.0, 0.55)] {
+    for &(q, p) in &[
+        (0.5_f64, 0.4_f64),
+        (0.75, 0.4),
+        (1.0, 0.4),
+        (2.0, 0.4),
+        (3.0, 0.55),
+    ] {
         let mut chain = SweenyMC::new(
             lattice.clone(),
             q,
@@ -313,4 +319,38 @@ fn chayes_machta_agrees_with_r3_edwards_sokal_at_q_two() {
         difference <= noise,
         "q=2 CM and R3 ES bond densities differ beyond 4 sigma ({difference:.4} > {noise:.4})"
     );
+}
+
+#[test]
+fn heat_bath_rate_matches_exact_conditional_on_every_state() {
+    // Rate-level detailed balance: for every bond mask A and every edge e,
+    // the heat-bath insertion probability must equal the exact FK two-state
+    // conditional P(e=1 | rest) = q^{k1} v / (q^{k0} + q^{k1} v).
+    let lattice = build_square(3, 3, false);
+    let edge_count = lattice.edge_count();
+    let p = 0.4_f64;
+    let odds = p / (1.0 - p);
+    for &q in &[0.5_f64, 1.0, 2.0, 3.0] {
+        let rates = cmc_rs::SweenyRates::new(q, p).expect("rates");
+        for mask in 0_usize..(1_usize << edge_count) {
+            for edge in 0..edge_count {
+                let without = mask & !(1_usize << edge);
+                let with = mask | (1_usize << edge);
+                let delta_n = component_count(&lattice, with) as i32
+                    - component_count(&lattice, without) as i32;
+                let ratio = q.powi(delta_n) * odds;
+                let exact = ratio / (1.0 + ratio);
+                let rate = rates.heat_bath(delta_n, 1);
+                assert!(
+                    (rate - exact).abs() < 1e-12,
+                    "q={q} mask={mask:b} edge={edge}: rate {rate} vs exact {exact}"
+                );
+                let metropolis = rates.metropolis(delta_n, 1);
+                assert!((metropolis - ratio.min(1.0)).abs() < 1e-12);
+            }
+        }
+        eprintln!(
+            "Q1 detailed-balance rates: q={q} all masks x edges match the exact FK conditional"
+        );
+    }
 }
