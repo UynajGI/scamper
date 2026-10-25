@@ -303,6 +303,8 @@ Experimental).
 | F track | Auffinger–Damron–Hanson 2017 | `Auffinger_2017_50yrs_first_passage_percolation.pdf` |
 | L track | Biskup 2004 | `Biskup_2003_long_range_chemical_distance.pdf` |
 | Q track | Geyer 2015 | `Geyer_2015_sweeny_random_cluster.pdf` |
+| Q3 Potts/FK duality | F. Y. Wu, *The Potts model*, Rev. Mod. Phys. 54, 235 (1982) | doi:10.1103/RevModPhys.54.235 · [anchor note](../ref/md/Potts_FK_duality_note.md) |
+
 | C track | Schrenk 2013 / Pruessner 2018 / Saberi 2016 | three files under `docs/ref/` |
 | T1 adaptive attack | Holme et al. 2002 (archived 2026-10-22) | `Holme_2002_attack_vulnerability.pdf` |
 
