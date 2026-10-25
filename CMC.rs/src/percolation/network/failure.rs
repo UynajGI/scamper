@@ -39,8 +39,8 @@ use carlo_rs::{Context, MonteCarlo};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::super::{
-    analyze_with_labels, ComponentWorkspace, ObservablePlan, Probability, SiteBernoulli,
-    StaticConfiguration,
+    analyze_with_labels, ComponentWorkspace, ObservablePlan, Probability, SampleView,
+    SiteBernoulli, StaticConfiguration,
 };
 use super::{NetworkPercolationError, NetworkProfile};
 use crate::{CsrLattice, GraphView, UndirectedGraphView};
@@ -320,14 +320,14 @@ impl MonteCarlo for RandomFailureMC {
         let vertices = lattice.vertex_count();
         let largest = result.summary().largest_component;
         let labels = result.labels().expect("labels were requested");
-        plan.record(
+        let sample = SampleView::new(
             vertices,
             result.summary(),
             result.query_outcomes(),
             None,
-            ctx,
+            Some(labels),
         );
-        plan.record_custom(&result, ctx);
+        plan.record(&sample, ctx);
         Self::record_degree_observables(scratch, profile, labels, largest, ctx);
     }
 

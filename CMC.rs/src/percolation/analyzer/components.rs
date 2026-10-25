@@ -19,18 +19,6 @@ pub struct AnalysisResult<'a> {
 }
 
 impl AnalysisResult<'_> {
-    /// Empty realization for adapter paths that record a built-in vacuum
-    /// sample without running the analyzer (custom observables then see an
-    /// empty summary and no labels/queries).
-    #[inline]
-    pub(crate) const fn empty() -> Self {
-        Self {
-            summary: ComponentSummary::EMPTY,
-            query_outcomes: &[],
-            labels: None,
-        }
-    }
-
     #[inline]
     pub const fn summary(&self) -> ComponentSummary {
         self.summary

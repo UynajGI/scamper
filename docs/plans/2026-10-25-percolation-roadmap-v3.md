@@ -81,11 +81,15 @@ not a physics paper.
 Problem: `StaticObservable` is a closed enum with a `pub(crate)` match;
 new observables require crate edits.
 
-Deliverable: `Observable` + `ObservableSpec` traits (name, required graph/
-activity capabilities, compute from a sample view), an open
+Deliverable: `ScalarObservable` + `ObservableSpec` traits (name, required
+graph/activity capabilities, compute from a `SampleView`), an open
 `ObservablePlan` builder, built-ins reimplemented as zero-cost impls, and
-a deprecated `StaticObservable` shim. `dyn` only for optional third-party
-observables; built-in hot paths stay statically dispatched.
+a `StaticObservable` shim (deprecation attribute at the v4 release
+boundary, once adapters no longer construct the enum internally). The
+trait is named `ScalarObservable` because the crate root already exports
+the Hamiltonian-generic `Observable` from `observables/`. `dyn` only for
+optional third-party observables; built-in hot paths stay statically
+dispatched.
 
 Gates: every v2 scalar/array golden output equal under the same seeds;
 an external test crate defines and runs a custom observable without CMC
@@ -325,7 +329,7 @@ roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
 
 | Stage | Status |
 |---|---|
-| A1 Observable trait/open plan | In progress (A1a merged: open `CustomObservable` extension) |
+| A1 Observable trait/open plan | Done (A1a+A1b: `ScalarObservable` + `SampleView`, capability-driven label/winding/moment requests, built-in `ObservableSpec` impls, `StaticObservable` shim; external-crate, golden, and 0-allocation gates green) |
 | A2 SampleView/OccupationLaw/WeightLaw | Not started |
 | A3 generic adapter/estimator/C0 | Not started |
 | A4 policy traits | Not started |

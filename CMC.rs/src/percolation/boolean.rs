@@ -81,8 +81,8 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::continuum::{candidate_pairs_from_configuration, CandidatePairGraph, ContinuumError};
 use super::{
-    analyze, AnalysisResult, ComponentSummary, ComponentWorkspace, EdgeActivity, ObservablePlan,
-    ObservablePlanError, VertexActivity,
+    analyze, analyze_with_labels, ComponentWorkspace, EdgeActivity, ObservablePlan,
+    ObservablePlanError, SampleView, VertexActivity,
 };
 use crate::particle::{OrthorhombicCell, ParticleConfiguration};
 use crate::topology::{EdgeId, GraphView, Incidence, UndirectedGraphView, VertexId};
@@ -882,8 +882,7 @@ impl<const D: usize> MonteCarlo for BooleanPercolationMC<D> {
             // GiantFraction and the susceptibility scalar are undefined and
             // absent for this sample (the defined indicator records 0).
             self.plan
-                .record(0, ComponentSummary::EMPTY, &self.vacuum_outcomes, None, ctx);
-            self.plan.record_custom(&AnalysisResult::empty(), ctx);
+                .record(&SampleView::vacuum(&self.vacuum_outcomes), ctx);
             return;
         }
         let graph = overlap_pairs(&self.coordinates, &self.cell, &self.radii)
@@ -891,22 +890,32 @@ impl<const D: usize> MonteCarlo for BooleanPercolationMC<D> {
         self.plan
             .validate(graph.vertex_count())
             .expect("constructor validated the plan at the count ceiling");
-        let result = analyze(
-            &graph,
-            &AllGrains(graph.vertex_count()),
-            &AllOverlaps(graph.pair_count()),
-            self.plan.boundary_queries(),
-            &mut self.workspace,
-        )
+        let result = if self.plan.requests_labels() {
+            analyze_with_labels(
+                &graph,
+                &AllGrains(graph.vertex_count()),
+                &AllOverlaps(graph.pair_count()),
+                self.plan.boundary_queries(),
+                &mut self.workspace,
+            )
+        } else {
+            analyze(
+                &graph,
+                &AllGrains(graph.vertex_count()),
+                &AllOverlaps(graph.pair_count()),
+                self.plan.boundary_queries(),
+                &mut self.workspace,
+            )
+        }
         .expect("constructor prepared matching analysis domains");
-        self.plan.record(
+        let sample = SampleView::new(
             graph.vertex_count(),
             result.summary(),
             result.query_outcomes(),
             None,
-            ctx,
+            result.labels(),
         );
-        self.plan.record_custom(&result, ctx);
+        self.plan.record(&sample, ctx);
     }
 
     fn name(&self) -> &'static str {

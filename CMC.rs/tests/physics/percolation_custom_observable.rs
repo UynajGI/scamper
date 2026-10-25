@@ -1,16 +1,18 @@
-//! A1a: open custom-observable extension.
+//! A1: open observable extension and capability declarations.
 //!
-//! This integration test lives outside the library crate, so implementing a
-//! [`CustomObservable`] here proves downstream crates can add a Results column
-//! without editing CMC.rs. The built-in v2 plan path is unchanged; a plan with
-//! no custom observables must behave exactly as before.
+//! This integration test lives outside the library crate, so implementing an
+//! [`ScalarObservable`] here proves downstream crates can add a Results column
+//! without editing CMC.rs. Plans without customs must keep the v2 recording
+//! path bit-for-bit, and capability declarations (labels, winding, exact
+//! moments) must control what adapters materialize.
 
 use std::sync::Arc;
 
-use carlo_rs::{Context, Run, RunConfig, RunId, TaskId};
+use carlo_rs::{Context, MonteCarlo, Results, Run, RunConfig, RunId, TaskId};
 use cmc_rs::{
-    build_chain, AnalysisResult, CustomObservable, ObservablePlan, ObservablePlanError, StaticLaw,
-    StaticObservable, StaticPercolationMC,
+    build_chain, build_square_with_embedding, ClusterQ, ObservablePlan, ObservablePlanError,
+    RandomClusterMC, SampleView, ScalarObservable, StaticLaw, StaticObservable,
+    StaticPercolationError, StaticPercolationMC,
 };
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -18,25 +20,25 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 #[derive(Debug)]
 struct DoubleActiveEdges;
 
-impl CustomObservable for DoubleActiveEdges {
+impl ScalarObservable for DoubleActiveEdges {
     fn name(&self) -> &str {
         "CustomDoubleActiveEdges"
     }
 
-    fn evaluate(&self, analysis: &AnalysisResult<'_>) -> Option<f64> {
-        Some(2.0 * analysis.summary().active_edge_count as f64)
+    fn evaluate(&self, sample: &SampleView<'_>) -> Option<f64> {
+        Some(2.0 * sample.summary().active_edge_count as f64)
     }
 }
 
 #[derive(Debug)]
 struct NeverDefined;
 
-impl CustomObservable for NeverDefined {
+impl ScalarObservable for NeverDefined {
     fn name(&self) -> &str {
         "CustomNeverDefined"
     }
 
-    fn evaluate(&self, _analysis: &AnalysisResult<'_>) -> Option<f64> {
+    fn evaluate(&self, _sample: &SampleView<'_>) -> Option<f64> {
         None
     }
 }
@@ -44,25 +46,66 @@ impl CustomObservable for NeverDefined {
 #[derive(Debug)]
 struct FixedName(&'static str);
 
-impl CustomObservable for FixedName {
+impl ScalarObservable for FixedName {
     fn name(&self) -> &str {
         self.0
     }
 
-    fn evaluate(&self, _analysis: &AnalysisResult<'_>) -> Option<f64> {
+    fn evaluate(&self, _sample: &SampleView<'_>) -> Option<f64> {
         Some(1.0)
     }
 }
 
-fn custom(name: &'static str) -> Arc<dyn CustomObservable> {
+/// Reports the label-array length, or stays undefined when labels were not
+/// materialized. `declared` toggles the capability so one observable can prove
+/// both the requested and the unrequested path.
+#[derive(Debug)]
+struct LabelCount {
+    name: &'static str,
+    declared: bool,
+}
+
+impl ScalarObservable for LabelCount {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn requires_labels(&self) -> bool {
+        self.declared
+    }
+
+    fn evaluate(&self, sample: &SampleView<'_>) -> Option<f64> {
+        sample.labels().map(|labels| labels.len() as f64)
+    }
+}
+
+#[derive(Debug)]
+struct LargestWindingRank;
+
+impl ScalarObservable for LargestWindingRank {
+    fn name(&self) -> &str {
+        "CustomLargestWindingRank"
+    }
+
+    fn requires_winding(&self) -> bool {
+        true
+    }
+
+    fn evaluate(&self, sample: &SampleView<'_>) -> Option<f64> {
+        sample
+            .winding()
+            .map(|winding| winding.largest_winding_rank as f64)
+    }
+}
+
+fn custom(name: &'static str) -> Arc<dyn ScalarObservable> {
     Arc::new(FixedName(name))
 }
 
-fn run(plan: ObservablePlan, sweeps: u64, binsize: usize) -> carlo_rs::Results {
-    let lattice = build_chain(4, false);
-    let adapter = StaticPercolationMC::new(lattice, StaticLaw::site(1.0).expect("law"), plan)
-        .expect("adapter");
-    let seed = 0x4131_0001;
+fn run_adapter<A>(adapter: A, seed: u64, sweeps: u64, binsize: usize) -> Results
+where
+    A: MonteCarlo<Rng = Xoshiro256PlusPlus>,
+{
     let context = Context::new_with_binsize(Xoshiro256PlusPlus::seed_from_u64(seed), 0, binsize);
     let mut run = Run::from_parts(
         context,
@@ -81,18 +124,25 @@ fn run(plan: ObservablePlan, sweeps: u64, binsize: usize) -> carlo_rs::Results {
     run.finalize(seed)
 }
 
+fn run_static(plan: ObservablePlan, sweeps: u64, binsize: usize) -> Results {
+    let lattice = build_chain(4, false);
+    let adapter = StaticPercolationMC::new(lattice, StaticLaw::site(1.0).expect("law"), plan)
+        .expect("adapter");
+    run_adapter(adapter, 0x4131_0001, sweeps, binsize)
+}
+
 #[test]
 fn external_custom_observable_is_recorded_through_the_scheduler() {
     let plan = ObservablePlan::new([StaticObservable::ActiveVertexCount], Vec::new())
         .with_custom([
-            Arc::new(DoubleActiveEdges) as Arc<dyn CustomObservable>,
-            Arc::new(NeverDefined) as Arc<dyn CustomObservable>,
+            Arc::new(DoubleActiveEdges) as Arc<dyn ScalarObservable>,
+            Arc::new(NeverDefined) as Arc<dyn ScalarObservable>,
         ])
         .expect("custom plan");
     assert_eq!(plan.custom_observables().len(), 2);
     assert!(plan.has_custom());
 
-    let results = run(plan, 4, 1);
+    let results = run_static(plan, 4, 1);
     let built_in = results.get("ActiveVertexCount").expect("built-in column");
     assert_eq!(built_in.mean, 4.0);
     assert_eq!(built_in.n_bins, 4);
@@ -108,6 +158,80 @@ fn external_custom_observable_is_recorded_through_the_scheduler() {
 }
 
 #[test]
+fn labels_are_materialized_only_when_a_custom_observable_requires_them() {
+    let requested = ObservablePlan::new(Vec::<StaticObservable>::new(), Vec::new())
+        .with_custom([Arc::new(LabelCount {
+            name: "RequestedLabelCount",
+            declared: true,
+        }) as Arc<dyn ScalarObservable>])
+        .expect("plan");
+    assert!(requested.requests_labels());
+    let results = run_static(requested, 2, 1);
+    assert_eq!(
+        results.get("RequestedLabelCount").expect("labels").mean,
+        4.0
+    );
+
+    let undeclared = ObservablePlan::new(Vec::<StaticObservable>::new(), Vec::new())
+        .with_custom([Arc::new(LabelCount {
+            name: "UndeclaredLabelCount",
+            declared: false,
+        }) as Arc<dyn ScalarObservable>])
+        .expect("plan");
+    assert!(!undeclared.requests_labels());
+    let results = run_static(undeclared, 2, 1);
+    // The analyzer skipped labels, so the observable correctly stays undefined
+    // instead of inventing an empty array.
+    assert!(results.get("UndeclaredLabelCount").is_none());
+}
+
+#[test]
+fn bond_adapter_honors_the_label_capability() {
+    let plan = ObservablePlan::new(Vec::<StaticObservable>::new(), Vec::new())
+        .with_custom([Arc::new(LabelCount {
+            name: "BondLabelCount",
+            declared: true,
+        }) as Arc<dyn ScalarObservable>])
+        .expect("plan");
+    let lattice = build_chain(4, false);
+    let adapter = RandomClusterMC::new(lattice, ClusterQ::q1(), 1.0, plan).expect("adapter");
+    let results = run_adapter(adapter, 0x4131_0002, 2, 1);
+    assert_eq!(results.get("BondLabelCount").expect("labels").mean, 4.0);
+}
+
+#[test]
+fn custom_winding_capability_requires_an_embedding_and_sees_the_summary() {
+    let plan = ObservablePlan::new(Vec::<StaticObservable>::new(), Vec::new())
+        .with_custom([Arc::new(LargestWindingRank) as Arc<dyn ScalarObservable>])
+        .expect("plan");
+    assert!(plan.requests_winding());
+
+    let lattice = build_chain(4, false);
+    assert!(matches!(
+        StaticPercolationMC::new(lattice, StaticLaw::site(1.0).expect("law"), plan.clone()),
+        Err(StaticPercolationError::WindingWithoutEmbedding)
+    ));
+
+    let (lattice, embedding) = build_square_with_embedding(4, 4, true).expect("torus");
+    let adapter = StaticPercolationMC::with_embedding(
+        lattice,
+        embedding,
+        StaticLaw::site(1.0).expect("law"),
+        plan,
+    )
+    .expect("embedded adapter");
+    let results = run_adapter(adapter, 0x4131_0003, 2, 1);
+    // Fully occupied 4x4 torus: the largest component wraps both axes.
+    assert_eq!(
+        results
+            .get("CustomLargestWindingRank")
+            .expect("winding column")
+            .mean,
+        2.0
+    );
+}
+
+#[test]
 fn custom_names_are_validated_against_builtins_boundaries_and_each_other() {
     let base = || ObservablePlan::new([StaticObservable::LargestSize], Vec::new());
     assert!(matches!(
@@ -116,8 +240,8 @@ fn custom_names_are_validated_against_builtins_boundaries_and_each_other() {
     ));
     assert!(matches!(
         base().with_custom([
-            Arc::new(DoubleActiveEdges) as Arc<dyn CustomObservable>,
-            Arc::new(DoubleActiveEdges) as Arc<dyn CustomObservable>,
+            Arc::new(DoubleActiveEdges) as Arc<dyn ScalarObservable>,
+            Arc::new(DoubleActiveEdges) as Arc<dyn ScalarObservable>,
         ]),
         Err(ObservablePlanError::DuplicateCustomName { .. })
     ));
@@ -143,14 +267,58 @@ fn custom_names_are_validated_against_builtins_boundaries_and_each_other() {
     ));
 }
 
+/// A1 allocation parity: the custom slot must not allocate per sample. The
+/// context binsize exceeds warmup + measured samples, so no completed-bin
+/// allocation can fall inside the measured window; each column's first-sample
+/// insertion is also warmed up.
+#[cfg(feature = "allocation-probe")]
+#[test]
+fn custom_observable_recording_is_allocation_free_in_steady_state() {
+    use allocation_counter::measure;
+
+    const WARMUP: usize = 64;
+    const SAMPLES: usize = 256;
+
+    fn steady_state_allocations(plan: ObservablePlan) -> u64 {
+        let lattice = build_chain(64, false);
+        let mut adapter =
+            StaticPercolationMC::new(lattice, StaticLaw::site(0.5).expect("law"), plan)
+                .expect("adapter");
+        let mut context = Context::new_with_binsize(
+            Xoshiro256PlusPlus::seed_from_u64(0x4131_0004),
+            0,
+            WARMUP + SAMPLES + 1,
+        );
+        for _ in 0..WARMUP {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+        }
+        let info = measure(|| {
+            for _ in 0..SAMPLES {
+                adapter.sweep(&mut context);
+                adapter.measure(&mut context);
+            }
+        });
+        info.count_total
+    }
+
+    let builtin = ObservablePlan::new([StaticObservable::ActiveVertexCount], Vec::new());
+    let with_custom = builtin
+        .clone()
+        .with_custom([Arc::new(DoubleActiveEdges) as Arc<dyn ScalarObservable>])
+        .expect("custom plan");
+    assert_eq!(steady_state_allocations(builtin), 0);
+    assert_eq!(steady_state_allocations(with_custom), 0);
+}
+
 #[test]
 fn a_plan_without_custom_observables_is_byte_identical_to_the_v2_path() {
-    let baseline = run(
+    let baseline = run_static(
         ObservablePlan::new([StaticObservable::ActiveVertexCount], Vec::new()),
         4,
         1,
     );
-    let empty_custom = run(
+    let empty_custom = run_static(
         ObservablePlan::new([StaticObservable::ActiveVertexCount], Vec::new())
             .with_custom(Vec::new())
             .expect("empty custom list"),

@@ -74,7 +74,8 @@ use rand::{Rng, RngExt};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::{
-    analyze, BondSample, ComponentWorkspace, ObservablePlan, ObservablePlanError, VertexActivity,
+    analyze, analyze_with_labels, BondSample, ComponentWorkspace, ObservablePlan,
+    ObservablePlanError, SampleView, VertexActivity,
 };
 use crate::{CsrLattice, EdgeId, GraphView, UndirectedGraphView, VertexId};
 
@@ -375,22 +376,32 @@ impl MonteCarlo for EdwardsSokalMC {
         } = self;
         // The measured configuration is the exposed sample: the same
         // BondSample returned by `last_bond_sample()` after this sweep.
-        let result = analyze(
-            lattice,
-            vertices,
-            sample,
-            plan.boundary_queries(),
-            workspace,
-        )
+        let result = if plan.requests_labels() {
+            analyze_with_labels(
+                lattice,
+                vertices,
+                sample,
+                plan.boundary_queries(),
+                workspace,
+            )
+        } else {
+            analyze(
+                lattice,
+                vertices,
+                sample,
+                plan.boundary_queries(),
+                workspace,
+            )
+        }
         .expect("constructor validated FK-draw and plan domains");
-        plan.record(
+        let view = SampleView::new(
             lattice.vertex_count(),
             result.summary(),
             result.query_outcomes(),
             None,
-            ctx,
+            result.labels(),
         );
-        plan.record_custom(&result, ctx);
+        plan.record(&view, ctx);
     }
 
     fn name(&self) -> &'static str {

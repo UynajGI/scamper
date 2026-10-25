@@ -61,7 +61,10 @@ pub use analyzer::{
     analyze, analyze_winding, analyze_with_labels, AnalysisError, AnalysisResult, ComponentWinding,
     WindingError, WindingResult, WindingSummary,
 };
-pub use bonds::{analyze_bonds, BondConfigurationError, BondSample, ExternalBondConfiguration};
+pub use bonds::{
+    analyze_bonds, analyze_bonds_with_labels, BondConfigurationError, BondSample,
+    ExternalBondConfiguration,
+};
 pub use boolean::{
     overlap_pairs, overlap_pairs_from_configuration, BooleanError, BooleanPercolationMC,
     OverlapGraph, PointProcess, Radii,
@@ -121,7 +124,10 @@ pub use network::{
     DuplicateEdgePolicy, EdgeListSpec, NetworkError, NetworkInputError, NetworkPercolationError,
     NetworkProfile, RandomFailureMC, SelfLoopPolicy,
 };
-pub use observable::{CustomObservable, ObservablePlan, ObservablePlanError, StaticObservable};
+pub use observable::{
+    ObservablePlan, ObservablePlanError, ObservableSpec, SampleView, ScalarObservable,
+    StaticObservable,
+};
 pub use potts_phase::{
     critical_probability, phase_scan, PottsPhaseError, PottsPhaseEstimate, PottsPhaseSpec,
 };

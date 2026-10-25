@@ -7,9 +7,10 @@ use rand::Rng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::{
-    analyze, analyze_winding, BondBernoulli, BoundaryQuery, ComponentWorkspace, MixedBernoulli,
-    ObservablePlan, ObservablePlanError, Probability, ProbabilityField, SamplingError,
-    SiteBernoulli, StaticConfiguration, StaticObservable, WindingWorkspace,
+    analyze, analyze_winding, analyze_with_labels, BondBernoulli, BoundaryQuery,
+    ComponentWorkspace, MixedBernoulli, ObservablePlan, ObservablePlanError, Probability,
+    ProbabilityField, SampleView, SamplingError, SiteBernoulli, StaticConfiguration,
+    StaticObservable, WindingWorkspace,
 };
 use crate::classical_mc::{build_lattice_from_params, parse_bool, parse_param};
 use crate::{
@@ -378,22 +379,32 @@ impl MonteCarlo for StaticPercolationMC {
         } else {
             None
         };
-        let result = analyze(
-            &self.lattice,
-            &self.configuration,
-            &self.configuration,
-            self.plan.boundary_queries(),
-            &mut self.workspace,
-        )
+        let result = if self.plan.requests_labels() {
+            analyze_with_labels(
+                &self.lattice,
+                &self.configuration,
+                &self.configuration,
+                self.plan.boundary_queries(),
+                &mut self.workspace,
+            )
+        } else {
+            analyze(
+                &self.lattice,
+                &self.configuration,
+                &self.configuration,
+                self.plan.boundary_queries(),
+                &mut self.workspace,
+            )
+        }
         .expect("constructor prepared matching analysis domains");
-        self.plan.record(
+        let sample = SampleView::new(
             self.lattice.vertex_count(),
             result.summary(),
             result.query_outcomes(),
             winding,
-            ctx,
+            result.labels(),
         );
-        self.plan.record_custom(&result, ctx);
+        self.plan.record(&sample, ctx);
     }
 
     fn name(&self) -> &'static str {

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use carlo_rs::Context;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-use super::{AnalysisResult, BoundaryQuery, ComponentSummary, WindingSummary};
+use super::{BoundaryQuery, ComponentLabel, ComponentSummary, WindingSummary};
 
 /// Scalar observables recorded for each independent static realization.
 ///
@@ -71,26 +71,373 @@ impl StaticObservable {
     }
 }
 
+/// One realized configuration as seen by an observable.
+///
+/// `total_vertices` is the topology size (occupied or not), which the
+/// built-in `GiantFraction` uses as its denominator. `winding` is present
+/// only when the adapter computed a winding summary; plans that request
+/// winding are rejected at construction without an embedding, so a custom
+/// observable declaring [`ScalarObservable::requires_winding`] always sees `Some`
+/// when it is evaluated. `labels` is present only when the plan or adapter
+/// asked the analyzer to materialize canonical per-vertex labels.
+#[derive(Clone, Copy, Debug)]
+pub struct SampleView<'a> {
+    total_vertices: usize,
+    summary: ComponentSummary,
+    boundary_outcomes: &'a [bool],
+    winding: Option<WindingSummary>,
+    labels: Option<&'a [ComponentLabel]>,
+}
+
+impl<'a> SampleView<'a> {
+    pub(crate) const fn new(
+        total_vertices: usize,
+        summary: ComponentSummary,
+        boundary_outcomes: &'a [bool],
+        winding: Option<WindingSummary>,
+        labels: Option<&'a [ComponentLabel]>,
+    ) -> Self {
+        Self {
+            total_vertices,
+            summary,
+            boundary_outcomes,
+            winding,
+            labels,
+        }
+    }
+
+    /// Zero-vertex realization for adapter vacuum paths that skip analysis.
+    pub(crate) const fn vacuum(boundary_outcomes: &'a [bool]) -> Self {
+        Self::new(0, ComponentSummary::EMPTY, boundary_outcomes, None, None)
+    }
+
+    #[inline]
+    pub const fn total_vertices(&self) -> usize {
+        self.total_vertices
+    }
+
+    #[inline]
+    pub const fn summary(&self) -> ComponentSummary {
+        self.summary
+    }
+
+    #[inline]
+    pub const fn boundary_outcomes(&self) -> &'a [bool] {
+        self.boundary_outcomes
+    }
+
+    #[inline]
+    pub const fn winding(&self) -> Option<WindingSummary> {
+        self.winding
+    }
+
+    #[inline]
+    pub const fn labels(&self) -> Option<&'a [ComponentLabel]> {
+        self.labels
+    }
+}
+
 /// Open extension point for a user-defined scalar observable.
 ///
 /// The built-in [`StaticObservable`] set stays the zero-cost default path;
 /// this trait is how downstream crates add a column without editing CMC.rs.
 /// Implementations are evaluated once per realized sample from the shared
-/// [`AnalysisResult`] (summary, query outcomes, optional labels). Returning
-/// `None` leaves the column absent for that sample, matching the built-in
-/// undefined-observable convention (`n_bins` below the sweep count).
+/// [`SampleView`]. Returning `None` leaves the column absent for that
+/// sample, matching the built-in undefined-observable convention (`n_bins`
+/// below the sweep count).
+///
+/// Capability methods are declarations, not hints: the plan aggregates them
+/// so adapters materialize exactly what the observables need. Label
+/// materialization and winding scans are skipped otherwise.
 ///
 /// Names are validated when the plan is assembled with
 /// [`ObservablePlan::with_custom`]: they must be non-empty and must not
-/// collide with a planned built-in, the
-/// `FiniteClusterSusceptibilityDefined` indicator, a boundary column, or
-/// another custom observable.
-pub trait CustomObservable: fmt::Debug + Send + Sync {
+/// collide with a planned built-in, its indicator column, a boundary column,
+/// or another custom observable.
+///
+/// ```
+/// use std::sync::Arc;
+/// use cmc_rs::{ScalarObservable, ObservablePlan, SampleView};
+///
+/// #[derive(Debug)]
+/// struct Occupancy { name: &'static str }
+///
+/// impl ScalarObservable for Occupancy {
+///     fn name(&self) -> &str { self.name }
+///     fn evaluate(&self, sample: &SampleView<'_>) -> Option<f64> {
+///         let vertices = sample.total_vertices();
+///         (vertices != 0).then(|| {
+///             sample.summary().active_vertex_count as f64 / vertices as f64
+///         })
+///     }
+/// }
+///
+/// let plan = ObservablePlan::all(Vec::new())
+///     .with_custom([Arc::new(Occupancy { name: "Occupancy" }) as Arc<dyn ScalarObservable>])
+///     .expect("unique name");
+/// assert!(plan.has_custom());
+/// ```
+pub trait ScalarObservable: fmt::Debug + Send + Sync {
     /// Stable Results column name.
     fn name(&self) -> &str;
 
+    /// Whether evaluation needs canonical per-vertex component labels.
+    fn requires_labels(&self) -> bool {
+        false
+    }
+
+    /// Whether the plan needs a periodic embedding and winding summary.
+    fn requires_winding(&self) -> bool {
+        false
+    }
+
+    /// Whether evaluation consumes moments that must stay exact in `f64`.
+    fn requires_exact_moments(&self) -> bool {
+        false
+    }
+
     /// Evaluate one realization; `None` skips this sample for this column.
-    fn evaluate(&self, analysis: &AnalysisResult<'_>) -> Option<f64>;
+    fn evaluate(&self, sample: &SampleView<'_>) -> Option<f64>;
+}
+
+/// Emission protocol for one built-in plan entry.
+///
+/// A spec may record more than one Results column (the finite-cluster
+/// susceptibility writes its presence indicator alongside the value), which
+/// is why this is separate from the single-column [`ScalarObservable`].
+/// Built-ins are statically dispatched: the plan stores
+/// [`StaticObservable`], whose impl delegates to one zero-sized spec per
+/// variant. Third-party observables use [`ScalarObservable`] instead.
+pub trait ObservableSpec {
+    fn name(&self) -> &'static str;
+
+    fn needs_embedding(&self) -> bool {
+        false
+    }
+
+    fn needs_exact_moments(&self) -> bool {
+        false
+    }
+
+    fn indicator_names(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>);
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ActiveVertexCountSpec;
+
+impl ObservableSpec for ActiveVertexCountSpec {
+    fn name(&self) -> &'static str {
+        StaticObservable::ActiveVertexCount.name()
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
+        ctx.measure(self.name(), sample.summary().active_vertex_count as f64);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ActiveEdgeCountSpec;
+
+impl ObservableSpec for ActiveEdgeCountSpec {
+    fn name(&self) -> &'static str {
+        StaticObservable::ActiveEdgeCount.name()
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
+        ctx.measure(self.name(), sample.summary().active_edge_count as f64);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ComponentCountSpec;
+
+impl ObservableSpec for ComponentCountSpec {
+    fn name(&self) -> &'static str {
+        StaticObservable::ComponentCount.name()
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
+        ctx.measure(self.name(), sample.summary().component_count as f64);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LargestSizeSpec;
+
+impl ObservableSpec for LargestSizeSpec {
+    fn name(&self) -> &'static str {
+        StaticObservable::LargestSize.name()
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
+        ctx.measure(self.name(), sample.summary().largest_component_size as f64);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct GiantFractionSpec;
+
+impl ObservableSpec for GiantFractionSpec {
+    fn name(&self) -> &'static str {
+        StaticObservable::GiantFraction.name()
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
+        let total = sample.total_vertices();
+        if total != 0 {
+            ctx.measure(
+                self.name(),
+                sample.summary().largest_component_size as f64 / total as f64,
+            );
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct RawSecondMomentSpec;
+
+impl ObservableSpec for RawSecondMomentSpec {
+    fn name(&self) -> &'static str {
+        StaticObservable::RawSecondMoment.name()
+    }
+
+    fn needs_exact_moments(&self) -> bool {
+        true
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
+        ctx.measure(self.name(), sample.summary().raw_second_moment as f64);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FiniteClusterSusceptibilitySpec;
+
+const SUSCEPTIBILITY_INDICATORS: &[&str] = &["FiniteClusterSusceptibilityDefined"];
+
+impl ObservableSpec for FiniteClusterSusceptibilitySpec {
+    fn name(&self) -> &'static str {
+        StaticObservable::FiniteClusterSusceptibility.name()
+    }
+
+    fn needs_exact_moments(&self) -> bool {
+        true
+    }
+
+    fn indicator_names(&self) -> &'static [&'static str] {
+        SUSCEPTIBILITY_INDICATORS
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
+        let summary = sample.summary();
+        let finite_vertices = summary
+            .active_vertex_count
+            .saturating_sub(summary.largest_component_size);
+        let largest_squared =
+            (summary.largest_component_size as u128) * (summary.largest_component_size as u128);
+        let finite_second_moment = summary.raw_second_moment.saturating_sub(largest_squared);
+        let defined = finite_vertices != 0;
+        ctx.measure(SUSCEPTIBILITY_INDICATORS[0], f64::from(u8::from(defined)));
+        if defined {
+            ctx.measure(
+                self.name(),
+                finite_second_moment as f64 / finite_vertices as f64,
+            );
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct WrappingSpec;
+
+impl ObservableSpec for WrappingSpec {
+    fn name(&self) -> &'static str {
+        StaticObservable::Wrapping.name()
+    }
+
+    fn needs_embedding(&self) -> bool {
+        true
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
+        debug_assert!(
+            sample.winding().is_some(),
+            "plan validation pairs winding observables with an embedding"
+        );
+        if let Some(winding) = sample.winding() {
+            ctx.measure(
+                self.name(),
+                f64::from(u8::from(winding.wrapping_component_count > 0)),
+            );
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct WindingRankSpec;
+
+impl ObservableSpec for WindingRankSpec {
+    fn name(&self) -> &'static str {
+        StaticObservable::WindingRank.name()
+    }
+
+    fn needs_embedding(&self) -> bool {
+        true
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
+        debug_assert!(
+            sample.winding().is_some(),
+            "plan validation pairs winding observables with an embedding"
+        );
+        if let Some(winding) = sample.winding() {
+            ctx.measure(self.name(), winding.largest_winding_rank as f64);
+        }
+    }
+}
+
+impl ObservableSpec for StaticObservable {
+    fn name(&self) -> &'static str {
+        StaticObservable::name(*self)
+    }
+
+    fn needs_embedding(&self) -> bool {
+        StaticObservable::needs_embedding(*self)
+    }
+
+    fn needs_exact_moments(&self) -> bool {
+        matches!(
+            self,
+            Self::RawSecondMoment | Self::FiniteClusterSusceptibility
+        )
+    }
+
+    fn indicator_names(&self) -> &'static [&'static str] {
+        match self {
+            Self::FiniteClusterSusceptibility => SUSCEPTIBILITY_INDICATORS,
+            _ => &[],
+        }
+    }
+
+    fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
+        match self {
+            Self::ActiveVertexCount => ActiveVertexCountSpec.record(sample, ctx),
+            Self::ActiveEdgeCount => ActiveEdgeCountSpec.record(sample, ctx),
+            Self::ComponentCount => ComponentCountSpec.record(sample, ctx),
+            Self::LargestSize => LargestSizeSpec.record(sample, ctx),
+            Self::GiantFraction => GiantFractionSpec.record(sample, ctx),
+            Self::RawSecondMoment => RawSecondMomentSpec.record(sample, ctx),
+            Self::FiniteClusterSusceptibility => {
+                FiniteClusterSusceptibilitySpec.record(sample, ctx);
+            }
+            Self::Wrapping => WrappingSpec.record(sample, ctx),
+            Self::WindingRank => WindingRankSpec.record(sample, ctx),
+        }
+    }
 }
 
 /// Explicit requests for scalar component observables and boundary events.
@@ -107,7 +454,7 @@ pub trait CustomObservable: fmt::Debug + Send + Sync {
 #[derive(Clone, Debug)]
 pub struct ObservablePlan {
     observables: Vec<StaticObservable>,
-    custom: Vec<Arc<dyn CustomObservable>>,
+    custom: Vec<Arc<dyn ScalarObservable>>,
     boundary_queries: Vec<BoundaryQuery>,
     boundary_names: Vec<String>,
 }
@@ -162,9 +509,9 @@ impl ObservablePlan {
     /// failed assembly leaves the caller's original plan untouched.
     pub fn with_custom(
         mut self,
-        observables: impl IntoIterator<Item = Arc<dyn CustomObservable>>,
+        observables: impl IntoIterator<Item = Arc<dyn ScalarObservable>>,
     ) -> Result<Self, ObservablePlanError> {
-        let custom: Vec<Arc<dyn CustomObservable>> = observables.into_iter().collect();
+        let custom: Vec<Arc<dyn ScalarObservable>> = observables.into_iter().collect();
         let reserved = self.reserved_names();
         let mut seen: Vec<String> = Vec::with_capacity(custom.len());
         for observable in &custom {
@@ -189,7 +536,7 @@ impl ObservablePlan {
     }
 
     /// The user-defined observables attached to this plan.
-    pub fn custom_observables(&self) -> &[Arc<dyn CustomObservable>] {
+    pub fn custom_observables(&self) -> &[Arc<dyn ScalarObservable>] {
         &self.custom
     }
 
@@ -200,11 +547,8 @@ impl ObservablePlan {
 
     fn reserved_names(&self) -> Vec<&str> {
         let mut names: Vec<&str> = self.observables.iter().map(|value| value.name()).collect();
-        if self
-            .observables
-            .contains(&StaticObservable::FiniteClusterSusceptibility)
-        {
-            names.push("FiniteClusterSusceptibilityDefined");
+        for observable in &self.observables {
+            names.extend(observable.indicator_names());
         }
         names.extend(self.boundary_names.iter().map(String::as_str));
         names
@@ -220,6 +564,19 @@ impl ObservablePlan {
         self.observables
             .iter()
             .any(|observable| observable.needs_embedding())
+            || self
+                .custom
+                .iter()
+                .any(|observable| observable.requires_winding())
+    }
+
+    /// Whether any user-defined observable needs canonical component labels.
+    /// Adapters pass this to `analyze_with_labels`, so the label array is
+    /// materialized only on request.
+    pub fn requests_labels(&self) -> bool {
+        self.custom
+            .iter()
+            .any(|observable| observable.requires_labels())
     }
 
     /// Reject moment observables whose worst-case `u128 -> f64` conversion
@@ -228,12 +585,14 @@ impl ObservablePlan {
         // Both moment-based observables convert u128 cluster-size squares of
         // magnitude up to V^2 into f64; beyond 2^53 that conversion would
         // silently round, so the plan is rejected at construction instead.
-        let needs_exact_moments = self.observables.iter().any(|observable| {
-            matches!(
-                observable,
-                StaticObservable::RawSecondMoment | StaticObservable::FiniteClusterSusceptibility
-            )
-        });
+        let needs_exact_moments = self
+            .observables
+            .iter()
+            .any(|observable| observable.needs_exact_moments())
+            || self
+                .custom
+                .iter()
+                .any(|observable| observable.requires_exact_moments());
         if needs_exact_moments {
             let max_moment = (total_vertices as u128) * (total_vertices as u128);
             if max_moment > (1_u128 << f64::MANTISSA_DIGITS) {
@@ -243,96 +602,20 @@ impl ObservablePlan {
         Ok(())
     }
 
-    pub(crate) fn record(
-        &self,
-        total_vertices: usize,
-        summary: ComponentSummary,
-        boundary_outcomes: &[bool],
-        winding: Option<WindingSummary>,
-        ctx: &mut Context<Xoshiro256PlusPlus>,
-    ) {
+    /// Record every planned column for one realization.
+    ///
+    /// Built-ins are emitted first in their canonical enum order, then
+    /// user-defined observables in plan order. Plans without customs
+    /// therefore keep the exact v2 recording sequence.
+    pub(crate) fn record(&self, sample: &SampleView<'_>, ctx: &mut Context<Xoshiro256PlusPlus>) {
         for observable in &self.observables {
-            match observable {
-                StaticObservable::ActiveVertexCount => {
-                    ctx.measure(observable.name(), summary.active_vertex_count as f64);
-                }
-                StaticObservable::ActiveEdgeCount => {
-                    ctx.measure(observable.name(), summary.active_edge_count as f64);
-                }
-                StaticObservable::ComponentCount => {
-                    ctx.measure(observable.name(), summary.component_count as f64);
-                }
-                StaticObservable::LargestSize => {
-                    ctx.measure(observable.name(), summary.largest_component_size as f64);
-                }
-                StaticObservable::GiantFraction if total_vertices != 0 => ctx.measure(
-                    observable.name(),
-                    summary.largest_component_size as f64 / total_vertices as f64,
-                ),
-                StaticObservable::GiantFraction => {}
-                StaticObservable::RawSecondMoment => {
-                    ctx.measure(observable.name(), summary.raw_second_moment as f64);
-                }
-                StaticObservable::FiniteClusterSusceptibility => {
-                    let finite_vertices = summary
-                        .active_vertex_count
-                        .saturating_sub(summary.largest_component_size);
-                    let largest_squared = (summary.largest_component_size as u128)
-                        * (summary.largest_component_size as u128);
-                    let finite_second_moment =
-                        summary.raw_second_moment.saturating_sub(largest_squared);
-                    let defined = finite_vertices != 0;
-                    ctx.measure(
-                        "FiniteClusterSusceptibilityDefined",
-                        f64::from(u8::from(defined)),
-                    );
-                    if defined {
-                        ctx.measure(
-                            observable.name(),
-                            finite_second_moment as f64 / finite_vertices as f64,
-                        );
-                    }
-                }
-                StaticObservable::Wrapping => {
-                    debug_assert!(
-                        winding.is_some(),
-                        "constructor pairs winding observables with an embedding"
-                    );
-                    if let Some(winding) = winding {
-                        ctx.measure(
-                            observable.name(),
-                            f64::from(u8::from(winding.wrapping_component_count > 0)),
-                        );
-                    }
-                }
-                StaticObservable::WindingRank => {
-                    debug_assert!(
-                        winding.is_some(),
-                        "constructor pairs winding observables with an embedding"
-                    );
-                    if let Some(winding) = winding {
-                        ctx.measure(observable.name(), winding.largest_winding_rank as f64);
-                    }
-                }
-            }
+            observable.record(sample, ctx);
         }
-        for (name, &crosses) in self.boundary_names.iter().zip(boundary_outcomes) {
+        for (name, &crosses) in self.boundary_names.iter().zip(sample.boundary_outcomes()) {
             ctx.measure(name, f64::from(u8::from(crosses)));
         }
-    }
-
-    /// Evaluate every user-defined observable against one realization.
-    ///
-    /// Adapters call this immediately after [`Self::record`]; built-in
-    /// recording is unchanged, so plans without custom observables behave
-    /// exactly as in v2.
-    pub(crate) fn record_custom(
-        &self,
-        analysis: &AnalysisResult<'_>,
-        ctx: &mut Context<Xoshiro256PlusPlus>,
-    ) {
         for observable in &self.custom {
-            if let Some(value) = observable.evaluate(analysis) {
+            if let Some(value) = observable.evaluate(sample) {
                 ctx.measure(observable.name(), value);
             }
         }
@@ -400,6 +683,15 @@ mod tests {
         Context::new_with_binsize(Xoshiro256PlusPlus::seed_from_u64(1), 0, 1)
     }
 
+    fn sample<'a>(
+        total: usize,
+        summary: ComponentSummary,
+        outcomes: &'a [bool],
+        winding: Option<WindingSummary>,
+    ) -> SampleView<'a> {
+        SampleView::new(total, summary, outcomes, winding, None)
+    }
+
     #[test]
     fn records_units_total_vertex_normalization_and_multiple_queries() {
         let graph = build_chain(10, false);
@@ -408,7 +700,10 @@ mod tests {
             BoundaryQuery::new(&graph, &[1], &[8]).unwrap(),
         ]);
         let mut ctx = context();
-        plan.record(10, summary(6, 3, 14), &[true, false], None, &mut ctx);
+        plan.record(
+            &sample(10, summary(6, 3, 14), &[true, false], None),
+            &mut ctx,
+        );
         let values = ctx.finalize_measurements();
         assert_eq!(values["ActiveVertexCount"].mean, 6.0);
         assert_eq!(values["ActiveEdgeCount"].mean, 5.0);
@@ -431,14 +726,14 @@ mod tests {
             Vec::new(),
         );
         let mut empty = context();
-        plan.record(0, summary(0, 0, 0), &[], None, &mut empty);
+        plan.record(&sample(0, summary(0, 0, 0), &[], None), &mut empty);
         let values = empty.finalize_measurements();
         assert!(!values.contains_key("GiantFraction"));
         assert!(!values.contains_key("FiniteClusterSusceptibility"));
         assert_eq!(values["FiniteClusterSusceptibilityDefined"].mean, 0.0);
 
         let mut giant = context();
-        plan.record(4, summary(4, 4, 16), &[], None, &mut giant);
+        plan.record(&sample(4, summary(4, 4, 16), &[], None), &mut giant);
         let values = giant.finalize_measurements();
         assert_eq!(values["GiantFraction"].mean, 1.0);
         assert!(!values.contains_key("FiniteClusterSusceptibility"));
@@ -450,7 +745,7 @@ mod tests {
         let plan = ObservablePlan::new([StaticObservable::FiniteClusterSusceptibility], Vec::new());
         let mut ctx = context();
         // Components [3, 3, 1]: canonical tie policy removes one size-3 cluster.
-        plan.record(7, summary(7, 3, 19), &[], None, &mut ctx);
+        plan.record(&sample(7, summary(7, 3, 19), &[], None), &mut ctx);
         assert_eq!(
             ctx.finalize_measurements()["FiniteClusterSusceptibility"].mean,
             2.5
@@ -462,8 +757,8 @@ mod tests {
         let plan = ObservablePlan::new([StaticObservable::FiniteClusterSusceptibility], Vec::new());
         let mut ctx = context();
         // Remaining clusters are [1] and [2, 2], giving chi 1 and 2.
-        plan.record(4, summary(4, 3, 10), &[], None, &mut ctx);
-        plan.record(7, summary(7, 3, 17), &[], None, &mut ctx);
+        plan.record(&sample(4, summary(4, 3, 10), &[], None), &mut ctx);
+        plan.record(&sample(7, summary(7, 3, 17), &[], None), &mut ctx);
         let per_sample_mean = ctx.finalize_measurements()["FiniteClusterSusceptibility"].mean;
         assert_eq!(per_sample_mean, 1.5);
         assert_ne!(per_sample_mean, (1.0 + 8.0) / (1.0 + 4.0));
@@ -491,8 +786,11 @@ mod tests {
             ..winding
         };
         let mut ctx = context();
-        plan.record(4, summary(4, 4, 16), &[], Some(winding), &mut ctx);
-        plan.record(4, summary(4, 4, 16), &[], Some(contractible), &mut ctx);
+        plan.record(&sample(4, summary(4, 4, 16), &[], Some(winding)), &mut ctx);
+        plan.record(
+            &sample(4, summary(4, 4, 16), &[], Some(contractible)),
+            &mut ctx,
+        );
         let values = ctx.finalize_measurements();
         assert_eq!(values["Wrapping"].mean, 0.5);
         assert_eq!(values["WindingRank"].mean, 1.0);
@@ -522,11 +820,45 @@ mod tests {
             ]
         );
         let mut ctx = context();
-        plan.record(4, summary(4, 3, 11), &[], None, &mut ctx);
+        plan.record(&sample(4, summary(4, 3, 11), &[], None), &mut ctx);
         let values = ctx.finalize_measurements();
         // One sample per sweep, not two: the mean is unchanged by duplicates
         // but n_bins and stderr would silently double without collapsing.
         assert_eq!(values["LargestSize"].n_bins, 1);
+    }
+
+    #[derive(Debug)]
+    struct MomentConsumer;
+
+    impl ScalarObservable for MomentConsumer {
+        fn name(&self) -> &str {
+            "MomentConsumer"
+        }
+
+        fn requires_exact_moments(&self) -> bool {
+            true
+        }
+
+        fn evaluate(&self, sample: &SampleView<'_>) -> Option<f64> {
+            Some(sample.summary().raw_second_moment as f64)
+        }
+    }
+
+    #[test]
+    fn custom_capabilities_feed_plan_validation_and_winding_requests() {
+        let plan = ObservablePlan::new(Vec::<StaticObservable>::new(), Vec::new())
+            .with_custom([
+                std::sync::Arc::new(MomentConsumer) as std::sync::Arc<dyn ScalarObservable>
+            ])
+            .expect("plan");
+        const EXACT_LIMIT: usize = 94_906_265;
+        assert!(plan.validate(EXACT_LIMIT).is_ok());
+        assert_eq!(
+            plan.validate(EXACT_LIMIT + 1),
+            Err(ObservablePlanError::InexactMomentConversion {
+                total_vertices: EXACT_LIMIT + 1,
+            }),
+        );
     }
 
     #[test]

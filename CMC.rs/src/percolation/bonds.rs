@@ -20,8 +20,8 @@
 use core::fmt;
 
 use super::{
-    analyze, AnalysisError, AnalysisResult, BoundaryQuery, ComponentWorkspace, EdgeActivity,
-    VertexActivity,
+    analyze, analyze_with_labels, AnalysisError, AnalysisResult, BoundaryQuery, ComponentWorkspace,
+    EdgeActivity, VertexActivity,
 };
 use crate::{EdgeId, UndirectedGraphView};
 
@@ -150,6 +150,36 @@ pub fn analyze_bonds<'a, G>(
 where
     G: UndirectedGraphView,
 {
+    analyze_bonds_inner(graph, open_bonds, queries, workspace, false)
+}
+
+/// [`analyze_bonds`] with canonical per-vertex labels materialized.
+///
+/// Label arrays are what custom observables declaring
+/// [`crate::ScalarObservable::requires_labels`] consume; the plain entry point
+/// skips them.
+pub fn analyze_bonds_with_labels<'a, G>(
+    graph: &G,
+    open_bonds: &[bool],
+    queries: &[BoundaryQuery],
+    workspace: &'a mut ComponentWorkspace,
+) -> Result<AnalysisResult<'a>, AnalysisError>
+where
+    G: UndirectedGraphView,
+{
+    analyze_bonds_inner(graph, open_bonds, queries, workspace, true)
+}
+
+fn analyze_bonds_inner<'a, G>(
+    graph: &G,
+    open_bonds: &[bool],
+    queries: &[BoundaryQuery],
+    workspace: &'a mut ComponentWorkspace,
+    with_labels: bool,
+) -> Result<AnalysisResult<'a>, AnalysisError>
+where
+    G: UndirectedGraphView,
+{
     if open_bonds.len() != graph.edge_count() {
         return Err(AnalysisError::EdgeActivityLength {
             expected: graph.edge_count(),
@@ -161,7 +191,11 @@ where
         graph.edge_count(),
         open_bonds,
     );
-    analyze(graph, &configuration, &configuration, queries, workspace)
+    if with_labels {
+        analyze_with_labels(graph, &configuration, &configuration, queries, workspace)
+    } else {
+        analyze(graph, &configuration, &configuration, queries, workspace)
+    }
 }
 
 /// Owned record of *which* physical edges are open in one bond draw.
