@@ -1,9 +1,10 @@
 use core::fmt;
+use std::sync::Arc;
 
 use carlo_rs::Context;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-use super::{BoundaryQuery, ComponentSummary, WindingSummary};
+use super::{AnalysisResult, BoundaryQuery, ComponentSummary, WindingSummary};
 
 /// Scalar observables recorded for each independent static realization.
 ///
@@ -70,6 +71,28 @@ impl StaticObservable {
     }
 }
 
+/// Open extension point for a user-defined scalar observable.
+///
+/// The built-in [`StaticObservable`] set stays the zero-cost default path;
+/// this trait is how downstream crates add a column without editing CMC.rs.
+/// Implementations are evaluated once per realized sample from the shared
+/// [`AnalysisResult`] (summary, query outcomes, optional labels). Returning
+/// `None` leaves the column absent for that sample, matching the built-in
+/// undefined-observable convention (`n_bins` below the sweep count).
+///
+/// Names are validated when the plan is assembled with
+/// [`ObservablePlan::with_custom`]: they must be non-empty and must not
+/// collide with a planned built-in, the
+/// `FiniteClusterSusceptibilityDefined` indicator, a boundary column, or
+/// another custom observable.
+pub trait CustomObservable: fmt::Debug + Send + Sync {
+    /// Stable Results column name.
+    fn name(&self) -> &str;
+
+    /// Evaluate one realization; `None` skips this sample for this column.
+    fn evaluate(&self, analysis: &AnalysisResult<'_>) -> Option<f64>;
+}
+
 /// Explicit requests for scalar component observables and boundary events.
 ///
 /// Duplicate requests are collapsed, so every planned observable records
@@ -84,6 +107,7 @@ impl StaticObservable {
 #[derive(Clone, Debug)]
 pub struct ObservablePlan {
     observables: Vec<StaticObservable>,
+    custom: Vec<Arc<dyn CustomObservable>>,
     boundary_queries: Vec<BoundaryQuery>,
     boundary_names: Vec<String>,
 }
@@ -105,6 +129,7 @@ impl ObservablePlan {
             .collect();
         Self {
             observables,
+            custom: Vec::new(),
             boundary_queries,
             boundary_names,
         }
@@ -127,6 +152,62 @@ impl ObservablePlan {
 
     pub fn observables(&self) -> &[StaticObservable] {
         &self.observables
+    }
+
+    /// Add user-defined scalar observables to this plan.
+    ///
+    /// Names must be non-empty and unique across built-ins, the
+    /// `FiniteClusterSusceptibilityDefined` indicator, boundary columns,
+    /// and one another. The returned plan is otherwise unchanged, so a
+    /// failed assembly leaves the caller's original plan untouched.
+    pub fn with_custom(
+        mut self,
+        observables: impl IntoIterator<Item = Arc<dyn CustomObservable>>,
+    ) -> Result<Self, ObservablePlanError> {
+        let custom: Vec<Arc<dyn CustomObservable>> = observables.into_iter().collect();
+        let reserved = self.reserved_names();
+        let mut seen: Vec<String> = Vec::with_capacity(custom.len());
+        for observable in &custom {
+            let name = observable.name();
+            if name.is_empty() {
+                return Err(ObservablePlanError::EmptyCustomName);
+            }
+            if seen.iter().any(|existing| existing == name) {
+                return Err(ObservablePlanError::DuplicateCustomName {
+                    name: name.to_owned(),
+                });
+            }
+            if reserved.contains(&name) {
+                return Err(ObservablePlanError::CustomNameCollision {
+                    name: name.to_owned(),
+                });
+            }
+            seen.push(name.to_owned());
+        }
+        self.custom = custom;
+        Ok(self)
+    }
+
+    /// The user-defined observables attached to this plan.
+    pub fn custom_observables(&self) -> &[Arc<dyn CustomObservable>] {
+        &self.custom
+    }
+
+    /// Whether any user-defined observable is attached.
+    pub fn has_custom(&self) -> bool {
+        !self.custom.is_empty()
+    }
+
+    fn reserved_names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.observables.iter().map(|value| value.name()).collect();
+        if self
+            .observables
+            .contains(&StaticObservable::FiniteClusterSusceptibility)
+        {
+            names.push("FiniteClusterSusceptibilityDefined");
+        }
+        names.extend(self.boundary_names.iter().map(String::as_str));
+        names
     }
 
     pub fn boundary_queries(&self) -> &[BoundaryQuery] {
@@ -239,11 +320,40 @@ impl ObservablePlan {
             ctx.measure(name, f64::from(u8::from(crosses)));
         }
     }
+
+    /// Evaluate every user-defined observable against one realization.
+    ///
+    /// Adapters call this immediately after [`Self::record`]; built-in
+    /// recording is unchanged, so plans without custom observables behave
+    /// exactly as in v2.
+    pub(crate) fn record_custom(
+        &self,
+        analysis: &AnalysisResult<'_>,
+        ctx: &mut Context<Xoshiro256PlusPlus>,
+    ) {
+        for observable in &self.custom {
+            if let Some(value) = observable.evaluate(analysis) {
+                ctx.measure(observable.name(), value);
+            }
+        }
+    }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ObservablePlanError {
-    InexactMomentConversion { total_vertices: usize },
+    InexactMomentConversion {
+        total_vertices: usize,
+    },
+    /// A custom observable returned an empty column name.
+    EmptyCustomName,
+    /// Two custom observables use the same column name.
+    DuplicateCustomName {
+        name: String,
+    },
+    /// A custom observable collides with a built-in or boundary column.
+    CustomNameCollision {
+        name: String,
+    },
 }
 
 impl fmt::Display for ObservablePlanError {
@@ -252,6 +362,14 @@ impl fmt::Display for ObservablePlanError {
             Self::InexactMomentConversion { total_vertices } => write!(
                 formatter,
                 "moment observables may exceed exact f64 integer range for V={total_vertices}"
+            ),
+            Self::EmptyCustomName => write!(formatter, "custom observable names must not be empty"),
+            Self::DuplicateCustomName { name } => {
+                write!(formatter, "duplicate custom observable name {name:?}")
+            }
+            Self::CustomNameCollision { name } => write!(
+                formatter,
+                "custom observable name {name:?} collides with a built-in or boundary column"
             ),
         }
     }

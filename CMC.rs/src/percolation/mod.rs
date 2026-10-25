@@ -121,7 +121,7 @@ pub use network::{
     DuplicateEdgePolicy, EdgeListSpec, NetworkError, NetworkInputError, NetworkPercolationError,
     NetworkProfile, RandomFailureMC, SelfLoopPolicy,
 };
-pub use observable::{ObservablePlan, ObservablePlanError, StaticObservable};
+pub use observable::{CustomObservable, ObservablePlan, ObservablePlanError, StaticObservable};
 pub use potts_phase::{
     critical_probability, phase_scan, PottsPhaseError, PottsPhaseEstimate, PottsPhaseSpec,
 };

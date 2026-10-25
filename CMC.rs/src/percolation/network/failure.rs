@@ -327,6 +327,7 @@ impl MonteCarlo for RandomFailureMC {
             None,
             ctx,
         );
+        plan.record_custom(&result, ctx);
         Self::record_degree_observables(scratch, profile, labels, largest, ctx);
     }
 

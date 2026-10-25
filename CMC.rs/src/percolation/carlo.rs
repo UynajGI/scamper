@@ -393,6 +393,7 @@ impl MonteCarlo for StaticPercolationMC {
             winding,
             ctx,
         );
+        self.plan.record_custom(&result, ctx);
     }
 
     fn name(&self) -> &'static str {

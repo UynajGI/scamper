@@ -325,7 +325,7 @@ roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
 
 | Stage | Status |
 |---|---|
-| A1 Observable trait/open plan | Not started |
+| A1 Observable trait/open plan | In progress (A1a merged: open `CustomObservable` extension) |
 | A2 SampleView/OccupationLaw/WeightLaw | Not started |
 | A3 generic adapter/estimator/C0 | Not started |
 | A4 policy traits | Not started |

@@ -81,7 +81,7 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::continuum::{candidate_pairs_from_configuration, CandidatePairGraph, ContinuumError};
 use super::{
-    analyze, ComponentSummary, ComponentWorkspace, EdgeActivity, ObservablePlan,
+    analyze, AnalysisResult, ComponentSummary, ComponentWorkspace, EdgeActivity, ObservablePlan,
     ObservablePlanError, VertexActivity,
 };
 use crate::particle::{OrthorhombicCell, ParticleConfiguration};
@@ -883,6 +883,7 @@ impl<const D: usize> MonteCarlo for BooleanPercolationMC<D> {
             // absent for this sample (the defined indicator records 0).
             self.plan
                 .record(0, ComponentSummary::EMPTY, &self.vacuum_outcomes, None, ctx);
+            self.plan.record_custom(&AnalysisResult::empty(), ctx);
             return;
         }
         let graph = overlap_pairs(&self.coordinates, &self.cell, &self.radii)
@@ -905,6 +906,7 @@ impl<const D: usize> MonteCarlo for BooleanPercolationMC<D> {
             None,
             ctx,
         );
+        self.plan.record_custom(&result, ctx);
     }
 
     fn name(&self) -> &'static str {

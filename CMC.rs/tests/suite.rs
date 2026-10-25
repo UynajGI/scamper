@@ -142,6 +142,8 @@ mod percolation_attack;
 mod percolation_components;
 #[path = "physics/percolation_correlated.rs"]
 mod percolation_correlated;
+#[path = "physics/percolation_custom_observable.rs"]
+mod percolation_custom_observable;
 #[path = "physics/percolation_heterogeneous.rs"]
 mod percolation_heterogeneous;
 #[path = "physics/percolation_heterogeneous_zscore.rs"]

@@ -390,6 +390,7 @@ impl MonteCarlo for EdwardsSokalMC {
             None,
             ctx,
         );
+        plan.record_custom(&result, ctx);
     }
 
     fn name(&self) -> &'static str {

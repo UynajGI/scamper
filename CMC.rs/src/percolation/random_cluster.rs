@@ -303,6 +303,7 @@ impl MonteCarlo for RandomClusterMC {
             None,
             ctx,
         );
+        self.plan.record_custom(&result, ctx);
     }
 
     fn name(&self) -> &'static str {
