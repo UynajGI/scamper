@@ -265,6 +265,59 @@ where
     })
 }
 
+/// One measured two-point correlation value at a distance.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CorrelationPoint {
+    /// Distance in lattice spacings.
+    pub distance: f64,
+    /// Non-negative correlation value `C(r)`.
+    pub value: f64,
+}
+
+/// Second-moment correlation length from a truncated correlation function.
+///
+/// Definitional convention: with `d` spatial dimensions and non-negative
+/// `C(r)`,
+/// `xi^2 = sum_r r^2 C(r) / (2 d sum_r C(r))`,
+/// the standard second-moment estimator (Amit & Martin-Mayor). Distances
+/// are in lattice spacings; the caller is responsible for truncating the
+/// sum where the signal ends (negative values are rejected rather than
+/// silently clipping). `C(0)` contributes zero to the numerator, so
+/// including or omitting it changes only the denominator.
+pub fn second_moment_correlation_length(
+    points: &[CorrelationPoint],
+    dimensions: usize,
+) -> Result<f64, FssError> {
+    if dimensions == 0 {
+        return Err(FssError::Dimensions { dimensions });
+    }
+    if points.is_empty() {
+        return Err(FssError::EmptyCorrelation);
+    }
+    let mut numerator = 0.0;
+    let mut denominator = 0.0;
+    for (index, point) in points.iter().enumerate() {
+        if !point.distance.is_finite() || point.distance < 0.0 {
+            return Err(FssError::Distance {
+                index,
+                distance: point.distance,
+            });
+        }
+        if !point.value.is_finite() || point.value < 0.0 {
+            return Err(FssError::CorrelationValue {
+                index,
+                value: point.value,
+            });
+        }
+        numerator += point.distance * point.distance * point.value;
+        denominator += point.value;
+    }
+    if denominator <= 0.0 {
+        return Err(FssError::UndefinedCorrelation);
+    }
+    Ok((numerator / (2.0 * dimensions as f64 * denominator)).sqrt())
+}
+
 /// Binder cumulant and its delta-method standard error.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BinderCumulant {
@@ -381,6 +434,19 @@ pub enum FssError {
     },
     EmptyCurve,
     EmptySamples,
+    EmptyCorrelation,
+    Dimensions {
+        dimensions: usize,
+    },
+    Distance {
+        index: usize,
+        distance: f64,
+    },
+    CorrelationValue {
+        index: usize,
+        value: f64,
+    },
+    UndefinedCorrelation,
     Resamples {
         resamples: usize,
     },
@@ -433,6 +499,30 @@ impl core::fmt::Display for FssError {
             ),
             Self::EmptyCurve => write!(formatter, "finite-size curve has no points"),
             Self::EmptySamples => write!(formatter, "bootstrap needs at least one sample"),
+            Self::EmptyCorrelation => {
+                write!(formatter, "correlation length needs at least one point")
+            }
+            Self::Dimensions { dimensions } => {
+                write!(formatter, "dimensions must be at least 1, got {dimensions}")
+            }
+            Self::Distance { index, distance } => {
+                write!(
+                    formatter,
+                    "point {index}: distance {distance} is not finite and non-negative"
+                )
+            }
+            Self::CorrelationValue { index, value } => {
+                write!(
+                    formatter,
+                    "point {index}: correlation {value} is not finite and non-negative"
+                )
+            }
+            Self::UndefinedCorrelation => {
+                write!(
+                    formatter,
+                    "correlation length is undefined with zero total weight"
+                )
+            }
             Self::Resamples { resamples } => {
                 write!(
                     formatter,
@@ -534,6 +624,75 @@ mod tests {
         assert!(matches!(
             bootstrap(&[1.0, 2.0], 10, 0, |_| f64::NAN),
             Err(FssError::Statistic { .. })
+        ));
+    }
+
+    #[test]
+    fn correlation_length_matches_the_flat_correlation_arithmetic() {
+        let points: Vec<CorrelationPoint> = (0..=10)
+            .map(|r| CorrelationPoint {
+                distance: f64::from(r),
+                value: 1.0,
+            })
+            .collect();
+        let xi = second_moment_correlation_length(&points, 1).expect("correlation length");
+        // sum r^2 = 385 over 11 points, divided by 2*d*11.
+        assert!((xi - (385.0_f64 / 22.0).sqrt()).abs() < 1e-15);
+    }
+
+    #[test]
+    fn correlation_length_recovers_an_exponential_decay() {
+        let decay = 2.0_f64;
+        let points: Vec<CorrelationPoint> = (0..=6_000)
+            .map(|step| {
+                let r = step as f64 * 0.01;
+                CorrelationPoint {
+                    distance: r,
+                    value: (-r / decay).exp(),
+                }
+            })
+            .collect();
+        let xi = second_moment_correlation_length(&points, 1).expect("correlation length");
+        assert!((xi - decay).abs() < 0.01, "xi = {xi} vs {decay}");
+    }
+
+    #[test]
+    fn correlation_length_rejections_are_typed() {
+        let zero = [CorrelationPoint {
+            distance: 0.0,
+            value: 0.0,
+        }];
+        assert!(matches!(
+            second_moment_correlation_length(&zero, 1),
+            Err(FssError::UndefinedCorrelation)
+        ));
+        assert!(matches!(
+            second_moment_correlation_length(&zero, 0),
+            Err(FssError::Dimensions { dimensions: 0 })
+        ));
+        assert!(matches!(
+            second_moment_correlation_length(&[], 1),
+            Err(FssError::EmptyCorrelation)
+        ));
+        assert!(matches!(
+            second_moment_correlation_length(
+                &[CorrelationPoint {
+                    distance: -1.0,
+                    value: 1.0
+                }],
+                1
+            ),
+            Err(FssError::Distance { index: 0, .. })
+        ));
+        assert!(matches!(
+            second_moment_correlation_length(
+                &[CorrelationPoint {
+                    distance: 1.0,
+                    value: -0.1
+                }],
+                1
+            ),
+            Err(FssError::CorrelationValue { index: 0, .. })
         ));
     }
 

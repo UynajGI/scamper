@@ -110,8 +110,8 @@ pub use first_passage_shape::{
     ShapeEstimator, ShapeGeometry, ShapeSampler, ShapeTarget, SHAPE_SIDE_CAP,
 };
 pub use fss::{
-    bootstrap, crossing, BinderCumulant, BinderEstimator, BootstrapInterval, CrossingEstimate,
-    FssCurve, FssError, FssPoint,
+    bootstrap, crossing, second_moment_correlation_length, BinderCumulant, BinderEstimator,
+    BootstrapInterval, CorrelationPoint, CrossingEstimate, FssCurve, FssError, FssPoint,
 };
 pub use law::{BondBernoulli, MixedBernoulli, OccupationLaw, SamplingError, SiteBernoulli};
 pub use long_range::{

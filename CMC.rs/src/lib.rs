@@ -145,9 +145,9 @@ pub use percolation::{
     CandidateSampling, ChemicalDistanceError, ChemicalDistanceEstimate, ChemicalDistanceEstimator,
     ChemicalDistanceOutcome, ChemicalDistanceSampler, ChemicalDistanceWorkspace, ClusterQ,
     ComponentLabel, ComponentSummary, ComponentWinding, ComponentWorkspace, ContinuumEmbedding,
-    ContinuumError, ContinuumWindingError, CoreThresholds, CrossingEstimate, DegreeAttackMC,
-    DegreeScratch, DiameterLadder, DiameterLadderError, DiameterRegime, DiameterRow,
-    DiameterTracking, DirectedAnalysisError, Direction, DpProcessError, DpSeedPolicy,
+    ContinuumError, ContinuumWindingError, CoreThresholds, CorrelationPoint, CrossingEstimate,
+    DegreeAttackMC, DegreeScratch, DiameterLadder, DiameterLadderError, DiameterRegime,
+    DiameterRow, DiameterTracking, DirectedAnalysisError, Direction, DpProcessError, DpSeedPolicy,
     DuplicateEdgePolicy, EdgeActivity, EdgeListSpec, EdgeUniverse, EdgeWeightLaw,
     EdwardsSokalError, EdwardsSokalMC, ExternalBondConfiguration, FirstPassageError,
     FirstPassageOutcome, FirstPassageWorkspace, FssCurve, FssError, FssPoint, GeodesicAging,
@@ -173,13 +173,14 @@ pub use percolation::{
 };
 pub use percolation::{
     bootstrap, bracket, critical_probability, crossing, flip_bracket, inverse_normal_cdf,
-    phase_scan, ChayesMachtaError, ChayesMachtaMC, CorrelatedError, CorrelatedFieldSpec,
-    CorrelatedGaussianField, CorrelatedPercolationMC, CorrelatedSiteLaw, CorrelatedThresholdError,
-    FlipBracket, FractalDimensionEstimate, HarrisBracket, IntervalEstimate, LinearFit, NuEstimate,
-    PcExtrapolation, PcShiftNuEstimate, PcShiftRung, PottsPhaseError, PottsPhaseEstimate,
-    PottsPhaseSpec, RungObservables, RungSlope, SweenyAcceptance, SweenyError, SweenyMC,
-    SweenyProposal, SweenyRates, ThresholdLadder, ThresholdLadderSpec, WeinribHalperinError,
-    WeinribHalperinMap, BOOTSTRAP_RESAMPLES, PEAK_FIT_RADIUS,
+    phase_scan, second_moment_correlation_length, ChayesMachtaError, ChayesMachtaMC,
+    CorrelatedError, CorrelatedFieldSpec, CorrelatedGaussianField, CorrelatedPercolationMC,
+    CorrelatedSiteLaw, CorrelatedThresholdError, FlipBracket, FractalDimensionEstimate,
+    HarrisBracket, IntervalEstimate, LinearFit, NuEstimate, PcExtrapolation, PcShiftNuEstimate,
+    PcShiftRung, PottsPhaseError, PottsPhaseEstimate, PottsPhaseSpec, RungObservables, RungSlope,
+    SweenyAcceptance, SweenyError, SweenyMC, SweenyProposal, SweenyRates, ThresholdLadder,
+    ThresholdLadderSpec, WeinribHalperinError, WeinribHalperinMap, BOOTSTRAP_RESAMPLES,
+    PEAK_FIT_RADIUS,
 };
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
