@@ -283,18 +283,18 @@ EXPLORATORY aging statistic, and typed rejections) and its independent review PA
 Validated. L3's independent review PASSED 2026-10-24
 (no Blocker/Major; the four minors — realization-count capacity panic,
 overlapping row RNG streams, SE wording, and validation-order wording —
-are fixed), so L3 is Validated. The C track is delivered as Experimental:
-C1's field/adapter gates are green, C2's 256-replica ladder gives p_c(inf)=0.5457 (corrected CI
-0.5355-0.5558, ~0.65 sigma from Pruessner's 0.54299), and
-C3's analytic map is exact while its statistical nu certification is
-open. The Q track is delivered as Experimental: Q1 passes exact-FK marginals for q=0.5-3, the q=1 bitwise gate, and a
-rate-level detailed-balance audit; Q2 passes q=2/3 histogram/colour
-invariance and agrees with Q1 and R3 at q=2, and
-Q3 anchors the exact 2D self-dual curve with an explicitly exploratory
-phase-gap scan. Independent review of C/Q remains; the N5 audit is recorded in
-`docs/reviews/2026-10-24-v2-final-audit.md` (10 Validated + 6
-Experimental, with C2's threshold-table limitation and the C3/Q2/Q3
-research-grade items explicit).
+are fixed), so L3 is Validated. C1 and C2 are Validated: the
+independent C/Q review passed C1, and its C2 bootstrap-CI/anchor Majors
+are fixed (256-replica p_c(inf)=0.5457, corrected CI 0.5355-0.5558,
+~0.65 sigma from 0.54299). C3 remains Experimental (analytic map exact;
+statistical nu open). Q1 is Validated: exact-FK marginals for q=0.5-3,
+q=1 bitwise, fuzz, and the rate-level detailed-balance audit pass, and
+the review's q<1 shortcut Blocker is fixed. Q2 and Q3 remain
+Experimental: Q2 passes invariance and R3 comparisons but still needs a
+committed exact joint-stationarity gate; Q3 anchors the exact 2D
+self-dual curve with an exploratory phase scan. The N5 audit is recorded
+in `docs/reviews/2026-10-24-v2-final-audit.md` (13 Validated + 3
+Experimental).
 
 ## 9. Archived anchors for v2 (already in docs/ref/)
 
