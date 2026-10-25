@@ -306,13 +306,7 @@ impl MonteCarlo for RandomClusterMC {
             )
         }
         .expect("constructor prepared matching analysis domains");
-        let sample = SampleView::new(
-            self.lattice.vertex_count(),
-            result.summary(),
-            result.query_outcomes(),
-            None,
-            result.labels(),
-        );
+        let sample = SampleView::from_analysis(&result, self.lattice.vertex_count(), None);
         self.plan.record(&sample, ctx);
     }
 

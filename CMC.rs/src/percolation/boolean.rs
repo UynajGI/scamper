@@ -908,13 +908,7 @@ impl<const D: usize> MonteCarlo for BooleanPercolationMC<D> {
             )
         }
         .expect("constructor prepared matching analysis domains");
-        let sample = SampleView::new(
-            graph.vertex_count(),
-            result.summary(),
-            result.query_outcomes(),
-            None,
-            result.labels(),
-        );
+        let sample = SampleView::from_analysis(&result, graph.vertex_count(), None);
         self.plan.record(&sample, ctx);
     }
 

@@ -320,13 +320,7 @@ impl MonteCarlo for RandomFailureMC {
         let vertices = lattice.vertex_count();
         let largest = result.summary().largest_component;
         let labels = result.labels().expect("labels were requested");
-        let sample = SampleView::new(
-            vertices,
-            result.summary(),
-            result.query_outcomes(),
-            None,
-            Some(labels),
-        );
+        let sample = SampleView::from_analysis(&result, vertices, None);
         plan.record(&sample, ctx);
         Self::record_degree_observables(scratch, profile, labels, largest, ctx);
     }

@@ -394,13 +394,7 @@ impl MonteCarlo for EdwardsSokalMC {
             )
         }
         .expect("constructor validated FK-draw and plan domains");
-        let view = SampleView::new(
-            lattice.vertex_count(),
-            result.summary(),
-            result.query_outcomes(),
-            None,
-            result.labels(),
-        );
+        let view = SampleView::from_analysis(&result, lattice.vertex_count(), None);
         plan.record(&view, ctx);
     }
 
