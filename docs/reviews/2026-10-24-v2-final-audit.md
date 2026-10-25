@@ -98,9 +98,9 @@ support their strongest claim; the limitation must be explicit.
    q=8 (>5/9), but q=6 is unresolved and the statistic is descriptive,
    not a latent heat; it remains Experimental.
 4. **F3 minors**: the target-local saturation flag, diagonal-bound
-   wording, vertex-prefix aging doc, post-rejection weight state, and
-   parallel/source==target tests are FIXED. Still open: `geodesic_path`
-   validation wording and the estimator's inf/NaN domain.
+   wording, vertex-prefix aging doc, post-rejection weight state,
+   parallel/source==target tests, and the estimator's negative/NaN/inf
+   domain are FIXED. Still open: `geodesic_path` validation wording.
 5. **Reviews**: the independent C/Q review passed C1, Q2's algorithm, and
    Q3; its C2/Q1 defects are fixed. C3's replacement estimator and the C2
    corrected CI warrant an independent re-review before C2 is treated as
@@ -125,8 +125,9 @@ support their strongest claim; the limitation must be explicit.
   scan passes.
 - Stage-specific runs: L1 9/9, L2 9/9, L3 7/7, F3 7/7, C 2/2 (+12 unit
   tests), Q 3/3, Q3 2/2.
-- Allocation probes: the existing percolation probes remain zero; no new
-  probe was added for C/Q (follow-up).
+- Allocation probes: C1 (16x16 and 1D-64) and Q1 (q=2 and q=0.5) now
+  report 0.000 allocations/bytes per sweep+measure; the existing
+  percolation/L1/L2 probes remain zero.
 - Anchors: Schrenk 2013, Pruessner 2018, Saberi 2016, Geyer 2015,
   Biskup 2004, ADH 2017 are archived; Wu 1982 / FK duality has a new
   markdown anchor note and bibliography row.

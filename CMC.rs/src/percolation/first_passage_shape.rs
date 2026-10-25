@@ -506,6 +506,11 @@ impl ShapeEstimator {
                 actual: profile.len(),
             });
         }
+        for (index, &value) in profile.iter().enumerate() {
+            if !value.is_finite() || value < 0.0 {
+                return Err(ShapeError::ProfileValue { index, value });
+            }
+        }
         self.samples += 1;
         for ((sum, sum_sq), &value) in self.sum.iter_mut().zip(self.sum_sq.iter_mut()).zip(profile)
         {
@@ -864,6 +869,8 @@ pub enum ShapeError {
     ZeroWeight { edge: usize },
     /// A profile whose length differs from the estimator's target count.
     ProfileLength { expected: usize, actual: usize },
+    /// A profile entry that is negative, NaN, or infinite.
+    ProfileValue { index: usize, value: f64 },
     /// A zero-target estimator.
     NoTargets,
     /// A source outside the graph's dense index range.
@@ -923,6 +930,10 @@ impl fmt::Display for ShapeError {
             Self::ProfileLength { expected, actual } => write!(
                 formatter,
                 "profile has {actual} entries, expected {expected} (the target count)"
+            ),
+            Self::ProfileValue { index, value } => write!(
+                formatter,
+                "profile entry {index} is {value}: passage times must be finite and non-negative"
             ),
             Self::NoTargets => write!(formatter, "the estimator needs at least one target"),
             Self::SourceDomain { source, vertices } => {

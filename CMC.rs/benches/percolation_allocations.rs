@@ -1781,6 +1781,112 @@ fn report_chemical_distance_case() {
     );
 }
 
+/// C1 probe: a correlated-field adapter sweep + measure must be
+/// allocation-free in steady state — the FFT field, spectrum, masks, and
+/// F3 analyzer workspace are reserved at construction.
+fn report_correlated_case() {
+    use cmc_rs::{
+        build_chain, build_square, CorrelatedPercolationMC, CorrelatedSiteLaw, ObservablePlan,
+    };
+    let cases = [
+        (
+            "square-2d-16",
+            build_square(16, 16, true),
+            vec![16_usize, 16],
+        ),
+        ("chain-1d-64", build_chain(64, true), vec![64_usize]),
+    ];
+    for (label, lattice, sides) in cases {
+        let law = CorrelatedSiteLaw::new(&sides, 1.5, 0.5).expect("probe law");
+        let mut adapter =
+            CorrelatedPercolationMC::new(lattice, law, ObservablePlan::all(Vec::new()))
+                .expect("probe adapter");
+        let mut context = Context::new_with_binsize(
+            Xoshiro256PlusPlus::seed_from_u64(0x0043_4f52),
+            0,
+            ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+        );
+        for _ in 0..ADAPTER_WARMUP {
+            adapter.sweep(&mut context);
+            adapter.measure(&mut context);
+        }
+        let info = measure(|| {
+            for _ in 0..ALLOCATION_SAMPLES {
+                adapter.sweep(&mut context);
+                adapter.measure(&mut context);
+                std::hint::black_box(&mut context);
+            }
+        });
+        assert_eq!(
+            info.count_total, 0,
+            "correlated-field sweeps allocated {} times in steady state",
+            info.count_total
+        );
+        eprintln!(
+            "CORRELATED_ALLOC topology={} sides={sides:?} V={} measured_sweeps={} \
+             allocations_per_sweep={:.3} allocated_bytes_per_sweep={:.3} \
+             peak_live_allocations={} peak_live_bytes={}",
+            label,
+            adapter.lattice().vertex_count(),
+            ALLOCATION_SAMPLES,
+            info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.count_max,
+            info.bytes_max,
+        );
+    }
+}
+
+/// Q1 probe: a Sweeny sweep + measure must be allocation-free in steady
+/// state (the spanning forest, masks, and analyzer workspace are reserved
+/// at construction). q=2 and the q<1 path exercise both shortcut orders.
+fn report_sweeny_case() {
+    use cmc_rs::{build_square, ObservablePlan, SweenyAcceptance, SweenyMC};
+    for &(label, q) in &[("q2", 2.0_f64), ("q0.5", 0.5)] {
+        let lattice = build_square(8, 8, true);
+        let mut chain = SweenyMC::new(
+            lattice,
+            q,
+            0.45,
+            SweenyAcceptance::HeatBath,
+            ObservablePlan::all(Vec::new()),
+        )
+        .expect("probe chain");
+        let mut context = Context::new_with_binsize(
+            Xoshiro256PlusPlus::seed_from_u64(0x0057_4545),
+            0,
+            ADAPTER_WARMUP + ALLOCATION_SAMPLES + 1,
+        );
+        for _ in 0..ADAPTER_WARMUP {
+            chain.sweep(&mut context);
+            chain.measure(&mut context);
+        }
+        let info = measure(|| {
+            for _ in 0..ALLOCATION_SAMPLES {
+                chain.sweep(&mut context);
+                chain.measure(&mut context);
+                std::hint::black_box(&mut context);
+            }
+        });
+        assert_eq!(
+            info.count_total, 0,
+            "Sweeny sweeps allocated {} times in steady state",
+            info.count_total
+        );
+        eprintln!(
+            "SWEENY_ALLOC topology=square-2d-8 {label} V={} measured_sweeps={} \
+             allocations_per_sweep={:.3} allocated_bytes_per_sweep={:.3} \
+             peak_live_allocations={} peak_live_bytes={}",
+            chain.lattice().vertex_count(),
+            ALLOCATION_SAMPLES,
+            info.count_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.bytes_total as f64 / ALLOCATION_SAMPLES as f64,
+            info.count_max,
+            info.bytes_max,
+        );
+    }
+}
+
 fn main() {
     report_vec_bool_probe();
     report_topology_view_probe();
@@ -1790,6 +1896,8 @@ fn main() {
     report_first_passage_observables_probe();
     report_long_range_case();
     report_chemical_distance_case();
+    report_correlated_case();
+    report_sweeny_case();
     let benchmark_cases = cases();
     for case in &benchmark_cases {
         report_law_case(case);

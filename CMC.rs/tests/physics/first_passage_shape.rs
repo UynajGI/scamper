@@ -750,6 +750,18 @@ fn typed_rejections_leave_state_untouched() {
     assert!(matches!(ShapeEstimator::new(0), Err(ShapeError::NoTargets)));
     let mut estimator = ShapeEstimator::new(1).expect("estimator");
     estimator.add(&profile).expect("matching add");
+    assert!(matches!(
+        estimator.add(&[f64::NAN]),
+        Err(ShapeError::ProfileValue { index: 0, value }) if value.is_nan()
+    ));
+    assert!(matches!(
+        estimator.add(&[-1.0]),
+        Err(ShapeError::ProfileValue { index: 0, value }) if value == -1.0
+    ));
+    assert!(matches!(
+        estimator.add(&[f64::INFINITY]),
+        Err(ShapeError::ProfileValue { index: 0, .. })
+    ));
     assert_eq!(estimator.samples(), 1);
     assert!(estimator.estimate().is_none());
     assert!(matches!(
