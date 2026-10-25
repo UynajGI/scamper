@@ -190,6 +190,136 @@ pub fn crossing(lower: &FssCurve, upper: &FssCurve) -> Result<CrossingEstimate, 
     Err(FssError::NoCrossing)
 }
 
+/// Finite-size scaling window `(p_c, nu, exponent)`.
+///
+/// `coordinate` is `(p - p_c) L^{1/nu}`; `scaled_value` is
+/// `value * L^{-exponent}`. Exponent fitting is deliberately caller-driven:
+/// score candidate windows with [`collapse_residual`] instead of hiding a
+/// nonlinear optimizer here.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScalingWindow {
+    pc: f64,
+    nu: f64,
+    exponent: f64,
+}
+
+impl ScalingWindow {
+    pub fn new(pc: f64, nu: f64, exponent: f64) -> Result<Self, FssError> {
+        if !pc.is_finite() || !(0.0..=1.0).contains(&pc) {
+            return Err(FssError::Window {
+                reason: "p_c must be finite and inside [0, 1]",
+            });
+        }
+        if !nu.is_finite() || nu <= 0.0 {
+            return Err(FssError::Window {
+                reason: "nu must be finite and strictly positive",
+            });
+        }
+        if !exponent.is_finite() {
+            return Err(FssError::Window {
+                reason: "the value exponent must be finite",
+            });
+        }
+        Ok(Self { pc, nu, exponent })
+    }
+
+    pub fn coordinate(&self, size: usize, probability: f64) -> f64 {
+        (probability - self.pc) * (size as f64).powf(1.0 / self.nu)
+    }
+
+    pub fn scaled_value(&self, size: usize, value: f64) -> f64 {
+        value * (size as f64).powf(-self.exponent)
+    }
+}
+
+/// One measurement to place on a collapse plot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CollapsePoint {
+    pub size: usize,
+    pub probability: f64,
+    pub value: f64,
+    pub standard_error: f64,
+}
+
+/// Pairwise collapse consistency over cross-size points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CollapseQuality {
+    /// Cross-size pairs whose scaling coordinates are within tolerance.
+    pub pairs: usize,
+    /// Root-mean-square of `(y_i - y_j) / sqrt(se_i^2 + se_j^2)`.
+    pub rms_z: f64,
+}
+
+/// Score a candidate scaling window by cross-size collapse consistency.
+///
+/// Every pair of points from *different* sizes whose `x` coordinates lie
+/// within `coordinate_tolerance` contributes
+/// `z = (y_i - y_j) / sqrt(se_i^2 + se_j^2)`; the returned `rms_z` is the
+/// root mean square over all such pairs (lower is better). Zero combined
+/// error with a nonzero scaled-value difference is a typed rejection: the
+/// pair claims infinite disagreement, which is not a score. Pairs are not
+/// independent (each point may contribute several times), so this is a
+/// comparative quality metric for selecting a window, not a confidence
+/// test.
+pub fn collapse_residual(
+    points: &[CollapsePoint],
+    window: &ScalingWindow,
+    coordinate_tolerance: f64,
+) -> Result<CollapseQuality, FssError> {
+    if points.is_empty() {
+        return Err(FssError::EmptyCollapse);
+    }
+    if !coordinate_tolerance.is_finite() || coordinate_tolerance <= 0.0 {
+        return Err(FssError::Tolerance {
+            tolerance: coordinate_tolerance,
+        });
+    }
+    let mut scaled = Vec::with_capacity(points.len());
+    for point in points {
+        FssPoint::new(
+            point.size,
+            point.probability,
+            point.value,
+            point.standard_error,
+        )?;
+        scaled.push((
+            point.size,
+            window.coordinate(point.size, point.probability),
+            window.scaled_value(point.size, point.value),
+            point.standard_error,
+        ));
+    }
+    let mut pairs = 0usize;
+    let mut sum_squares = 0.0;
+    for first in 0..scaled.len() {
+        for second in (first + 1)..scaled.len() {
+            let (size_first, x_first, y_first, se_first) = scaled[first];
+            let (size_second, x_second, y_second, se_second) = scaled[second];
+            if size_first == size_second || (x_first - x_second).abs() > coordinate_tolerance {
+                continue;
+            }
+            let difference = y_first - y_second;
+            let error = (se_first * se_first + se_second * se_second).sqrt();
+            if error == 0.0 {
+                if difference == 0.0 {
+                    continue;
+                }
+                return Err(FssError::DegeneratePair { first, second });
+            }
+            let z = difference / error;
+            sum_squares += z * z;
+            pairs += 1;
+        }
+    }
+    if pairs == 0 {
+        return Err(FssError::NoCollapsePairs);
+    }
+    Ok(CollapseQuality {
+        pairs,
+        rms_z: (sum_squares / pairs as f64).sqrt(),
+    })
+}
+
 /// Percentile bootstrap interval over independent samples.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BootstrapInterval {
@@ -433,6 +563,18 @@ pub enum FssError {
         total: usize,
     },
     EmptyCurve,
+    EmptyCollapse,
+    Window {
+        reason: &'static str,
+    },
+    Tolerance {
+        tolerance: f64,
+    },
+    NoCollapsePairs,
+    DegeneratePair {
+        first: usize,
+        second: usize,
+    },
     EmptySamples,
     EmptyCorrelation,
     Dimensions {
@@ -498,6 +640,24 @@ impl core::fmt::Display for FssError {
                 "largest component {largest} exceeds topology size {total}"
             ),
             Self::EmptyCurve => write!(formatter, "finite-size curve has no points"),
+            Self::EmptyCollapse => write!(formatter, "collapse needs at least one point"),
+            Self::Window { reason } => write!(formatter, "invalid scaling window: {reason}"),
+            Self::Tolerance { tolerance } => {
+                write!(
+                    formatter,
+                    "coordinate tolerance {tolerance} must be finite and positive"
+                )
+            }
+            Self::NoCollapsePairs => {
+                write!(
+                    formatter,
+                    "no cross-size pair falls inside the coordinate tolerance"
+                )
+            }
+            Self::DegeneratePair { first, second } => write!(
+                formatter,
+                "points {first} and {second} differ with zero combined uncertainty"
+            ),
             Self::EmptySamples => write!(formatter, "bootstrap needs at least one sample"),
             Self::EmptyCorrelation => {
                 write!(formatter, "correlation length needs at least one point")
@@ -693,6 +853,80 @@ mod tests {
                 1
             ),
             Err(FssError::CorrelationValue { index: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn exact_scaling_collapses_and_a_perturbation_worsens_the_score() {
+        let window = ScalingWindow::new(0.5, 2.0, 0.5).expect("window");
+        let mut points = Vec::new();
+        for size in [16usize, 32, 64] {
+            for x in [-1.0_f64, 0.0, 1.0] {
+                let probability = 0.5 + x / (size as f64).powf(0.5);
+                let value = (1.0 / (1.0 + x * x)) * (size as f64).powf(0.5);
+                points.push(CollapsePoint {
+                    size,
+                    probability,
+                    value,
+                    standard_error: 0.01,
+                });
+            }
+        }
+        let exact = collapse_residual(&points, &window, 1e-9).expect("pairs");
+        assert_eq!(exact.pairs, 9);
+        assert!(exact.rms_z < 1e-12, "rms_z = {}", exact.rms_z);
+
+        points[0].value += 0.1;
+        let perturbed = collapse_residual(&points, &window, 1e-9).expect("pairs");
+        assert!(perturbed.rms_z > exact.rms_z);
+    }
+
+    #[test]
+    fn collapse_rejections_are_typed() {
+        let window = ScalingWindow::new(0.5, 2.0, 0.5).expect("window");
+        let single = [CollapsePoint {
+            size: 8,
+            probability: 0.5,
+            value: 1.0,
+            standard_error: 0.1,
+        }];
+        assert!(matches!(
+            collapse_residual(&single, &window, 1e-9),
+            Err(FssError::NoCollapsePairs)
+        ));
+        assert!(matches!(
+            collapse_residual(&[], &window, 1e-9),
+            Err(FssError::EmptyCollapse)
+        ));
+        assert!(matches!(
+            collapse_residual(&single, &window, 0.0),
+            Err(FssError::Tolerance { .. })
+        ));
+        assert!(matches!(
+            ScalingWindow::new(0.5, 0.0, 0.5),
+            Err(FssError::Window { .. })
+        ));
+
+        let degenerate = [
+            CollapsePoint {
+                size: 8,
+                probability: 0.5,
+                value: 1.0,
+                standard_error: 0.0,
+            },
+            CollapsePoint {
+                size: 16,
+                probability: 0.5,
+                value: 2.0,
+                standard_error: 0.0,
+            },
+        ];
+        assert!(matches!(
+            collapse_residual(&degenerate, &window, 1.0),
+            Err(FssError::DegeneratePair {
+                first: 0,
+                second: 1
+            })
         ));
     }
 

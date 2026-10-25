@@ -111,8 +111,9 @@ pub use first_passage_shape::{
     ShapeEstimator, ShapeGeometry, ShapeSampler, ShapeTarget, SHAPE_SIDE_CAP,
 };
 pub use fss::{
-    bootstrap, crossing, second_moment_correlation_length, BinderCumulant, BinderEstimator,
-    BootstrapInterval, CorrelationPoint, CrossingEstimate, FssCurve, FssError, FssPoint,
+    bootstrap, collapse_residual, crossing, second_moment_correlation_length, BinderCumulant,
+    BinderEstimator, BootstrapInterval, CollapsePoint, CollapseQuality, CorrelationPoint,
+    CrossingEstimate, FssCurve, FssError, FssPoint, ScalingWindow,
 };
 pub use hypergraph::{Hypergraph, HypergraphError, HypergraphSummary};
 pub use law::{BondBernoulli, MixedBernoulli, OccupationLaw, SamplingError, SiteBernoulli};
