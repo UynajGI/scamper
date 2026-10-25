@@ -46,9 +46,10 @@
 //! (q = 2 Edwards-Sokal/Swendsen-Wang) replaces the delegate behind while
 //! keeping everything downstream unchanged.
 //!
-//! `q != 1` is a typed rejection ([`RandomClusterError::UnsupportedQ`]):
-//! generic real-`q` samplers (Sweeny, Chayes-Machta) need a separate plan
-//! per the roadmap, after R3.
+//! `q != 1` is a typed rejection ([`RandomClusterError::UnsupportedQ`]) in
+//! THIS q = 1 adapter. Generic real-`q` sampling lives in the separate Q1
+//! Sweeny and Q2 Chayes-Machta modules; this adapter stays the exact q = 1
+//! reference and is not widened in place.
 
 use core::fmt;
 

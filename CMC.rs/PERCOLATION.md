@@ -43,7 +43,7 @@ and [implementation roadmap](../docs/plans/2026-09-03-percolation-platform-roadm
 | External bond-configuration analysis (R1) | Validated | Decoupled analysis contract of the R track: an `ExternalBondConfiguration` borrows a caller-supplied bond mask (one `bool` per physical edge) and feeds the shared F3 `analyze`/`analyze_with_labels` and W2 `analyze_winding` as both activity sources (all vertices active, edges per mask), with the `analyze_bonds` one-call convenience and an owned `BondSample` open-edge record for future sampler exposure. Analysis is deliberately sampler-agnostic; gates and bench below. |
 | FK/random-cluster q=1 | Validated | R2 validates the exact q = 1 collapse (the FK measure `p^{\|A\|} (1-p)^{E-\|A\|} q^{k(A)}/Z` becomes the product Bernoulli measure because `1^{k(A)} = 1` and `Z(p,1) = 1`) configuration by configuration: exhaustive 2^E enumeration on a 5-edge chain-ish graph and a 6-edge self-loop/parallel multigraph (uniform and heterogeneous p, per-configuration weight equality, Z = 1, observable-mean identity), bitwise delegation identity to `BondBernoulli`, and multi-seed z-scores of `RandomClusterMC` (Bernoulli delegate → R1 external-mask analysis) versus the `StaticPercolationMC` bond path at matched p on a square lattice. `q ≠ 1` is a typed roadmap-citing rejection. Delivered in-branch on `feat/cmc-percolation`. |
 | FK q=2 Edwards-Sokal/Swendsen-Wang | Validated | R3 `EdwardsSokalMC` (roadmap §15): an owned-`CsrLattice` Swendsen-Wang/Edwards-Sokal adapter whose `sweep()` performs the conditional FK bond draw `p_e = 1 - exp(-2 beta J_e)` on same-spin edges (ferromagnetic `J_e > 0` typed-rejected otherwise) and exposes that ACTUAL draw as an R1 `BondSample`; the following `measure()` runs the shared F3 analyzer on that same sample through the F4 `ObservablePlan`. Frozen-spins mode reduces the sweep to the pure conditional draw for exact enumeration. Gates: frozen-spin bond-subset enumeration vs the product Bernoulli law with bitwise RNG-contract replay; partition-function agreement `Z_Ising = exp(beta sum J_e) * sum_s sum_A p^{|A|}(1-p)^{E-|A|}` (exhaustive over spins and bond subsets, incl. a parallel+self-loop multigraph, own union-find `k(A)`, independent brute-force Ising reference); `P_FK(i ~ j) = <s_i s_j>` on a proper ES chain (z-score gates, both sides vs exact and vs each other); worm-representation (even/two-defect subgraph, tanh weights) cross-checks at the observable level only — the worm's even subgraph is not FK and is never relabeled. Edwards-Sokal (1988)/Swendsen-Wang (1987) pre-date arXiv (no archivable PDFs; Tarjan precedent) — the exact double-sum identities are the anchors. Delivered in-branch. |
-| Generic real-q random-cluster model | Not implemented | No Sweeny or Chayes-Machta sampler. |
+| Generic real-q random-cluster model | Validated (Q1/Q2); Q3 Experimental | Q1 Sweeny samples arbitrary real q>0 (exact-FK marginals, q=1 bitwise, rate-level detailed balance); Q2 Chayes-Machta covers integer q with exact joint stationarity; the q phase diagram is Q3 (exploratory). See the Q rows above. |
 | Network edge-list input | Validated | `csr_from_edge_list` builds an owned `CsrLattice` from text edge lists (`left right` per line, `#` comments and blank lines skipped) under an explicit `EdgeListSpec` (declared vertex count, duplicate policy Reject/AllowParallel, self-loop policy Reject/Allow); every rejection is typed and carries the 1-based line (parse, endpoint range, duplicate, self-loop). Zero-copy external arrays remain the F1 `BorrowedUndirectedCsr`. No binary/memory-mapped format: million-edge ingestion evidence recorded below. Independent review passed 2026-10-22 (see `docs/reviews/`). |
 | Boundary crossing between explicit vertex sets | Validated | F3 `BoundaryQuery` is validated for owned/borrowed generic undirected views, supports several queries in one component pass, and defines empty/overlap/dedup semantics; F4 migrates the full crossing test assets. The square left/right-column and chain endpoint defaults live in the `StaticPercolationMC` parameter schema; all other parameter-built topologies require explicit site sets. |
 | Periodic embedding capability (W1) | Experimental | Directed-incidence integer cell displacements exist as explicit recorded data: the `PeriodicEmbedding` capability (`topology/embedding.rs`) and the `LatticeEmbedding` table serve the pbc chain/square/hypercubic builders and the triangular builder, which record each displacement at bond emission and never infer it from `BondType` or vertex IDs. Independently reviewed; see the W1 section below. |
@@ -359,8 +359,10 @@ through the dense element loop; exact endpoint elements skip RNG individually,
 but no O(1) or whole-field no-RNG contract is claimed for heterogeneous data.
 N1 has since promoted heterogeneous sampling through the `StaticPercolationMC`
 adapter to the Validated heterogeneous family (see the N1 section); the law
-module itself remains the Experimental F2 substrate it always was, and
-network/domain facades over heterogeneous fields remain Not implemented (N2).
+module itself remains the Experimental F2 substrate it always was.
+Network/domain facades over heterogeneous fields are provided by N2
+(see the N2 section); long-range/correlated combinations remain future
+work.
 
 The F2 statistical gate aggregates activity across every requested seed rather
 than taking a maximum over a growing set of per-seed scores. For each of six
@@ -910,13 +912,15 @@ heterogeneous adapters are constructed directly and scheduled with
 `Run::from_parts()`. Per-element probabilities must be validated upstream
 (`Probability::new`); the adapter validates only field lengths. Network
 facades over heterogeneous site fields (random failure, original-degree
-observables — N2) and targeted attacks (N3) are Not implemented.
+observables) are provided by N2, and targeted attacks by N3; combinations
+with long-range/correlated/augmented networks remain future work.
 
 ## W1 periodic embedding capability
 
-Status: **Validated** (independent review passed; roadmap §16 W1). Engineering gates
-and tests below are green). W1 is the data layer; the W2 winding analyzer that
-consumes it is Experimental, awaiting review (see the W2 section below).
+Status: **Experimental** — independently reviewed; the embedding
+capability is provisional-until-merge per the never-merged-API rule
+(roadmap §16 W1). Engineering gates and tests below are green. W1 is the
+data layer; W2 (the winding analyzer that consumes it) is Validated.
 
 ### API and semantics
 
@@ -2821,8 +2825,8 @@ rejection (FK winding analysis awaits an embedding-aware follow-up; the
 core `analyze_winding` + `ExternalBondConfiguration` path remains
 available to callers). No `FromParams` schema (construct directly or via
 `Run::from_parts`). The `q = 2` cluster factor enters through the spin
-resampling, not an explicit weight; generic real-`q` Sweeny/Chayes-Machta
-samplers remain Not implemented pending their own plan.
+resampling, not an explicit weight; generic real-`q` sampling is provided
+by Q1 (Sweeny) and integer-`q` Chayes-Machta by Q2.
 
 ## P1 particle candidate-pair adapter
 
@@ -4378,8 +4382,8 @@ is the pure power-law member of Biskup's family — Eq. 1.7's
 `1 - exp{-beta(1+r)^-s}` is NOT offered (first-order equivalent at small
 `beta r^{-s}`; the difference is a documentation choice, not an
 approximation inside the code). L2 chemical-distance regimes and L3
-diameter transitions are future stages; no percolation (infinite-cluster)
-claim is made on finite boxes — the observable set is component
+diameter transitions are delivered (see their sections); no percolation
+(infinite-cluster) claim is made on finite boxes — the observable set is component
 structure only.
 
 ## L2 chemical-distance regimes
