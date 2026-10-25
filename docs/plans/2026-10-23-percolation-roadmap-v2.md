@@ -289,11 +289,11 @@ are fixed (256-replica p_c(inf)=0.5457, corrected CI 0.5355-0.5558,
 ~0.65 sigma from 0.54299). C3 remains Experimental (analytic map exact;
 statistical nu open). Q1 is Validated: exact-FK marginals for q=0.5-3,
 q=1 bitwise, fuzz, and the rate-level detailed-balance audit pass, and
-the review's q<1 shortcut Blocker is fixed. Q2 and Q3 remain
-Experimental: Q2 passes invariance and R3 comparisons but still needs a
-committed exact joint-stationarity gate; Q3 anchors the exact 2D
-self-dual curve with an exploratory phase scan. The N5 audit is recorded
-in `docs/reviews/2026-10-24-v2-final-audit.md` (13 Validated + 3
+the review's q<1 shortcut Blocker is fixed. Q2 is Validated: invariance/R3
+comparisons pass and an exact joint-stationarity gate holds on all
+706/1458 (bond, colouring) states at q=2/3. Q3 remains Experimental: it
+anchors the exact 2D self-dual curve with an exploratory phase scan. The N5 audit is recorded
+in `docs/reviews/2026-10-24-v2-final-audit.md` (14 Validated + 2
 Experimental).
 
 ## 9. Archived anchors for v2 (already in docs/ref/)

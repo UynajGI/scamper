@@ -361,3 +361,142 @@ fn heat_bath_rate_matches_exact_conditional_on_every_state() {
         );
     }
 }
+
+/// Component-label vector of one bond mask (root vertex per site).
+fn component_labels(lattice: &cmc_rs::CsrLattice, mask: usize) -> Vec<usize> {
+    let vertex_count = lattice.vertex_count();
+    let mut parent: Vec<usize> = (0..vertex_count).collect();
+    fn find(parent: &mut [usize], mut vertex: usize) -> usize {
+        while parent[vertex] != vertex {
+            parent[vertex] = parent[parent[vertex]];
+            vertex = parent[vertex];
+        }
+        vertex
+    }
+    for edge in 0..lattice.edge_count() {
+        if (mask >> edge) & 1 == 1 {
+            let bond = &lattice.edges[edge];
+            let (left, right) = (
+                find(&mut parent, bond.source),
+                find(&mut parent, bond.target),
+            );
+            if left != right {
+                parent[left] = right;
+            }
+        }
+    }
+    (0..vertex_count)
+        .map(|vertex| find(&mut parent, vertex))
+        .collect()
+}
+
+/// All colorings constant on the components of `labels`.
+fn compatible_colorings(labels: &[usize], q: usize) -> Vec<Vec<u8>> {
+    let mut roots: Vec<usize> = labels.to_vec();
+    roots.sort_unstable();
+    roots.dedup();
+    let components = roots.len();
+    let total = q.pow(components as u32);
+    let mut colorings = Vec::with_capacity(total);
+    for code in 0..total {
+        let mut digits = vec![0_u8; components];
+        let mut rest = code;
+        for digit in &mut digits {
+            *digit = (rest % q) as u8;
+            rest /= q;
+        }
+        let mut colors = vec![0_u8; labels.len()];
+        for (vertex, &root) in labels.iter().enumerate() {
+            let slot = roots.binary_search(&root).expect("root in sorted list");
+            colors[vertex] = digits[slot];
+        }
+        colorings.push(colors);
+    }
+    colorings
+}
+
+#[test]
+fn chayes_machta_single_step_is_exactly_stationary_for_q2_and_q3() {
+    use std::collections::HashMap;
+    // Exact joint (bond mask, colouring) stationarity of one CM step on a
+    // periodic 2x2 square. The CM measure is FK(A) * q^{-k(A)} for each
+    // compatible colouring, i.e. mu(A,c) = v^{|A|} / Z_total.
+    let lattice = build_square(2, 2, true);
+    let edge_count = lattice.edge_count();
+    let p = 0.45_f64;
+    let v = p / (1.0 - p);
+    for &q in &[2_usize, 3] {
+        let labels: Vec<Vec<usize>> = (0..(1_usize << edge_count))
+            .map(|mask| component_labels(&lattice, mask))
+            .collect();
+        let mut states: Vec<(usize, Vec<u8>, usize)> = Vec::new();
+        let mut index: HashMap<(usize, Vec<u8>), usize> = HashMap::new();
+        for (mask, mask_labels) in labels.iter().enumerate() {
+            let colorings = compatible_colorings(mask_labels, q);
+            let mut roots = mask_labels.clone();
+            roots.sort_unstable();
+            roots.dedup();
+            let components = roots.len();
+            for colors in colorings {
+                let slot = states.len();
+                index.insert((mask, colors.clone()), slot);
+                states.push((mask, colors, components));
+            }
+        }
+        let mut normalization = 0.0;
+        for (mask, mask_labels) in labels.iter().enumerate() {
+            let mut roots = mask_labels.clone();
+            roots.sort_unstable();
+            roots.dedup();
+            normalization += v.powi(mask.count_ones() as i32) * (q.pow(roots.len() as u32) as f64);
+        }
+        let mu: Vec<f64> = states
+            .iter()
+            .map(|(mask, _, _)| v.powi(mask.count_ones() as i32) / normalization)
+            .collect();
+        for active in 0..q {
+            let mut next = vec![0.0_f64; states.len()];
+            for (slot, (mask, _, components)) in states.iter().enumerate() {
+                let base = (q as f64).powi(-(*components as i32));
+                for colors in compatible_colorings(&labels[*mask], q) {
+                    let awake: Vec<usize> = (0..edge_count)
+                        .filter(|&edge| {
+                            let bond = &lattice.edges[edge];
+                            colors[bond.source] == active as u8
+                                && colors[bond.target] == active as u8
+                        })
+                        .collect();
+                    for subset in 0..(1_usize << awake.len()) {
+                        let mut target_mask = *mask;
+                        let mut probability = base;
+                        for (bit, &edge) in awake.iter().enumerate() {
+                            if (subset >> bit) & 1 == 1 {
+                                target_mask |= 1 << edge;
+                                probability *= p;
+                            } else {
+                                target_mask &= !(1 << edge);
+                                probability *= 1.0 - p;
+                            }
+                        }
+                        let target = index[&(target_mask, colors.clone())];
+                        next[target] += mu[slot] * probability;
+                    }
+                }
+            }
+            let max_deviation = next
+                .iter()
+                .zip(&mu)
+                .map(|(left, right)| (left - right).abs())
+                .fold(0.0_f64, f64::max);
+            eprintln!(
+                "Q2 joint stationarity: q={q} active colour {active}, states={}, \
+                 max |muP - mu| = {max_deviation:.2e}",
+                states.len()
+            );
+            assert!(
+                max_deviation < 1e-12,
+                "q={q} active {active}: max |muP-mu| = {max_deviation:.3e}"
+            );
+        }
+    }
+}
