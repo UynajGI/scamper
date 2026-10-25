@@ -5,12 +5,19 @@ use core::fmt;
 mod attack;
 mod failure;
 mod input;
+#[cfg(feature = "io")]
+mod io;
 mod profile;
 
 pub use attack::{AttackGrid, AttackPolicy, DegreeAttackMC};
 pub use failure::{DegreeScratch, RandomFailureMC};
 pub use input::{
     csr_from_edge_list, DuplicateEdgePolicy, EdgeListSpec, NetworkInputError, SelfLoopPolicy,
+};
+#[cfg(feature = "io")]
+pub use io::{
+    NetworkDocument, NetworkEdge, NetworkIoError, EDGE_LIST_HEADER_V1, NETWORK_JSON_FORMAT,
+    NETWORK_JSON_VERSION,
 };
 pub use profile::{NetworkError, NetworkProfile};
 

@@ -185,6 +185,11 @@ pub use percolation::{
 pub use percolation::{
     HetReweightCapacityAudit, ReweightCapacityAudit, WorkspaceScanCapacityAudit,
 };
+#[cfg(feature = "io")]
+pub use percolation::{
+    NetworkDocument, NetworkEdge, NetworkIoError, EDGE_LIST_HEADER_V1, NETWORK_JSON_FORMAT,
+    NETWORK_JSON_VERSION,
+};
 pub use postprocess::{
     binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,
     zero_field_ising_susceptibility,

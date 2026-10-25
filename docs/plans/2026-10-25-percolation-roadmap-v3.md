@@ -348,7 +348,7 @@ roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
 | A4 policy traits | Not started |
 | A5 FSS toolkit | Not started |
 | A6 specification/provenance | Not started |
-| X1 network I/O | Not started |
+| X1 network I/O | Done (feature-gated `io`: weighted edge-list v1 text + multiplex JSON v1 over one validated document; round-trip, reference-graph, rejection, and Criterion gates green; independent review pending) |
 | X2 multiplex/interdependent | Not started |
 | X3 hypergraph/simplicial | Not started |
 | X4 temporal/directed dynamics | Not started |

@@ -365,6 +365,7 @@ dependencies = [
  "criterion",
  "rand 0.10.2",
  "rand_xoshiro 0.8.0",
+ "serde",
  "serde_json",
  "smallvec",
 ]

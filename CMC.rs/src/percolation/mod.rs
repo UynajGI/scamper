@@ -126,6 +126,11 @@ pub use network::{
     DuplicateEdgePolicy, EdgeListSpec, NetworkError, NetworkInputError, NetworkPercolationError,
     NetworkProfile, RandomFailureMC, SelfLoopPolicy,
 };
+#[cfg(feature = "io")]
+pub use network::{
+    NetworkDocument, NetworkEdge, NetworkIoError, EDGE_LIST_HEADER_V1, NETWORK_JSON_FORMAT,
+    NETWORK_JSON_VERSION,
+};
 pub use observable::{
     ObservablePlan, ObservablePlanError, ObservableSpec, SampleView, ScalarObservable,
     StaticObservable,

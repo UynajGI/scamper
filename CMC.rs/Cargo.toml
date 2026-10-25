@@ -15,6 +15,7 @@ allocation-counter = { version = "0.8", optional = true }
 carlo-rs = { workspace = true }
 rand = "0.10.0"
 rand_xoshiro = "0.8"
+serde = { workspace = true, optional = true }
 serde_json = { workspace = true }
 smallvec = "1"
 
@@ -88,6 +89,11 @@ name = "percolation_network_input"
 harness = false
 
 [[bench]]
+name = "percolation_network_io"
+harness = false
+required-features = ["io"]
+
+[[bench]]
 name = "directed_analysis"
 harness = false
 
@@ -142,6 +148,7 @@ harness = false
 [features]
 default = []
 allocation-probe = ["dep:allocation-counter"]
+io = ["dep:serde"]
 cache-audit = []
 hdf5 = ["carlo-rs/hdf5"]
 mpi = ["carlo-rs/mpi"]
