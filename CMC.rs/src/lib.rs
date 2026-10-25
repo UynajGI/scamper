@@ -140,9 +140,9 @@ pub use percolation::{
     AchlioptasStepRecord, AllActiveVertices, AnalysisError, AnalysisResult, AttackGrid,
     AttackPolicy, BinderCumulant, BinderEstimator, BondBernoulli, BondConfigurationError,
     BondSample, BooleanError, BooleanPercolationMC, BootstrapDynamics, BootstrapError,
-    BootstrapOutcome, BootstrapPercolationMC, BootstrapSeeds, BootstrapThreshold,
-    BootstrapWorkspace, BoundaryQuery, BoundaryQueryError, CandidatePairGraph, CandidateSampling,
-    ChemicalDistanceError, ChemicalDistanceEstimate, ChemicalDistanceEstimator,
+    BootstrapInterval, BootstrapOutcome, BootstrapPercolationMC, BootstrapSeeds,
+    BootstrapThreshold, BootstrapWorkspace, BoundaryQuery, BoundaryQueryError, CandidatePairGraph,
+    CandidateSampling, ChemicalDistanceError, ChemicalDistanceEstimate, ChemicalDistanceEstimator,
     ChemicalDistanceOutcome, ChemicalDistanceSampler, ChemicalDistanceWorkspace, ClusterQ,
     ComponentLabel, ComponentSummary, ComponentWinding, ComponentWorkspace, ContinuumEmbedding,
     ContinuumError, ContinuumWindingError, CoreThresholds, CrossingEstimate, DegreeAttackMC,
@@ -172,8 +172,8 @@ pub use percolation::{
     NO_PREDECESSOR, SHAPE_SIDE_CAP,
 };
 pub use percolation::{
-    bracket, critical_probability, crossing, flip_bracket, inverse_normal_cdf, phase_scan,
-    ChayesMachtaError, ChayesMachtaMC, CorrelatedError, CorrelatedFieldSpec,
+    bootstrap, bracket, critical_probability, crossing, flip_bracket, inverse_normal_cdf,
+    phase_scan, ChayesMachtaError, ChayesMachtaMC, CorrelatedError, CorrelatedFieldSpec,
     CorrelatedGaussianField, CorrelatedPercolationMC, CorrelatedSiteLaw, CorrelatedThresholdError,
     FlipBracket, FractalDimensionEstimate, HarrisBracket, IntervalEstimate, LinearFit, NuEstimate,
     PcExtrapolation, PcShiftNuEstimate, PcShiftRung, PottsPhaseError, PottsPhaseEstimate,

@@ -16,6 +16,9 @@
 //! typed rejections for undefined statistics. Sample-variance conventions
 //! match [`crate::Moments`] (unbiased, clamped at zero).
 
+use rand::{RngExt, SeedableRng};
+use rand_xoshiro::Xoshiro256PlusPlus;
+
 use super::estimator::Moments;
 
 /// Finite-size observation of one scalar at one probability.
@@ -187,6 +190,81 @@ pub fn crossing(lower: &FssCurve, upper: &FssCurve) -> Result<CrossingEstimate, 
     Err(FssError::NoCrossing)
 }
 
+/// Percentile bootstrap interval over independent samples.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BootstrapInterval {
+    /// Mean of the resampled statistics.
+    pub mean: f64,
+    /// Sample standard deviation of the resampled statistics.
+    pub standard_error: f64,
+    /// 2.5th percentile (nearest rank).
+    pub lower: f64,
+    /// 97.5th percentile (nearest rank).
+    pub upper: f64,
+    /// Number of bootstrap resamples.
+    pub resamples: usize,
+}
+
+/// Percentile bootstrap of an arbitrary statistic over independent samples.
+///
+/// Draw contract: a fresh `Xoshiro256PlusPlus::seed_from_u64(seed)` draws
+/// `samples.len()` indices with `random_range(0..len)` per resample, in
+/// order, into one reused buffer; the statistic is then called on that
+/// buffer. Identical inputs therefore reproduce identical intervals
+/// bitwise. Allocations (the index-free buffer and the resample vector) are
+/// reserved before the first draw. Non-finite inputs or statistic values
+/// are typed rejections, never silently skipped.
+pub fn bootstrap<F>(
+    samples: &[f64],
+    resamples: usize,
+    seed: u64,
+    mut statistic: F,
+) -> Result<BootstrapInterval, FssError>
+where
+    F: FnMut(&[f64]) -> f64,
+{
+    if samples.is_empty() {
+        return Err(FssError::EmptySamples);
+    }
+    if resamples < 2 {
+        return Err(FssError::Resamples { resamples });
+    }
+    if let Some(value) = samples.iter().copied().find(|value| !value.is_finite()) {
+        return Err(FssError::Value { value });
+    }
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+    let mut buffer = vec![0.0; samples.len()];
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(resamples)
+        .map_err(|_| FssError::Capacity)?;
+    for _ in 0..resamples {
+        for slot in &mut buffer {
+            *slot = samples[rng.random_range(0..samples.len())];
+        }
+        let value = statistic(&buffer);
+        if !value.is_finite() {
+            return Err(FssError::Statistic { value });
+        }
+        values.push(value);
+    }
+    let mut moments = Moments::new();
+    for &value in &values {
+        moments.add(value);
+    }
+    let mean = moments.mean().expect("resamples >= 2");
+    let standard_error = moments.standard_error().expect("resamples >= 2");
+    values.sort_by(f64::total_cmp);
+    let last = values.len() - 1;
+    Ok(BootstrapInterval {
+        mean,
+        standard_error,
+        lower: values[(0.025 * last as f64).floor() as usize],
+        upper: values[(0.975 * last as f64).ceil() as usize],
+        resamples,
+    })
+}
+
 /// Binder cumulant and its delta-method standard error.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BinderCumulant {
@@ -302,6 +380,14 @@ pub enum FssError {
         total: usize,
     },
     EmptyCurve,
+    EmptySamples,
+    Resamples {
+        resamples: usize,
+    },
+    Statistic {
+        value: f64,
+    },
+    Capacity,
     CurveSize {
         index: usize,
         expected: usize,
@@ -346,6 +432,20 @@ impl core::fmt::Display for FssError {
                 "largest component {largest} exceeds topology size {total}"
             ),
             Self::EmptyCurve => write!(formatter, "finite-size curve has no points"),
+            Self::EmptySamples => write!(formatter, "bootstrap needs at least one sample"),
+            Self::Resamples { resamples } => {
+                write!(
+                    formatter,
+                    "bootstrap needs at least two resamples, got {resamples}"
+                )
+            }
+            Self::Statistic { value } => {
+                write!(
+                    formatter,
+                    "bootstrap statistic returned a non-finite value {value}"
+                )
+            }
+            Self::Capacity => write!(formatter, "could not reserve bootstrap storage"),
             Self::CurveSize {
                 index,
                 expected,
@@ -380,6 +480,62 @@ impl std::error::Error for FssError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mean(values: &[f64]) -> f64 {
+        values.iter().sum::<f64>() / values.len() as f64
+    }
+
+    #[test]
+    fn bootstrap_of_constant_samples_is_degenerate() {
+        let interval = bootstrap(&[2.0; 8], 64, 0x4135_0001, mean).expect("bootstrap");
+        assert_eq!(interval.mean, 2.0);
+        assert_eq!(interval.standard_error, 0.0);
+        assert_eq!(interval.lower, 2.0);
+        assert_eq!(interval.upper, 2.0);
+        assert_eq!(interval.resamples, 64);
+    }
+
+    #[test]
+    fn bootstrap_mean_replays_bitwise_and_centers_on_the_sample_mean() {
+        let samples: Vec<f64> = (0..10).map(f64::from).collect();
+        let first = bootstrap(&samples, 1_000, 0x4135_0002, mean).expect("bootstrap");
+        let second = bootstrap(&samples, 1_000, 0x4135_0002, mean).expect("bootstrap");
+        assert_eq!(first.mean.to_bits(), second.mean.to_bits());
+        assert_eq!(
+            first.standard_error.to_bits(),
+            second.standard_error.to_bits()
+        );
+        assert_eq!(first.lower.to_bits(), second.lower.to_bits());
+        assert_eq!(first.upper.to_bits(), second.upper.to_bits());
+        assert!((first.mean - 4.5).abs() < 0.15);
+        assert!(first.lower < first.mean && first.mean < first.upper);
+
+        let maximum = bootstrap(&samples, 256, 0x4135_0003, |values| {
+            values.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+        })
+        .expect("maximum bootstrap");
+        assert!(maximum.lower >= 0.0 && maximum.upper <= 9.0);
+    }
+
+    #[test]
+    fn bootstrap_rejections_are_typed() {
+        assert!(matches!(
+            bootstrap(&[], 10, 0, mean),
+            Err(FssError::EmptySamples)
+        ));
+        assert!(matches!(
+            bootstrap(&[1.0], 1, 0, mean),
+            Err(FssError::Resamples { resamples: 1 })
+        ));
+        assert!(matches!(
+            bootstrap(&[1.0, f64::NAN], 10, 0, mean),
+            Err(FssError::Value { .. })
+        ));
+        assert!(matches!(
+            bootstrap(&[1.0, 2.0], 10, 0, |_| f64::NAN),
+            Err(FssError::Statistic { .. })
+        ));
+    }
 
     #[test]
     fn binder_of_binary_occupancy_is_one_third() {

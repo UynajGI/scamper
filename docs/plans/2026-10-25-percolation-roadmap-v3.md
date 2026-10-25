@@ -185,8 +185,12 @@ Progress note (2026-10-25): A5a lands `BinderEstimator`
 error including the `cov(m^2,m^4)` term) and `crossing` over two
 `FssCurve`s sharing an identical probability grid. Both are definitional
 anchors: no literature value or thermodynamic-limit claim is made. The
-remaining A5 tools (correlation length, collapse fit, bootstrap
-intervals, and reproduction of the v2 C2/C3 brackets) are outstanding.
+remaining A5 tools (correlation length, collapse fit, and reproduction
+of the v2 C2/C3 brackets) are outstanding. A5b adds `bootstrap`: a
+deterministic percentile bootstrap of any `FnMut(&[f64]) -> f64`
+statistic with a fixed index-draw contract, reused buffers, nearest-rank
+percentiles, and typed rejection of empty/non-finite inputs or
+non-finite statistic values.
 
 ### A6 — Generic specification, builder, and provenance
 
@@ -354,7 +358,7 @@ roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
 | A2 SampleView/OccupationLaw/WeightLaw | Done (A2a: `OccupationLaw` for Bernoulli/correlated laws, `WeightLaw` for FPP with bitwise replay; A2b: public `SampleView::new`/`vacuum`/`from_analysis`, workspace-lifetime analyzer accessors, and checked public activity setters; external-crate law, golden, and rustdoc gates green) |
 | A3 generic adapter/estimator/C0 | In progress (A3a: shared `Moments` accumulator replaces four duplicated count/sum/sum_sq estimators; A3b: `PercolationAdapter<L>` with `StaticPercolationMC` preset and external custom-law composition; C0 writer and remaining preset collapse pending) |
 | A4 policy traits | Not started |
-| A5 FSS toolkit | In progress (A5a: sample-based Binder cumulant with delta-method error and a common-grid linear crossing; correlation length, collapse fit, bootstrap, and v2 bracket reproduction pending) |
+| A5 FSS toolkit | In progress (A5a: sample-based Binder cumulant + common-grid linear crossing; A5b: deterministic percentile bootstrap; correlation length, collapse fit, and v2 bracket reproduction pending) |
 | A6 specification/provenance | Not started |
 | X1 network I/O | Done (feature-gated `io`: weighted edge-list v1 text + multiplex JSON v1 over one validated document; round-trip, reference-graph, rejection, and Criterion gates green; independent review pending) |
 | X2 multiplex/interdependent | Not started |
