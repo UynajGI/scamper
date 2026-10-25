@@ -126,7 +126,8 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::{
     analyze, analyze_with_labels, ComponentWorkspace, ObservablePlan, ObservablePlanError,
-    Probability, ProbabilityError, SampleView, SamplingError, SiteBernoulli, StaticConfiguration,
+    OccupationLaw, Probability, ProbabilityError, SampleView, SamplingError, SiteBernoulli,
+    StaticConfiguration,
 };
 use crate::{CsrLattice, GraphView, UndirectedGraphView};
 
@@ -822,6 +823,19 @@ impl CorrelatedSiteLaw {
     }
 }
 
+impl<G: UndirectedGraphView> OccupationLaw<G> for CorrelatedSiteLaw {
+    type Error = CorrelatedError;
+
+    fn sample<R: Rng + ?Sized>(
+        &mut self,
+        graph: &G,
+        configuration: &mut StaticConfiguration,
+        rng: &mut R,
+    ) -> Result<(), CorrelatedError> {
+        CorrelatedSiteLaw::sample(self, graph, configuration, rng)
+    }
+}
+
 /// Owned scheduler adapter for correlated site percolation.
 ///
 /// One `sweep()` draws one correlated field and thresholds it into the
@@ -939,13 +953,7 @@ impl MonteCarlo for CorrelatedPercolationMC {
             )
         }
         .expect("constructor prepared matching analysis domains");
-        let sample = SampleView::new(
-            self.lattice.vertex_count(),
-            result.summary(),
-            result.query_outcomes(),
-            None,
-            result.labels(),
-        );
+        let sample = SampleView::from_analysis(&result, self.lattice.vertex_count(), None);
         self.plan.record(&sample, ctx);
     }
 

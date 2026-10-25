@@ -105,11 +105,12 @@ Problem: `StaticConfiguration`, `ExternalBondConfiguration`,
 `BondSample`, and the process-specific states do not share a view;
 `StaticLaw` and `EdgeWeightLaw` are closed dispatch points.
 
-Deliverable: `SampleView` (counts, activity, labels, boundary queries)
-implemented for the existing static/external/bond samples;
-`OccupationLaw` trait for site/edge/correlated/long-range occupancy;
-`WeightLaw` trait for FPP edge weights. Existing laws become blanket/
-built-in impls.
+Deliverable: `SampleView` constructible by third-party adapters
+(counts, activity, labels, boundary queries); `OccupationLaw` trait for
+site/edge/correlated occupation; `WeightLaw` trait for FPP edge weights.
+Existing laws become blanket/built-in impls. Continuum and long-range
+draws discover their edges during sampling, so they stay processes under
+A4 rather than pretending to be occupation laws.
 
 Gates: bitwise RNG replay for every existing law and draw contract;
 typed rejection matrix; golden Results; zero steady-state allocation;
@@ -330,7 +331,7 @@ roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
 | Stage | Status |
 |---|---|
 | A1 Observable trait/open plan | Done (A1a+A1b: `ScalarObservable` + `SampleView`, capability-driven label/winding/moment requests, built-in `ObservableSpec` impls, `StaticObservable` shim; external-crate, golden, and 0-allocation gates green) |
-| A2 SampleView/OccupationLaw/WeightLaw | Not started |
+| A2 SampleView/OccupationLaw/WeightLaw | Done (A2a: `OccupationLaw` for Bernoulli/correlated laws, `WeightLaw` for FPP with bitwise replay; A2b: public `SampleView::new`/`vacuum`/`from_analysis`, workspace-lifetime analyzer accessors, and checked public activity setters; external-crate law, golden, and rustdoc gates green) |
 | A3 generic adapter/estimator/C0 | Not started |
 | A4 policy traits | Not started |
 | A5 FSS toolkit | Not started |

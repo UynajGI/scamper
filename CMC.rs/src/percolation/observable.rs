@@ -80,6 +80,18 @@ impl StaticObservable {
 /// observable declaring [`ScalarObservable::requires_winding`] always sees `Some`
 /// when it is evaluated. `labels` is present only when the plan or adapter
 /// asked the analyzer to materialize canonical per-vertex labels.
+///
+/// The constructors are public so a third-party process or adapter can feed
+/// its own realizations to an [`ObservablePlan`]; built-in adapters use
+/// [`SampleView::from_analysis`].
+///
+/// ```
+/// use cmc_rs::{ComponentSummary, SampleView};
+///
+/// let view = SampleView::new(4, ComponentSummary::EMPTY, &[], None, None);
+/// assert_eq!(view.total_vertices(), 4);
+/// assert!(view.labels().is_none());
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct SampleView<'a> {
     total_vertices: usize,
@@ -90,7 +102,11 @@ pub struct SampleView<'a> {
 }
 
 impl<'a> SampleView<'a> {
-    pub(crate) const fn new(
+    /// Assemble a view from an already-computed realization.
+    ///
+    /// `boundary_outcomes` must follow the plan's boundary-query order; the
+    /// caller is responsible for the correspondence.
+    pub const fn new(
         total_vertices: usize,
         summary: ComponentSummary,
         boundary_outcomes: &'a [bool],
@@ -106,8 +122,26 @@ impl<'a> SampleView<'a> {
         }
     }
 
+    /// Borrow every field of an analyzer result into one view.
+    ///
+    /// `total_vertices` is the topology size; `winding` is supplied by the
+    /// adapter because the component analyzer does not compute it.
+    pub fn from_analysis(
+        analysis: &super::AnalysisResult<'a>,
+        total_vertices: usize,
+        winding: Option<WindingSummary>,
+    ) -> Self {
+        Self::new(
+            total_vertices,
+            analysis.summary(),
+            analysis.query_outcomes(),
+            winding,
+            analysis.labels(),
+        )
+    }
+
     /// Zero-vertex realization for adapter vacuum paths that skip analysis.
-    pub(crate) const fn vacuum(boundary_outcomes: &'a [bool]) -> Self {
+    pub const fn vacuum(boundary_outcomes: &'a [bool]) -> Self {
         Self::new(0, ComponentSummary::EMPTY, boundary_outcomes, None, None)
     }
 

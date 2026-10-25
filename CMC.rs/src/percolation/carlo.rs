@@ -8,8 +8,8 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::{
     analyze, analyze_winding, analyze_with_labels, BondBernoulli, BoundaryQuery,
-    ComponentWorkspace, MixedBernoulli, ObservablePlan, ObservablePlanError, Probability,
-    ProbabilityField, SampleView, SamplingError, SiteBernoulli, StaticConfiguration,
+    ComponentWorkspace, MixedBernoulli, ObservablePlan, ObservablePlanError, OccupationLaw,
+    Probability, ProbabilityField, SampleView, SamplingError, SiteBernoulli, StaticConfiguration,
     StaticObservable, WindingWorkspace,
 };
 use crate::classical_mc::{build_lattice_from_params, parse_bool, parse_param};
@@ -111,10 +111,14 @@ impl StaticLaw {
             bond_probabilities: bond_probabilities.into(),
         }
     }
+}
+
+impl<G: UndirectedGraphView> OccupationLaw<G> for StaticLaw {
+    type Error = SamplingError;
 
     fn sample<R: Rng + ?Sized>(
-        &self,
-        graph: &impl UndirectedGraphView,
+        &mut self,
+        graph: &G,
         configuration: &mut StaticConfiguration,
         rng: &mut R,
     ) -> Result<(), SamplingError> {
@@ -152,21 +156,16 @@ impl StaticLaw {
     /// Validate every heterogeneous field length against the adapter topology.
     /// The error reuses the F2 [`SamplingError`] vocabulary so adapter and
     /// law-level rejections report identical typed diagnostics.
-    fn validate_domain(&self, vertices: usize, edges: usize) -> Result<(), StaticPercolationError> {
-        let check = |entity: &'static str,
-                     probabilities: &[Probability],
-                     expected: usize|
-         -> Result<(), StaticPercolationError> {
+    fn validate_domain(&self, vertices: usize, edges: usize) -> Result<(), SamplingError> {
+        let check = |entity: &'static str, probabilities: &[Probability], expected: usize| {
             if probabilities.len() == expected {
                 Ok(())
             } else {
-                Err(StaticPercolationError::LawDomain(
-                    SamplingError::ProbabilityFieldLength {
-                        entity,
-                        expected,
-                        actual: probabilities.len(),
-                    },
-                ))
+                Err(SamplingError::ProbabilityFieldLength {
+                    entity,
+                    expected,
+                    actual: probabilities.len(),
+                })
             }
         };
         match self {
@@ -247,7 +246,12 @@ impl StaticPercolationMC {
         lattice
             .validate()
             .map_err(|error| StaticPercolationError::Topology(error.to_string()))?;
-        law.validate_domain(lattice.vertex_count(), lattice.edge_count())?;
+        OccupationLaw::<CsrLattice>::validate_domain(
+            &law,
+            lattice.vertex_count(),
+            lattice.edge_count(),
+        )
+        .map_err(StaticPercolationError::LawDomain)?;
         plan.validate(lattice.vertex_count())
             .map_err(StaticPercolationError::Observable)?;
         for (index, query) in plan.boundary_queries().iter().enumerate() {
@@ -397,13 +401,7 @@ impl MonteCarlo for StaticPercolationMC {
             )
         }
         .expect("constructor prepared matching analysis domains");
-        let sample = SampleView::new(
-            self.lattice.vertex_count(),
-            result.summary(),
-            result.query_outcomes(),
-            winding,
-            result.labels(),
-        );
+        let sample = SampleView::from_analysis(&result, self.lattice.vertex_count(), winding);
         self.plan.record(&sample, ctx);
     }
 

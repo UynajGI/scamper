@@ -18,19 +18,24 @@ pub struct AnalysisResult<'a> {
     labels: Option<&'a [ComponentLabel]>,
 }
 
-impl AnalysisResult<'_> {
+impl<'a> AnalysisResult<'a> {
     #[inline]
     pub const fn summary(&self) -> ComponentSummary {
         self.summary
     }
 
+    /// Query outcomes in plan order. The slice borrows the workspace, not
+    /// this result value, so it may feed a longer-lived
+    /// [`crate::SampleView`].
     #[inline]
-    pub const fn query_outcomes(&self) -> &[bool] {
+    pub const fn query_outcomes(&self) -> &'a [bool] {
         self.query_outcomes
     }
 
+    /// Canonical labels when the analysis requested them. Borrows the
+    /// workspace, not this result value.
     #[inline]
-    pub const fn labels(&self) -> Option<&[ComponentLabel]> {
+    pub const fn labels(&self) -> Option<&'a [ComponentLabel]> {
         self.labels
     }
 }

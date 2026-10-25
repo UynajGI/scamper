@@ -222,6 +222,35 @@ impl PassageGeometry {
     }
 }
 
+/// Open extension point for a first-passage edge-weight law.
+///
+/// A law is a pure transform of one uniform draw: it validates its own
+/// parameters and maps `u in [0, 1)` to a non-negative weight. Keeping the
+/// transform separate from the realization sampler preserves the bitwise
+/// draw contract: the sampler owns the RNG, the law owns only the mapping.
+pub trait WeightLaw {
+    /// Law-specific rejection type.
+    type Error;
+
+    /// Reject invalid parameters before any realization is drawn.
+    fn validate(&self) -> Result<(), Self::Error>;
+
+    /// The weight for one uniform draw.
+    fn draw(&self, uniform: f64) -> f64;
+}
+
+impl WeightLaw for EdgeWeightLaw {
+    type Error = PassageObservablesError;
+
+    fn validate(&self) -> Result<(), PassageObservablesError> {
+        EdgeWeightLaw::validate(self)
+    }
+
+    fn draw(&self, uniform: f64) -> f64 {
+        EdgeWeightLaw::draw(self, uniform)
+    }
+}
+
 /// Edge-weight law for first-passage realizations: a pure transform of one
 /// uniform `u in [0, 1)` draw.
 ///
@@ -575,5 +604,33 @@ impl std::error::Error for PassageObservablesError {
             Self::Passage(source) => Some(source),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weight_law_trait_is_bitwise_identical_to_the_inherent_transform() {
+        for law in [EdgeWeightLaw::Uniform, EdgeWeightLaw::exponential(2.5)] {
+            <EdgeWeightLaw as WeightLaw>::validate(&law).expect("valid law");
+            for step in 0..=1000 {
+                let uniform = f64::from(step) / 1000.0;
+                assert_eq!(
+                    <EdgeWeightLaw as WeightLaw>::draw(&law, uniform).to_bits(),
+                    law.draw(uniform).to_bits()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn weight_law_rejects_invalid_rates_before_drawing() {
+        let law = EdgeWeightLaw::exponential(0.0);
+        assert!(matches!(
+            <EdgeWeightLaw as WeightLaw>::validate(&law),
+            Err(PassageObservablesError::InvalidRate { rate: 0.0 })
+        ));
     }
 }

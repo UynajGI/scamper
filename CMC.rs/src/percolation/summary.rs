@@ -21,7 +21,8 @@ pub struct ComponentSummary {
 }
 
 impl ComponentSummary {
-    pub(crate) const EMPTY: Self = Self {
+    /// No active vertices, edges, or components.
+    pub const EMPTY: Self = Self {
         active_vertex_count: 0,
         active_edge_count: 0,
         component_count: 0,

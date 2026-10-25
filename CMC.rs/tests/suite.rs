@@ -148,6 +148,8 @@ mod percolation_custom_observable;
 mod percolation_heterogeneous;
 #[path = "physics/percolation_heterogeneous_zscore.rs"]
 mod percolation_heterogeneous_zscore;
+#[path = "physics/percolation_law_extension.rs"]
+mod percolation_law_extension;
 #[path = "physics/percolation_law_zscore.rs"]
 mod percolation_law_zscore;
 #[path = "physics/percolation_network.rs"]
