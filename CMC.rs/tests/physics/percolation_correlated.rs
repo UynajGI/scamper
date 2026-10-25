@@ -47,7 +47,7 @@ fn correlated_threshold_smoke_ladder() {
     }
     let extrapolation = ladder.pc_extrapolation(16, 4.0 / 3.0).expect("p_c fit");
     eprintln!(
-        "C2 a=1.5 p_c(inf)={:.4} CI=({:.4}, {:.4}) vs Pruessner 0.54299; chi2/dof={:.2};          L=64/128 crossing is absent, so C2 is Experimental",
+        "C2 a=1.5 p_c(inf)={:.4} CI=({:.4}, {:.4}) vs Pruessner 0.54299; chi2/dof={:.2};          no stable crossing at L<=64; the long C2 gate uses the peak estimator",
         extrapolation.pc_infinity.value,
         extrapolation.pc_infinity.lower,
         extrapolation.pc_infinity.upper,

@@ -34,7 +34,7 @@ support their strongest claim; the limitation must be explicit.
 | C2 shifted thresholds | `percolation/correlated_thresholds.rs` | fast smoke + ignored large-L bracket | Experimental | large-L bracket contains Pruessner 0.54299; review pending |
 | C3 Weinrib–Halperin map | `percolation/weinrib_halperin.rs` | analytic branch gate | Experimental | exact map/table branches; statistical nu certification open |
 | Q1 Sweeny sampler | `percolation/sweeny.rs` | `percolation_sweeny.rs` (3) | Experimental | exact 2^E FK marginals z<=1.36, q=1 bitwise, fuzz; review pending |
-| Q2 Chayes–Machta | `percolation/chayes_machta.rs` | q=2 agreement | Experimental | agrees with Q1 within 4 sigma; detailed balance/R3 comparison open |
+| Q2 Chayes–Machta | `percolation/chayes_machta.rs` | invariance + R3 | Experimental | q=2/3 exact histogram/colour marginal gates, Q1 agreement, q=2 R3 comparison pass; independent review PASS |
 | Q3 q phase diagram | `percolation/potts_phase.rs` | `percolation_potts_phase.rs` (2) | Experimental | exact p_c curve; exploratory bimodality only |
 
 ## Conservation / cross-stage invariants
@@ -58,7 +58,7 @@ support their strongest claim; the limitation must be explicit.
   independent review found and we fixed a q<1 unconditional-shortcut
   ordering bug (q=0.5/0.75 now match exact FK marginals, |z| <= 0.89).
 - **Time constant**: white-noise calibration of the C2 estimator gives
-  `p_c(inf) ~ 0.580` against the exact iid 0.592746, exposing a
+  `p_c(inf) ~ 0.5987` against the exact iid 0.592746 (+1% estimator bias), exposing a
   finite-size estimator bias separate from the field generator.
 
 ## Open items (explicit, not hidden)
@@ -123,8 +123,7 @@ support their strongest claim; the limitation must be explicit.
 
 All 16 v2 stages are delivered and audited. 10 are Validated after
 independent review; 6 are Experimental because their strongest claims
-(C2 table reproduction, C3 statistical nu, Q2 detailed balance, Q3
-latent heat, C1 binary correlation, and independent review) are not yet
+(C3 statistical nu, Q3 latent heat, and the remaining C2/C3 re-review) are not yet
 established. This matches the v1 M6 convention: Experimental-by-design
 or explicitly limited rows do not block the v2 delivery audit, but they
 are not counted as Validated.

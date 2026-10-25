@@ -75,7 +75,7 @@ fn q_eight_bimodality_ordering_at_l16() {
         estimates.push(estimate);
     }
     // Descriptive classification: below the 5/9 bimodality threshold for
-    // q <= 4 (continuous), above it for q > 4 (first order at this L).
+    // q <= 4 (continuous) and for q=6 at this L; above it only for q=8.
     const BIMODAL: f64 = 5.0 / 9.0;
     for estimate in &estimates[..2] {
         assert!(

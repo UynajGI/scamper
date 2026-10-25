@@ -517,6 +517,7 @@ impl SweenyMC {
                     Some(value) => value,
                     None => {
                         connectivity_queried = true;
+                        self.delta_n_queries += 1;
                         if self.forest.connected(source, target) {
                             0
                         } else {
@@ -540,6 +541,7 @@ impl SweenyMC {
                         Some(plan) => plan,
                         None => {
                             connectivity_queried = true;
+                            self.delta_n_queries += 1;
                             self.forest.plan_cut(edge_index, &self.lattice, &self.open)
                         }
                     };

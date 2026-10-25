@@ -79,7 +79,7 @@
 //! probability is exactly `p` in the ensemble; the inverse-CDF rational
 //! approximation contributes at most `1.2e-9` absolute probability error
 //! (Acklam's approximation, documented on
-//! [`inverse_normal_cdf`]). Each physical edge is active, i.e. a site
+//! [`inverse_normal_cdf`]). Every physical edge is active, i.e. a site
 //! configuration.
 //!
 //! **`a = +infinity` is the stage's iid reference by contract.** The FFM

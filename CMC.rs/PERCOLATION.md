@@ -4697,10 +4697,13 @@ through the ladder records).
 
 ## C correlated percolation (C1–C3)
 
-Status: **Experimental**. C1's field/adapter gates are green; C2's
-threshold estimator does not yet reproduce Pruessner's table and is
-recorded as a limitation; C3's analytic map is exact while its
-finite-size `nu` certification is open. Independent review pending.
+Status: **Experimental**. C1's field, adapter, and binary-correlation
+gates are green; C2's 256-replica ladder gives `p_c(inf)=0.5457`, CI
+(0.5355, 0.5558), ~0.65 sigma from Pruessner's 0.54299 after the
+bootstrap-SD fix; C3's analytic map is exact while its finite-size `nu`
+certification is open. Independent review passed C1/Q2/Q3; the C2 CI,
+Q1 q<1 shortcut, and missing Q1 rate gate found by that review are
+fixed, and an independent C2/C3 re-review is warranted.
 
 ### Anchors and conventions
 

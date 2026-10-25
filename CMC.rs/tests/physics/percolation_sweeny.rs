@@ -133,6 +133,10 @@ fn sweeny_marginals_match_exact_fk_enumeration() {
             bond_z.abs() < 5.0,
             "q={q} p={p}: bond marginal z={bond_z:.2}"
         );
+        assert!(
+            component_z.abs() < 5.0,
+            "q={q} p={p}: component marginal z={component_z:.2}"
+        );
     }
 }
 
@@ -256,14 +260,17 @@ fn chayes_machta_invariance_at_q2_and_q3() {
             })
             .fold(0.0_f64, f64::max);
         eprintln!(
-            "Q2 q={q}: |A| {sweeny_mean:.4} (Q1) vs {chayes_mean:.4} (CM), diff {difference:.4}              noise {noise:.4}; max |A|-histogram |z| {max_z:.2}; max colour |z| {color_z:.2}"
+            "Q2 q={q}: |A| {sweeny_mean:.4} (Q1) vs {chayes_mean:.4} (CM), diff {difference:.4}              noise {noise:.4}; max |A|-histogram |z| {max_z:.2}; colour-marginal smoke stat {color_z:.2} (binomial variance, not cluster-robust)"
         );
         assert!(
             difference <= noise,
             "q={q}: Q1/Q2 bond density differs beyond 4 sigma ({difference:.4} > {noise:.4})"
         );
         assert!(max_z < 5.0, "q={q}: |A| histogram max |z| {max_z:.2}");
-        assert!(color_z < 4.5, "q={q}: colour marginal max |z| {color_z:.2}");
+        assert!(
+            color_z < 4.5,
+            "q={q}: colour-marginal smoke stat {color_z:.2} (not a calibrated z)"
+        );
     }
 }
 
