@@ -7,6 +7,7 @@ mod failure;
 mod input;
 #[cfg(feature = "io")]
 mod io;
+mod multiplex;
 mod profile;
 
 pub use attack::{AttackGrid, AttackPolicy, DegreeAttackMC};
@@ -19,6 +20,7 @@ pub use io::{
     NetworkDocument, NetworkEdge, NetworkIoError, EDGE_LIST_HEADER_V1, NETWORK_JSON_FORMAT,
     NETWORK_JSON_VERSION,
 };
+pub use multiplex::{multiplex_from_edges, MultiplexError, MultiplexNetwork, MutualComponent};
 pub use profile::{NetworkError, NetworkProfile};
 
 /// Typed rejections for the N2 facade.

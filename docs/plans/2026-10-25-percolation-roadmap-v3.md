@@ -366,7 +366,7 @@ roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
 | A5 FSS toolkit | In progress (A5a: sample-based Binder cumulant + common-grid linear crossing; A5b: deterministic percentile bootstrap; A5c: second-moment correlation length; collapse fit and v2 bracket reproduction pending) |
 | A6 specification/provenance | Not started |
 | X1 network I/O | Done (feature-gated `io`: weighted edge-list v1 text + multiplex JSON v1 over one validated document; round-trip, reference-graph, rejection, and Criterion gates green; independent review pending) |
-| X2 multiplex/interdependent | Not started |
+| X2 multiplex/interdependent | In progress (two-layer one-to-one mutual-component/cascade analysis over a shared vertex set, with an independent reference-map enumeration and typed rejections; quantitative bracket and preset adapters pending) |
 | X3 hypergraph/simplicial | Not started |
 | X4 temporal/directed dynamics | Not started |
 | R1 C3 certification | Not started |
