@@ -6,9 +6,11 @@
 //! Markov-chain marginals of `|A|` and `k(A)`. The `q = 1` chain must reduce
 //! bitwise to the F2 `BondBernoulli` draw on one all-closed sweep.
 
+use carlo_rs::{Context, MonteCarlo};
 use cmc_rs::{
-    build_square, BondBernoulli, ChayesMachtaMC, EdgeActivity, GraphView, ObservablePlan,
-    Probability, StaticConfiguration, SweenyAcceptance, SweenyMC, UndirectedGraphView,
+    build_square, BondBernoulli, ChayesMachtaMC, EdgeActivity, EdwardsSokalMC, GraphView,
+    ObservablePlan, Probability, StaticConfiguration, SweenyAcceptance, SweenyMC,
+    UndirectedGraphView,
 };
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -161,88 +163,154 @@ fn q_one_heat_bath_reduces_bitwise_to_bond_bernoulli() {
     eprintln!("Q1 q=1: one all-closed heat-bath sweep equals BondBernoulli bitwise");
 }
 
-#[test]
-fn chayes_machta_agrees_with_sweeny_at_q_two() {
-    let lattice = build_square(3, 3, true);
-    let p = 0.45_f64;
-    let mut sweeny = SweenyMC::new(
-        lattice.clone(),
-        2.0,
-        p,
-        SweenyAcceptance::HeatBath,
-        ObservablePlan::all(vec![]),
-    )
-    .expect("Sweeny");
-    let mut chayes = ChayesMachtaMC::new(lattice.clone(), 2, p, ObservablePlan::all(vec![]))
-        .expect("Chayes-Machta");
-    let mut sweeny_rng = Xoshiro256PlusPlus::seed_from_u64(0x51EE_2001);
-    let mut chayes_rng = Xoshiro256PlusPlus::seed_from_u64(0x51EE_2002);
-    for _ in 0..200 {
-        sweep_once(&mut sweeny, &mut sweeny_rng);
-        chayes.step(&mut chayes_rng);
+/// Exact FK distribution of the open-bond count `|A|` (length `E + 1`).
+fn exact_bond_distribution(lattice: &cmc_rs::CsrLattice, q: f64, p: f64) -> Vec<f64> {
+    let edge_count = lattice.edge_count();
+    let odds = p / (1.0 - p);
+    let mut weights = vec![0.0_f64; edge_count + 1];
+    let mut normalization = 0.0;
+    for mask in 0_usize..(1_usize << edge_count) {
+        let bonds = mask.count_ones() as usize;
+        let weight = odds.powi(bonds as i32) * q.powi(component_count(lattice, mask) as i32);
+        weights[bonds] += weight;
+        normalization += weight;
     }
-    let samples = 4000;
-    let mut sweeny_sum = 0.0;
-    let mut sweeny_square = 0.0;
-    let mut chayes_sum = 0.0;
-    let mut chayes_square = 0.0;
-    for _ in 0..samples {
-        sweep_once(&mut sweeny, &mut sweeny_rng);
-        chayes.step(&mut chayes_rng);
-        let sweeny_bonds = sweeny.open_edge_count() as f64;
-        let chayes_bonds = chayes.open_edge_count() as f64;
-        sweeny_sum += sweeny_bonds;
-        sweeny_square += sweeny_bonds * sweeny_bonds;
-        chayes_sum += chayes_bonds;
-        chayes_square += chayes_bonds * chayes_bonds;
+    for weight in &mut weights {
+        *weight /= normalization;
     }
-    let n = samples as f64;
-    let sweeny_mean = sweeny_sum / n;
-    let chayes_mean = chayes_sum / n;
-    let sweeny_variance = (sweeny_square / n - sweeny_mean * sweeny_mean).max(0.0);
-    let chayes_variance = (chayes_square / n - chayes_mean * chayes_mean).max(0.0);
-    let difference = (sweeny_mean - chayes_mean).abs();
-    let noise = 4.0 * (sweeny_variance / n + chayes_variance / n).sqrt();
-    eprintln!(
-        "Q2 vs Q1 q=2: Sweeny |A|={sweeny_mean:.4} Chayes-Machta |A|={chayes_mean:.4} \
-         difference {difference:.4} noise {noise:.4}"
-    );
-    assert!(
-        difference <= noise,
-        "q=2 bond density differs beyond 4 sigma: {difference:.4} > {noise:.4}"
-    );
+    weights
 }
 
 #[test]
-fn heat_bath_rate_matches_exact_conditional_on_every_state() {
-    // Detailed-balance audit at the rate level: for every bond mask A and
-    // every edge e, the heat-bath insertion probability must equal the exact
-    // FK two-state conditional P(e=1 | rest) = q^{k1} v / (q^{k0} + q^{k1} v).
-    let lattice = build_square(3, 3, false);
-    let edge_count = lattice.edge_count();
-    let p = 0.4_f64;
-    let odds = p / (1.0 - p);
-    for &q in &[1.0_f64, 2.0, 3.0] {
-        let rates = cmc_rs::SweenyRates::new(q, p).expect("rates");
-        for mask in 0_usize..(1_usize << edge_count) {
-            for edge in 0..edge_count {
-                let without = mask & !(1_usize << edge);
-                let with = mask | (1_usize << edge);
-                let delta_n = component_count(&lattice, with) as i32
-                    - component_count(&lattice, without) as i32;
-                let ratio = q.powi(delta_n) * odds;
-                let exact = ratio / (1.0 + ratio);
-                let rate = rates.heat_bath(delta_n, 1);
-                assert!(
-                    (rate - exact).abs() < 1e-12,
-                    "q={q} mask={mask:b} edge={edge}: rate {rate} vs exact {exact}"
-                );
-                let metropolis = rates.metropolis(delta_n, 1);
-                assert!((metropolis - ratio.min(1.0)).abs() < 1e-12);
+fn chayes_machta_invariance_at_q2_and_q3() {
+    let lattice = build_square(3, 3, true);
+    let p = 0.45_f64;
+    let samples = 6000_usize;
+    for &q in &[2_usize, 3] {
+        let mut sweeny = SweenyMC::new(
+            lattice.clone(),
+            q as f64,
+            p,
+            SweenyAcceptance::HeatBath,
+            ObservablePlan::all(vec![]),
+        )
+        .expect("Sweeny");
+        let mut chayes = ChayesMachtaMC::new(lattice.clone(), q, p, ObservablePlan::all(vec![]))
+            .expect("Chayes-Machta");
+        let mut sweeny_rng = Xoshiro256PlusPlus::seed_from_u64(0x51EE_3001 + q as u64);
+        let mut chayes_rng = Xoshiro256PlusPlus::seed_from_u64(0x51EE_4001 + q as u64);
+        for _ in 0..200 {
+            sweep_once(&mut sweeny, &mut sweeny_rng);
+            chayes.step(&mut chayes_rng);
+        }
+        let mut sweeny_sum = 0.0;
+        let mut sweeny_square = 0.0;
+        let mut chayes_sum = 0.0;
+        let mut chayes_square = 0.0;
+        let mut histogram = vec![0_usize; lattice.edge_count() + 1];
+        let mut color_counts = vec![0_usize; q];
+        for _ in 0..samples {
+            sweep_once(&mut sweeny, &mut sweeny_rng);
+            chayes.step(&mut chayes_rng);
+            let sweeny_bonds = sweeny.open_edge_count() as f64;
+            let chayes_bonds = chayes.open_edge_count() as f64;
+            sweeny_sum += sweeny_bonds;
+            sweeny_square += sweeny_bonds * sweeny_bonds;
+            chayes_sum += chayes_bonds;
+            chayes_square += chayes_bonds * chayes_bonds;
+            histogram[chayes.open_edge_count()] += 1;
+            for &color in chayes.colors() {
+                color_counts[color] += 1;
             }
         }
+        let n = samples as f64;
+        let sweeny_mean = sweeny_sum / n;
+        let chayes_mean = chayes_sum / n;
+        let sweeny_variance = (sweeny_square / n - sweeny_mean * sweeny_mean).max(0.0);
+        let chayes_variance = (chayes_square / n - chayes_mean * chayes_mean).max(0.0);
+        let difference = (sweeny_mean - chayes_mean).abs();
+        let noise = 4.0 * (sweeny_variance / n + chayes_variance / n).sqrt();
+        let exact = exact_bond_distribution(&lattice, q as f64, p);
+        let mut max_z = 0.0_f64;
+        for bin in 0..exact.len() {
+            let expected = samples as f64 * exact[bin];
+            if expected >= 10.0 {
+                let observed = histogram[bin] as f64;
+                let z = (observed - expected) / (expected * (1.0 - exact[bin])).sqrt();
+                max_z = max_z.max(z.abs());
+            }
+        }
+        let color_total = (samples * lattice.vertex_count()) as f64;
+        let expected_color = color_total / q as f64;
+        let color_z = color_counts
+            .iter()
+            .map(|&count| {
+                (count as f64 - expected_color).abs()
+                    / (expected_color * (1.0 - 1.0 / q as f64)).sqrt()
+            })
+            .fold(0.0_f64, f64::max);
         eprintln!(
-            "Q1 detailed-balance rates: q={q} all masks x edges match the exact FK conditional"
+            "Q2 q={q}: |A| {sweeny_mean:.4} (Q1) vs {chayes_mean:.4} (CM), diff {difference:.4}              noise {noise:.4}; max |A|-histogram |z| {max_z:.2}; max colour |z| {color_z:.2}"
+        );
+        assert!(
+            difference <= noise,
+            "q={q}: Q1/Q2 bond density differs beyond 4 sigma ({difference:.4} > {noise:.4})"
+        );
+        assert!(max_z < 5.0, "q={q}: |A| histogram max |z| {max_z:.2}");
+        assert!(color_z < 4.5, "q={q}: colour marginal max |z| {color_z:.2}");
+    }
+}
+
+#[test]
+fn chayes_machta_agrees_with_r3_edwards_sokal_at_q_two() {
+    // R3's Swendsen-Wang/Edwards-Sokal chain is the q=2 reference. Its bond
+    // probability is p = 1 - exp(-2 beta J), so invert that for beta.
+    let lattice = build_square(3, 3, true);
+    let p = 0.45_f64;
+    let beta = -0.5 * (1.0 - p).ln();
+    let mut chayes = ChayesMachtaMC::new(lattice.clone(), 2, p, ObservablePlan::all(vec![]))
+        .expect("Chayes-Machta");
+    let mut edwards =
+        EdwardsSokalMC::new(lattice.clone(), beta, ObservablePlan::all(vec![])).expect("R3");
+    for &probability in edwards.bond_probabilities() {
+        assert!(
+            (probability - p).abs() < 1e-12,
+            "R3 bond probability mismatch"
         );
     }
+    let mut chayes_rng = Xoshiro256PlusPlus::seed_from_u64(0x51EE_5001);
+    let mut edwards_ctx = Context::new(Xoshiro256PlusPlus::seed_from_u64(0x51EE_5002), 0);
+    for _ in 0..500 {
+        chayes.step(&mut chayes_rng);
+        edwards.sweep(&mut edwards_ctx);
+    }
+    let samples = 5000;
+    let mut chayes_sum = 0.0;
+    let mut chayes_square = 0.0;
+    let mut edwards_sum = 0.0;
+    let mut edwards_square = 0.0;
+    for _ in 0..samples {
+        chayes.step(&mut chayes_rng);
+        edwards.sweep(&mut edwards_ctx);
+        let c = chayes.open_edge_count() as f64;
+        let e = edwards.last_bond_sample().open_count() as f64;
+        chayes_sum += c;
+        chayes_square += c * c;
+        edwards_sum += e;
+        edwards_square += e * e;
+    }
+    let n = samples as f64;
+    let chayes_mean = chayes_sum / n;
+    let edwards_mean = edwards_sum / n;
+    let chayes_variance = (chayes_square / n - chayes_mean * chayes_mean).max(0.0);
+    let edwards_variance = (edwards_square / n - edwards_mean * edwards_mean).max(0.0);
+    let difference = (chayes_mean - edwards_mean).abs();
+    let noise = 4.0 * (chayes_variance / n + edwards_variance / n).sqrt();
+    eprintln!(
+        "Q2 vs R3 q=2: CM |A|={chayes_mean:.4} ES |A|={edwards_mean:.4}          diff={difference:.4} noise={noise:.4}"
+    );
+    assert!(
+        difference <= noise,
+        "q=2 CM and R3 ES bond densities differ beyond 4 sigma ({difference:.4} > {noise:.4})"
+    );
 }

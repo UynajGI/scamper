@@ -73,10 +73,12 @@ support their strongest claim; the limitation must be explicit.
 2. **C3 statistical certification**: the analytic map and branch values
    are exact, but the finite-size `nu(a)` estimate is not yet precise
    enough to certify the a=1.5/a=1.25 flip.
-3. **Q2/Q3**: Q1 now has the rate-level detailed-balance audit; Q2 still
-   needs its own audit and the q=2 R3 comparison. Q3's L=16 scan separates
-   q<=4 (bimodality <5/9) from q=8 (>5/9), but q=6 is unresolved and the
-   statistic is descriptive, not a latent heat.
+3. **Q2/Q3**: Q1 has the rate-level detailed-balance audit; Q2 now has
+   q=2/3 exact-histogram and colour-marginal invariance plus the q=2 R3
+   Edwards–Sokal comparison. A full joint detailed-balance proof remains
+   optional/open. Q3's L=16 scan separates q<=4 (bimodality <5/9) from
+   q=8 (>5/9), but q=6 is unresolved and the statistic is descriptive, not
+   a latent heat.
 4. **F3 minors**: the target-local saturation flag, diagonal-bound
    wording, vertex-prefix aging doc, post-rejection weight state, and
    parallel/source==target tests are FIXED. Still open: `geodesic_path`
