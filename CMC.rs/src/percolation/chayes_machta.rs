@@ -80,10 +80,8 @@ use carlo_rs::{Context, MonteCarlo};
 use rand::{Rng, RngExt};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-use super::{
-    analyze_bonds, analyze_bonds_with_labels, BondSample, ComponentWorkspace, ObservablePlan,
-    ObservablePlanError, SampleView,
-};
+use super::recording::record_bond_analysis;
+use super::{BondSample, ComponentWorkspace, ObservablePlan, ObservablePlanError};
 use crate::{CsrLattice, GraphView, UndirectedGraphView};
 
 const UNASSIGNED: usize = usize::MAX;
@@ -297,29 +295,17 @@ impl MonteCarlo for ChayesMachtaMC {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        let result = if self.plan.requests_labels() {
-            analyze_bonds_with_labels(
-                &self.lattice,
-                &self.open,
-                self.plan.boundary_queries(),
-                &mut self.workspace,
-            )
-        } else {
-            analyze_bonds(
-                &self.lattice,
-                &self.open,
-                self.plan.boundary_queries(),
-                &mut self.workspace,
-            )
-        }
-        .expect("constructor prepared matching analysis domains");
+        let summary = record_bond_analysis(
+            &self.lattice,
+            &self.open,
+            &self.plan,
+            &mut self.workspace,
+            ctx,
+        );
         debug_assert_eq!(
-            result.summary().component_count,
-            self.component_count,
+            summary.component_count, self.component_count,
             "union-find count must match the analyzer"
         );
-        let sample = SampleView::from_analysis(&result, self.lattice.vertex_count(), None);
-        self.plan.record(&sample, ctx);
     }
 
     fn name(&self) -> &'static str {

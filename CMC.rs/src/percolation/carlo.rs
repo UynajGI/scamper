@@ -6,11 +6,11 @@ use carlo_rs::{CarloError, Context, FromParams, MonteCarlo, Params};
 use rand::Rng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
+use super::recording::record_component_analysis;
 use super::{
-    analyze, analyze_winding, analyze_with_labels, BondBernoulli, BoundaryQuery,
-    ComponentWorkspace, MixedBernoulli, ObservablePlan, ObservablePlanError, OccupationLaw,
-    Probability, ProbabilityField, SampleView, SamplingError, SiteBernoulli, StaticConfiguration,
-    StaticObservable, WindingWorkspace,
+    analyze_winding, BondBernoulli, BoundaryQuery, ComponentWorkspace, MixedBernoulli,
+    ObservablePlan, ObservablePlanError, OccupationLaw, Probability, ProbabilityField,
+    SamplingError, SiteBernoulli, StaticConfiguration, StaticObservable, WindingWorkspace,
 };
 use crate::classical_mc::{build_lattice_from_params, parse_bool, parse_param};
 use crate::{
@@ -398,26 +398,15 @@ where
         } else {
             None
         };
-        let result = if self.plan.requests_labels() {
-            analyze_with_labels(
-                &self.lattice,
-                &self.configuration,
-                &self.configuration,
-                self.plan.boundary_queries(),
-                &mut self.workspace,
-            )
-        } else {
-            analyze(
-                &self.lattice,
-                &self.configuration,
-                &self.configuration,
-                self.plan.boundary_queries(),
-                &mut self.workspace,
-            )
-        }
-        .expect("constructor prepared matching analysis domains");
-        let sample = SampleView::from_analysis(&result, self.lattice.vertex_count(), winding);
-        self.plan.record(&sample, ctx);
+        record_component_analysis(
+            &self.lattice,
+            &self.configuration,
+            &self.configuration,
+            &self.plan,
+            &mut self.workspace,
+            winding,
+            ctx,
+        );
     }
 
     fn name(&self) -> &'static str {

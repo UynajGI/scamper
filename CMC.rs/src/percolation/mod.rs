@@ -53,7 +53,9 @@ mod probability;
 mod process;
 mod query;
 mod random_cluster;
+mod recording;
 mod scan;
+mod series;
 mod summary;
 mod sweeny;
 mod weinrib_halperin;
@@ -169,6 +171,7 @@ pub use scan::{
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
 pub use scan::{HetReweightCapacityAudit, ReweightCapacityAudit, WorkspaceScanCapacityAudit};
+pub use series::{FixedSeries, SeriesPad};
 pub use summary::ComponentSummary;
 pub use sweeny::{SweenyAcceptance, SweenyError, SweenyMC, SweenyProposal, SweenyRates};
 pub use weinrib_halperin::{

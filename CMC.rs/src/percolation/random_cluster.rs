@@ -56,10 +56,10 @@ use core::fmt;
 use carlo_rs::{Context, MonteCarlo};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
+use super::recording::record_bond_analysis;
 use super::{
-    analyze_bonds, analyze_bonds_with_labels, BondBernoulli, BondSample, EdgeActivity,
-    ObservablePlan, ObservablePlanError, Probability, ProbabilityError, ProbabilityField,
-    SampleView, SamplingError, StaticConfiguration,
+    BondBernoulli, BondSample, EdgeActivity, ObservablePlan, ObservablePlanError, Probability,
+    ProbabilityError, ProbabilityField, SamplingError, StaticConfiguration,
 };
 use crate::{CsrLattice, GraphView, UndirectedGraphView};
 
@@ -290,24 +290,13 @@ impl MonteCarlo for RandomClusterMC {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        let result = if self.plan.requests_labels() {
-            analyze_bonds_with_labels(
-                &self.lattice,
-                &self.mask,
-                self.plan.boundary_queries(),
-                &mut self.workspace,
-            )
-        } else {
-            analyze_bonds(
-                &self.lattice,
-                &self.mask,
-                self.plan.boundary_queries(),
-                &mut self.workspace,
-            )
-        }
-        .expect("constructor prepared matching analysis domains");
-        let sample = SampleView::from_analysis(&result, self.lattice.vertex_count(), None);
-        self.plan.record(&sample, ctx);
+        record_bond_analysis(
+            &self.lattice,
+            &self.mask,
+            &self.plan,
+            &mut self.workspace,
+            ctx,
+        );
     }
 
     fn name(&self) -> &'static str {

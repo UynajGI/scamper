@@ -73,10 +73,8 @@ use carlo_rs::{Context, MonteCarlo};
 use rand::{Rng, RngExt};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-use super::{
-    analyze, analyze_with_labels, BondSample, ComponentWorkspace, ObservablePlan,
-    ObservablePlanError, SampleView, VertexActivity,
-};
+use super::recording::record_component_analysis;
+use super::{BondSample, ComponentWorkspace, ObservablePlan, ObservablePlanError, VertexActivity};
 use crate::{CsrLattice, EdgeId, GraphView, UndirectedGraphView, VertexId};
 
 /// All-active vertex activity: the vertex half of bond percolation semantics.
@@ -376,26 +374,7 @@ impl MonteCarlo for EdwardsSokalMC {
         } = self;
         // The measured configuration is the exposed sample: the same
         // BondSample returned by `last_bond_sample()` after this sweep.
-        let result = if plan.requests_labels() {
-            analyze_with_labels(
-                lattice,
-                vertices,
-                sample,
-                plan.boundary_queries(),
-                workspace,
-            )
-        } else {
-            analyze(
-                lattice,
-                vertices,
-                sample,
-                plan.boundary_queries(),
-                workspace,
-            )
-        }
-        .expect("constructor validated FK-draw and plan domains");
-        let view = SampleView::from_analysis(&result, lattice.vertex_count(), None);
-        plan.record(&view, ctx);
+        record_component_analysis(lattice, vertices, sample, plan, workspace, None, ctx);
     }
 
     fn name(&self) -> &'static str {

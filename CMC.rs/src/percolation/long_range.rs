@@ -91,6 +91,7 @@ use rand::{Rng, RngExt};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::process::{IncrementalError, IncrementalUnionWorkspace, ProcessError};
+use crate::percolation::{FixedSeries, SeriesPad};
 use crate::{EdgeId, GraphView, Incidence, UndirectedGraphView, VertexId};
 
 /// A finite box of Z^d: per-dimension side lengths and their derived
@@ -487,7 +488,7 @@ pub struct LongRangePercolationMC {
     steps: usize,
     workspace: LongRangeWorkspace,
     uniforms: Vec<f64>,
-    history: Vec<f64>,
+    history: FixedSeries,
     outcome: LongRangeOutcome,
 }
 
@@ -511,10 +512,7 @@ impl LongRangePercolationMC {
             .try_reserve_exact(box_.pairs())
             .map_err(LongRangeError::from)?;
         uniforms.resize(box_.pairs(), 0.0);
-        let mut history = Vec::new();
-        history
-            .try_reserve_exact(steps)
-            .map_err(LongRangeError::from)?;
+        let history = FixedSeries::try_new(steps).map_err(LongRangeError::from)?;
         Ok(Self {
             box_,
             beta,
@@ -554,7 +552,7 @@ impl LongRangePercolationMC {
 
     /// The fixed-length recorded array of the last realization.
     pub fn last_history(&self) -> &[f64] {
-        &self.history
+        self.history.as_slice()
     }
 
     /// The workspace of the last realization (occupied pairs and substrate
@@ -590,15 +588,12 @@ impl LongRangePercolationMC {
         // the realized length repeat the final value.
         let summaries = self.workspace.substrate().trajectory().summaries();
         let base = self.box_.vertices();
-        let final_largest = self.outcome.largest_component_size;
-        self.history.clear();
-        self.history.extend((0..self.steps).map(|step| {
-            if step < self.outcome.added_edges {
-                summaries[base + step].largest_component_size as f64
-            } else {
-                final_largest as f64
-            }
-        }));
+        let final_largest = self.outcome.largest_component_size as f64;
+        self.history.fill(
+            (0..self.outcome.added_edges)
+                .map(|step| summaries[base + step].largest_component_size as f64),
+            SeriesPad::Value(final_largest),
+        );
     }
 }
 
@@ -610,7 +605,7 @@ impl MonteCarlo for LongRangePercolationMC {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        ctx.measure_array("LongRangeLargestSize", &self.history)
+        ctx.measure_array("LongRangeLargestSize", self.history.as_slice())
             .expect("array shape is fixed at construction");
         ctx.measure("LongRangeAddedEdges", self.outcome.added_edges as f64);
         ctx.measure(

@@ -124,10 +124,10 @@ use carlo_rs::{Context, MonteCarlo};
 use rand::{Rng, RngExt};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
+use super::recording::record_component_analysis;
 use super::{
-    analyze, analyze_with_labels, ComponentWorkspace, ObservablePlan, ObservablePlanError,
-    OccupationLaw, Probability, ProbabilityError, SampleView, SamplingError, SiteBernoulli,
-    StaticConfiguration,
+    ComponentWorkspace, ObservablePlan, ObservablePlanError, OccupationLaw, Probability,
+    ProbabilityError, SamplingError, SiteBernoulli, StaticConfiguration,
 };
 use crate::{CsrLattice, GraphView, UndirectedGraphView};
 
@@ -935,26 +935,15 @@ impl MonteCarlo for CorrelatedPercolationMC {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        let result = if self.plan.requests_labels() {
-            analyze_with_labels(
-                &self.lattice,
-                &self.configuration,
-                &self.configuration,
-                self.plan.boundary_queries(),
-                &mut self.workspace,
-            )
-        } else {
-            analyze(
-                &self.lattice,
-                &self.configuration,
-                &self.configuration,
-                self.plan.boundary_queries(),
-                &mut self.workspace,
-            )
-        }
-        .expect("constructor prepared matching analysis domains");
-        let sample = SampleView::from_analysis(&result, self.lattice.vertex_count(), None);
-        self.plan.record(&sample, ctx);
+        record_component_analysis(
+            &self.lattice,
+            &self.configuration,
+            &self.configuration,
+            &self.plan,
+            &mut self.workspace,
+            None,
+            ctx,
+        );
     }
 
     fn name(&self) -> &'static str {

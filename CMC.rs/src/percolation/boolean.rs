@@ -80,9 +80,10 @@ use rand::RngExt;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::continuum::{candidate_pairs_from_configuration, CandidatePairGraph, ContinuumError};
+use super::recording::record_component_analysis;
 use super::{
-    analyze, analyze_with_labels, ComponentWorkspace, EdgeActivity, ObservablePlan,
-    ObservablePlanError, SampleView, VertexActivity,
+    ComponentWorkspace, EdgeActivity, ObservablePlan, ObservablePlanError, SampleView,
+    VertexActivity,
 };
 use crate::particle::{OrthorhombicCell, ParticleConfiguration};
 use crate::topology::{EdgeId, GraphView, Incidence, UndirectedGraphView, VertexId};
@@ -890,26 +891,15 @@ impl<const D: usize> MonteCarlo for BooleanPercolationMC<D> {
         self.plan
             .validate(graph.vertex_count())
             .expect("constructor validated the plan at the count ceiling");
-        let result = if self.plan.requests_labels() {
-            analyze_with_labels(
-                &graph,
-                &AllGrains(graph.vertex_count()),
-                &AllOverlaps(graph.pair_count()),
-                self.plan.boundary_queries(),
-                &mut self.workspace,
-            )
-        } else {
-            analyze(
-                &graph,
-                &AllGrains(graph.vertex_count()),
-                &AllOverlaps(graph.pair_count()),
-                self.plan.boundary_queries(),
-                &mut self.workspace,
-            )
-        }
-        .expect("constructor prepared matching analysis domains");
-        let sample = SampleView::from_analysis(&result, graph.vertex_count(), None);
-        self.plan.record(&sample, ctx);
+        record_component_analysis(
+            &graph,
+            &AllGrains(graph.vertex_count()),
+            &AllOverlaps(graph.pair_count()),
+            &self.plan,
+            &mut self.workspace,
+            None,
+            ctx,
+        );
     }
 
     fn name(&self) -> &'static str {
