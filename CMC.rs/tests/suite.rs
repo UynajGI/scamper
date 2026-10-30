@@ -174,6 +174,9 @@ mod percolation_scan_heterogeneous;
 mod percolation_spec;
 #[path = "physics/percolation_sweeny.rs"]
 mod percolation_sweeny;
+#[cfg(feature = "temporal")]
+#[path = "physics/percolation_temporal.rs"]
+mod percolation_temporal;
 #[path = "physics/percolation_winding.rs"]
 mod percolation_winding;
 #[path = "physics/percolation_zscore.rs"]

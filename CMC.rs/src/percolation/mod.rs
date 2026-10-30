@@ -59,6 +59,8 @@ mod series;
 mod spec;
 mod summary;
 mod sweeny;
+#[cfg(feature = "temporal")]
+mod temporal;
 mod weinrib_halperin;
 mod workspace;
 
@@ -180,6 +182,11 @@ pub use spec::{
 };
 pub use summary::ComponentSummary;
 pub use sweeny::{SweenyAcceptance, SweenyError, SweenyMC, SweenyProposal, SweenyRates};
+#[cfg(feature = "temporal")]
+pub use temporal::{
+    contact_ensemble, contact_process_run, ContactEnsemble, ContactError, ContactPatch,
+    ContactProcessModel, ContactRun, ContactState, TemporalError,
+};
 pub use weinrib_halperin::{
     bracket, flip_bracket, FlipBracket, HarrisBracket, WeinribHalperinError, WeinribHalperinMap,
 };

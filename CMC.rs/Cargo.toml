@@ -149,6 +149,7 @@ harness = false
 default = []
 allocation-probe = ["dep:allocation-counter"]
 io = ["dep:serde"]
+temporal = []
 cache-audit = []
 hdf5 = ["carlo-rs/hdf5"]
 mpi = ["carlo-rs/mpi"]

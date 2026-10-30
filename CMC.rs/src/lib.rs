@@ -188,6 +188,11 @@ pub use percolation::{
     ThresholdLadderSpec, WeinribHalperinError, WeinribHalperinMap, BOOTSTRAP_RESAMPLES,
     PEAK_FIT_RADIUS,
 };
+#[cfg(feature = "temporal")]
+pub use percolation::{
+    contact_ensemble, contact_process_run, ContactEnsemble, ContactError, ContactPatch,
+    ContactProcessModel, ContactRun, ContactState, TemporalError,
+};
 #[cfg(feature = "allocation-probe")]
 #[doc(hidden)]
 pub use percolation::{
