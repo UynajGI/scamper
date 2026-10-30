@@ -154,6 +154,8 @@ mod percolation_heterogeneous_zscore;
 mod percolation_law_extension;
 #[path = "physics/percolation_law_zscore.rs"]
 mod percolation_law_zscore;
+#[path = "physics/percolation_multiplex_bracket.rs"]
+mod percolation_multiplex_bracket;
 #[path = "physics/percolation_network.rs"]
 mod percolation_network;
 #[path = "physics/percolation_network_input.rs"]

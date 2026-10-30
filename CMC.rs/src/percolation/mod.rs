@@ -134,9 +134,9 @@ pub use long_range_distances::{
 };
 pub use network::{
     csr_from_edge_list, multiplex_from_edges, AttackGrid, AttackOrder, AttackOrderContext,
-    AttackPolicy, DegreeAttackMC, DegreeScratch, DuplicateEdgePolicy, EdgeListSpec, MultiplexError,
-    MultiplexNetwork, MutualComponent, NetworkError, NetworkInputError, NetworkPercolationError,
-    NetworkProfile, RandomFailureMC, SelfLoopPolicy,
+    AttackPolicy, DegreeAttackMC, DegreeScratch, DuplicateEdgePolicy, EdgeListSpec,
+    MultiplexCascadeMC, MultiplexError, MultiplexNetwork, MutualComponent, NetworkError,
+    NetworkInputError, NetworkPercolationError, NetworkProfile, RandomFailureMC, SelfLoopPolicy,
 };
 #[cfg(feature = "io")]
 pub use network::{

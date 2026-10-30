@@ -20,6 +20,11 @@
 //! lowest vertex ID), so the result is deterministic. Random initial
 //! failures and more than two layers are outside X2's first slice.
 
+use carlo_rs::{Context, MonteCarlo};
+use rand::{Rng, RngExt};
+use rand_xoshiro::Xoshiro256PlusPlus;
+
+use crate::percolation::{Probability, ProbabilityError};
 use crate::{
     analyze_with_labels, Bond, BondType, ComponentWorkspace, CsrLattice, EdgeActivity, GraphView,
     UndirectedGraphView, VertexActivity,
@@ -55,6 +60,10 @@ pub enum MultiplexError {
     },
     /// The monotone cascade failed to stabilize within `2V + 2` contractions.
     Cascade { steps: usize },
+    /// An initial-activity mask does not match the vertex count.
+    ActivityDomain { expected: usize, actual: usize },
+    /// The initial survival probability is outside `[0, 1]`.
+    Probability(ProbabilityError),
 }
 
 impl core::fmt::Display for MultiplexError {
@@ -78,11 +87,25 @@ impl core::fmt::Display for MultiplexError {
                 formatter,
                 "two-layer cascade did not stabilize after {steps} contractions"
             ),
+            Self::ActivityDomain { expected, actual } => write!(
+                formatter,
+                "initial activity covers {actual} vertices; expected {expected}"
+            ),
+            Self::Probability(source) => {
+                write!(formatter, "invalid survival probability: {source}")
+            }
         }
     }
 }
 
-impl std::error::Error for MultiplexError {}
+impl std::error::Error for MultiplexError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Probability(source) => Some(source),
+            _ => None,
+        }
+    }
+}
 
 impl MultiplexNetwork {
     /// Build the two-layer network; both layers must cover the same dense
@@ -128,9 +151,28 @@ impl MultiplexNetwork {
     /// assert_eq!(mutual.fraction(), 0.5);
     /// ```
     pub fn mutual_component(&self) -> Result<MutualComponent, MultiplexError> {
+        let alive = vec![true; self.vertices()];
+        self.mutual_component_from(&alive)
+    }
+
+    /// Run the cascade from an explicit initial-activity mask.
+    ///
+    /// `initial[i] == true` means vertex `i` survived the primary failure;
+    /// vertices outside the mask are never revived. The mask must cover the
+    /// shared vertex set.
+    pub fn mutual_component_from(
+        &self,
+        initial: &[bool],
+    ) -> Result<MutualComponent, MultiplexError> {
         let vertices = self.vertices();
+        if initial.len() != vertices {
+            return Err(MultiplexError::ActivityDomain {
+                expected: vertices,
+                actual: initial.len(),
+            });
+        }
         let mut workspace = ComponentWorkspace::new();
-        let mut alive = vec![true; vertices];
+        let mut alive = initial.to_vec();
         let mut steps = 0usize;
         let max_steps = 2 * vertices + 2;
         loop {
@@ -245,6 +287,109 @@ fn largest_component(
         .enumerate()
         .filter_map(|(vertex, label)| (*label == Some(root)).then_some(vertex))
         .collect()
+}
+
+/// Scheduler adapter: random primary failures followed by the two-layer
+/// mutual-component cascade.
+///
+/// One `sweep()` draws one survival mask (one `f64` per vertex in ascending
+/// dense order; vertex survives iff `draw < survival`), runs the cascade to
+/// its fixed point, and stores the outcome. One `measure()` records
+/// `MultiplexMutualFraction` (mutual vertices / total vertices),
+/// `MultiplexMutualVertices`, `MultiplexInitialVertices`, and
+/// `MultiplexCascadeIterations`.
+///
+/// Configure `thermalization_sweeps = 0`. The cascade allocates its working
+/// vectors per sweep (the analysis layer predates a reusable cascade
+/// workspace); this is documented rather than hidden.
+pub struct MultiplexCascadeMC {
+    network: MultiplexNetwork,
+    survival: Probability,
+    initial: Vec<bool>,
+    mutual_vertices: usize,
+    initial_vertices: usize,
+    iterations: usize,
+}
+
+impl MultiplexCascadeMC {
+    /// Build the adapter; the network must be non-empty and `survival` valid.
+    pub fn new(network: MultiplexNetwork, survival: f64) -> Result<Self, MultiplexError> {
+        let survival = Probability::new(survival).map_err(MultiplexError::Probability)?;
+        let initial = vec![false; network.vertices()];
+        Ok(Self {
+            network,
+            survival,
+            initial,
+            mutual_vertices: 0,
+            initial_vertices: 0,
+            iterations: 0,
+        })
+    }
+
+    pub const fn network(&self) -> &MultiplexNetwork {
+        &self.network
+    }
+
+    /// Survival probability of the primary failure step.
+    pub const fn survival(&self) -> f64 {
+        self.survival.get()
+    }
+
+    /// Mutual-component size of the last sweep.
+    pub const fn mutual_vertices(&self) -> usize {
+        self.mutual_vertices
+    }
+
+    /// Primary survivors of the last sweep.
+    pub const fn initial_vertices(&self) -> usize {
+        self.initial_vertices
+    }
+
+    /// Cascade contractions of the last sweep (`2` per full round).
+    pub const fn iterations(&self) -> usize {
+        self.iterations
+    }
+
+    /// Draw the primary failure mask and run one complete cascade.
+    ///
+    /// Draw contract: one `f64` per vertex in ascending dense order, one
+    /// realization per call. Exposed for deterministic replay.
+    pub fn realize<R: Rng + ?Sized>(&mut self, rng: &mut R) {
+        let survival = self.survival.get();
+        for slot in self.initial.iter_mut() {
+            *slot = rng.random::<f64>() < survival;
+        }
+        self.initial_vertices = self.initial.iter().filter(|&&alive| alive).count();
+        let mutual = self
+            .network
+            .mutual_component_from(&self.initial)
+            .expect("constructor validated the shared vertex domain");
+        self.mutual_vertices = mutual.active_vertices();
+        self.iterations = mutual.iterations();
+    }
+}
+
+impl MonteCarlo for MultiplexCascadeMC {
+    type Rng = Xoshiro256PlusPlus;
+
+    fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
+        self.realize(&mut ctx.rng);
+    }
+
+    fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
+        let vertices = self.network.vertices();
+        ctx.measure(
+            "MultiplexMutualFraction",
+            self.mutual_vertices as f64 / vertices as f64,
+        );
+        ctx.measure("MultiplexMutualVertices", self.mutual_vertices as f64);
+        ctx.measure("MultiplexInitialVertices", self.initial_vertices as f64);
+        ctx.measure("MultiplexCascadeIterations", self.iterations as f64);
+    }
+
+    fn name(&self) -> &'static str {
+        "MultiplexCascade"
+    }
 }
 
 /// Convenience: two-layer network from raw edge lists.
