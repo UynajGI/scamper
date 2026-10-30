@@ -292,9 +292,12 @@ Progress note (2026-10-30): X2b adds explicit initial-activity masks
 primary survival, then the cascade; records mutual fraction, mutual and
 initial vertex counts, contractions). Anchor bracket: on configuration-
 model Poisson ER layers with N=1024, the mutual fraction is ~0.001 below
-mean degree 2.2 and grows above it; the 0.2-fraction crossing lands at
-c=2.399 against Buldyrev's 2.4554 (finite-size bracket, not a four-digit
-reproduction). A layer-aware `SampleView` and more than two layers remain
+mean degree 2.2 and grows above it. The committed 10-seed ladder gives a
+0.2-fraction crossing of c=2.359; a 20-seed review ladder at
+N=512/1024/2048 gives 2.361/2.426/2.414, approaching Buldyrev's 2.4554
+from below (finite-size bracket, not a four-digit reproduction). The
+configuration-model layers now assert that their realized mean degree
+matches `c`. A layer-aware `SampleView` and more than two layers remain
 outstanding.
 
 ### X3 — Hypergraph and simplicial percolation
@@ -331,12 +334,15 @@ direct reference order (recovery events in ascending vertex order, then
 transmission events in ascending edge order; zero-rate events are never
 selected), states are explicit activity masks, and `contact_ensemble`
 reports finite-time survival and density over seeded initial draws. The
-anchor bracket uses the branching threshold `lambda_c = 1/(k-1)` on a
-3-regular random graph: the 0.05-density crossing is lambda=0.535 against
-0.5, with subcritical extinction and supercritical survival. Temporal-
-network input (time-varying edge activity) and a scheduler adapter remain
-X4b; the recorded claims are finite-time, finite-size brackets, never a
-thermodynamic-limit order parameter.
+tree/branching value `lambda = 1/(k-1)` on a 3-regular random graph is a
+reference line, not a certified finite-size threshold: the T=15 ladder
+records finite-time activity (extinct below, active above, 0.05-density
+crossing lambda=0.535), while a T=100 negative control extinguishes
+lambda=0.55 on N<=2000. An independent first-reaction simulator agrees on
+extinction/activity (lambda=0.2: 0/6 vs 0/6; lambda=0.9: 4/6 vs 6/6).
+Temporal-network input (time-varying edge activity) and a scheduler
+adapter remain X4b; no quasi-stationary or thermodynamic-limit threshold
+is claimed.
 
 ## 5. Research track R
 
@@ -465,12 +471,13 @@ roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
 | X1 network I/O | Done (feature-gated `io`: weighted edge-list v1 text + multiplex JSON v1 over one validated document; round-trip, reference-graph, rejection, and Criterion gates green; independent review pending) |
 | X2 multiplex/interdependent | In progress (X2a: two-layer one-to-one mutual-component/cascade analysis over a shared vertex set, independent reference-map enumeration, typed rejections; X2b: explicit initial activity, `MultiplexCascadeMC` preset adapter, and the Buldyrev c*=2.4554 finite-size bracket; layer-aware views and >2 layers pending) |
 | X3 hypergraph/simplicial | Done (dense incidence hypergraph with Bernoulli vertex/hyperedge activity, union-find component analysis, canonical lowest-ID rule, per-vertex labels; exact incidence-BFS enumeration and rejection matrix; independent review pending) |
-| X4 temporal/directed dynamics | In progress (X4a: feature-gated contact process on the Gillespie substrate with direct reference-order events, deterministic ensemble runs, and the 3-regular branching-threshold bracket lambda_c=0.535 vs 0.5; temporal-network input and scheduler adapter pending) |
+| X4 temporal/directed dynamics | In progress (X4a: feature-gated contact process on the Gillespie substrate with direct reference-order events, deterministic ensembles, an independent first-reaction reference, and a finite-time activity bracket at lambda=0.535; the T=100 negative control shows this is not a threshold; temporal-network input and scheduler adapter pending) |
 | R1 C3 certification | Done — Experimental (negative result recorded: iid control calibrated, correlated flip not certified at L<=2048; evidence above) |
 | R2 Q3 phase diagram | Done — Experimental (two-mode estimator + exploratory q-ladder delivered; L=12 ordering correct, no certified latent heat; evidence above) |
 | R3 F3 large-scale research | Done — Experimental (F3 Validated at its recorded scale; aging exploratory; no large-scale ADH bracket certified) |
 
 Final audit (2026-10-30): [2026-10-30-v3-final-audit.md](../reviews/2026-10-30-v3-final-audit.md).
+Physics review (2026-10-30): [2026-10-30-v3-physics-review.md](../reviews/2026-10-30-v3-physics-review.md).
 Verdict: conditional merge readiness — the quick suite and clippy are
 green, A3c/A4c/A5e/A6a/X2b/X4a are delivered, and R1–R3 record
 Experimental outcomes; A3 preset collapse, A4 grids/structural modes, A6

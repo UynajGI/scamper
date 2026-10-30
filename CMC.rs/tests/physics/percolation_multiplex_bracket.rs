@@ -4,11 +4,17 @@
 //! review §V. For two fully interdependent Poisson random graphs with mean
 //! degree `c`, the mutual giant component emerges at `c* ~ 2.4554`. This is
 //! a finite-size bracket: the test asserts subcritical collapse and
-//! supercritical survival, then brackets the 0.2-fraction crossing around
-//! the literature value, not a four-digit reproduction.
+//! supercritical survival, checks that the configuration-model layers
+//! realize the requested mean degree, and brackets the 0.2-fraction crossing
+//! around the literature value. The 0.2 level is a finite-size proxy: for a
+//! first-order transition the crossing approaches `c*` from below as `N`
+//! grows, so this is not a four-digit reproduction.
 
 use carlo_rs::{Context, MonteCarlo};
-use cmc_rs::{Bond, BondType, CsrLattice, MultiplexCascadeMC, MultiplexError, MultiplexNetwork};
+use cmc_rs::{
+    Bond, BondType, CsrLattice, MultiplexCascadeMC, MultiplexError, MultiplexNetwork,
+    UndirectedGraphView,
+};
 use rand::{Rng, RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
@@ -50,33 +56,50 @@ fn er_layer(n: usize, mean: f64, rng: &mut impl Rng) -> CsrLattice {
     CsrLattice::from_edges(n, bonds)
 }
 
-fn cascade_fraction(vertices: usize, mean: f64, seed: u64) -> f64 {
+/// Mutual fraction and the realized mean degree averaged over both layers
+/// (`(E_a + E_b) / N`; each layer alone has `2 E / N`).
+fn cascade_fraction(vertices: usize, mean: f64, seed: u64) -> (f64, f64) {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
     let layer_a = er_layer(vertices, mean, &mut rng);
     let layer_b = er_layer(vertices, mean, &mut rng);
+    let realised = (layer_a.edge_count() + layer_b.edge_count()) as f64 / vertices as f64;
     let network = MultiplexNetwork::new(layer_a, layer_b).expect("shared vertex set");
-    network.mutual_component().expect("cascade").fraction()
+    (
+        network.mutual_component().expect("cascade").fraction(),
+        realised,
+    )
 }
 
 #[test]
 fn two_layer_er_cascade_brackets_the_buldyrev_threshold() {
     let vertices = 1024;
-    let seeds = 6u64;
+    let seeds = 10u64;
     let mut rows = Vec::new();
     let mut mean_degree = 1.6;
     while mean_degree <= 3.4 + 1e-12 {
         let mut sum = 0.0;
+        let mut realised_sum = 0.0;
         for seed in 0..seeds {
-            sum += cascade_fraction(
+            let (fraction, realised) = cascade_fraction(
                 vertices,
                 mean_degree,
                 0x4137_0001 ^ (mean_degree.to_bits()) ^ seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
             );
+            assert!(
+                (realised - mean_degree).abs() < 0.25,
+                "configuration model realized mean degree {realised:.3}, requested {:.3}",
+                mean_degree
+            );
+            sum += fraction;
+            realised_sum += realised;
         }
         let fraction = sum / seeds as f64;
-        eprintln!("X2 mean degree {mean_degree:.2}: mutual fraction {fraction:.4}");
+        eprintln!(
+            "X2 mean degree {mean_degree:.2} (realized {:.3}): mutual fraction {fraction:.4}",
+            realised_sum / seeds as f64
+        );
         rows.push((mean_degree, fraction));
-        mean_degree += 0.2;
+        mean_degree += 0.1;
     }
 
     let (_, first) = rows[0];

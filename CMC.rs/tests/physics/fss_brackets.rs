@@ -112,6 +112,9 @@ fn generic_fss_brackets_the_iid_site_threshold() {
     }
     let ladder = sample_ladder(&sides, &probabilities, 128, 0x4135_0001);
 
+    // Physics-review seed spread at this ladder: crossing means
+    // 0.598-0.618 against the exact 0.592746; the 0.06 per-crossing and
+    // 0.03 mean tolerances cover that finite-size/seed scatter.
     let largest = adjacent_crossings(&ladder.largest);
     let binder = adjacent_crossings(&ladder.binder);
     for (crossing, sizes) in binder.iter().zip(sides.windows(2)) {
