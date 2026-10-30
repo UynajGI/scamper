@@ -126,6 +126,7 @@ use rand::{Rng, RngExt};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::{IncrementalError, IncrementalUnionWorkspace, ProcessError, StampFlags};
+use crate::percolation::{FixedSeries, SeriesPad};
 use crate::{EdgeId, UndirectedGraphView, VertexId};
 
 /// Which element carries the frozen per-realization threshold field.
@@ -179,6 +180,155 @@ pub enum InvasionTrapping {
         /// duplicate-free.
         exit: Vec<usize>,
     },
+}
+
+/// Stop policy for one invasion realization.
+///
+/// The core calls [`Self::after_seeding`] once after planting the seeds and
+/// [`Self::after_step`] after every accepted growth step. Built-ins preserve
+/// the three documented reference behaviors exactly. A rule that needs
+/// randomness must draw it before the run (the core spends no RNG here).
+pub trait InvasionStopRule {
+    /// Stop right after planting the seeds (before any growth).
+    fn after_seeding(&self, workspace: &InvasionWorkspace) -> Option<InvasionStopReason>;
+
+    /// Stop after growth step `step` (1-based) accepted one vertex.
+    fn after_step(&self, workspace: &InvasionWorkspace, step: usize) -> Option<InvasionStopReason>;
+
+    /// Reject a rule that cannot describe `vertices` vertices.
+    fn validate(&self, vertices: usize) -> Result<(), InvasionError>;
+
+    /// Stable provenance name.
+    fn name(&self) -> &str;
+}
+
+impl InvasionStopRule for InvasionStop {
+    fn after_seeding(&self, workspace: &InvasionWorkspace) -> Option<InvasionStopReason> {
+        match self {
+            Self::FirstSpanning { from, to } => (workspace.is_invaded(*from)
+                && workspace.is_invaded(*to))
+            .then_some(InvasionStopReason::SpanningStep),
+            Self::Steps(0) => Some(InvasionStopReason::StepBudget),
+            Self::GrowAll | Self::Steps(_) => None,
+        }
+    }
+
+    fn after_step(&self, workspace: &InvasionWorkspace, step: usize) -> Option<InvasionStopReason> {
+        match self {
+            Self::GrowAll => None,
+            Self::Steps(budget) => (*budget == step).then_some(InvasionStopReason::StepBudget),
+            Self::FirstSpanning { from, to } => (workspace.is_invaded(*from)
+                && workspace.is_invaded(*to))
+            .then_some(InvasionStopReason::SpanningStep),
+        }
+    }
+
+    fn validate(&self, vertices: usize) -> Result<(), InvasionError> {
+        if let Self::FirstSpanning { from, to } = self {
+            for vertex in [*from, *to] {
+                if vertex >= vertices {
+                    return Err(InvasionError::SpanningDomain { vertex, vertices });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Self::GrowAll => "grow-all",
+            Self::FirstSpanning { .. } => "first-spanning",
+            Self::Steps(_) => "step-budget",
+        }
+    }
+}
+
+/// Trapping policy for one invasion realization.
+///
+/// The core calls [`Self::prepare`] once, then (only when
+/// [`Self::filters_frontier`] is true) asks [`Self::invadable`] for each
+/// frontier entry in heap order. A `false` verdict retires the site
+/// permanently and counts it as trapped; custom rules share that semantic.
+pub trait InvasionTrappingRule {
+    /// Prepare per-realization workspace state (for example exit marks).
+    fn prepare(&self, _workspace: &mut InvasionWorkspace) {}
+
+    /// Whether frontier filtering is active for this rule.
+    fn filters_frontier(&self) -> bool {
+        false
+    }
+
+    /// Whether the frontier entry's un-invaded vertex is invadable.
+    ///
+    /// Called only when [`Self::filters_frontier`] is true and the site is
+    /// not retired. `workspace` is mutable so a rule may reuse the shared
+    /// escape-search scratch.
+    fn invadable<G: UndirectedGraphView>(
+        &self,
+        _graph: &G,
+        _workspace: &mut InvasionWorkspace,
+        _vertex: usize,
+    ) -> bool {
+        true
+    }
+
+    /// Reject a rule that cannot describe `vertices` vertices.
+    fn validate(&self, vertices: usize) -> Result<(), InvasionError>;
+
+    /// Stable provenance name.
+    fn name(&self) -> &str;
+}
+
+impl InvasionTrappingRule for InvasionTrapping {
+    fn prepare(&self, workspace: &mut InvasionWorkspace) {
+        if let Self::Trapping { exit } = self {
+            for &vertex in exit {
+                workspace.exit_marks[vertex] = 1;
+            }
+        }
+    }
+
+    fn filters_frontier(&self) -> bool {
+        matches!(self, Self::Trapping { .. })
+    }
+
+    fn invadable<G: UndirectedGraphView>(
+        &self,
+        graph: &G,
+        workspace: &mut InvasionWorkspace,
+        vertex: usize,
+    ) -> bool {
+        match self {
+            Self::NonTrapping => true,
+            Self::Trapping { .. } => workspace.escapes_to_exit(graph, vertex),
+        }
+    }
+
+    fn validate(&self, vertices: usize) -> Result<(), InvasionError> {
+        if let Self::Trapping { exit } = self {
+            if exit.is_empty() {
+                return Err(InvasionError::EmptyExitSet);
+            }
+            for &vertex in exit {
+                if vertex >= vertices {
+                    return Err(InvasionError::ExitDomain { vertex, vertices });
+                }
+            }
+            for (position, &vertex) in exit.iter().enumerate() {
+                if exit[..position].contains(&vertex) {
+                    return Err(InvasionError::DuplicateExit { vertex });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Self::NonTrapping => "non-trapping",
+            Self::Trapping { .. } => "trapping",
+        }
+    }
 }
 
 /// Why an invasion realization stopped.
@@ -509,15 +659,20 @@ fn reserve_exact<T: Clone>(
 /// in-domain, and duplicate-free. The workspace is re-prepared
 /// idempotently for the graph's sizes, so a correctly sized workspace
 /// never allocates in steady state.
-pub fn invasion_run<G: UndirectedGraphView>(
+pub fn invasion_run<G, S, P>(
     graph: &G,
     mode: InvasionMode,
     thresholds: &[f64],
     seeds: &[usize],
-    stop: InvasionStop,
-    trapping: &InvasionTrapping,
+    stop: S,
+    trapping: &P,
     workspace: &mut InvasionWorkspace,
-) -> Result<InvasionOutcome, InvasionError> {
+) -> Result<InvasionOutcome, InvasionError>
+where
+    G: UndirectedGraphView,
+    S: InvasionStopRule,
+    P: InvasionTrappingRule,
+{
     let vertices = graph.vertex_count();
     let edges = graph.edge_count();
     if vertices == 0 {
@@ -538,13 +693,9 @@ pub fn invasion_run<G: UndirectedGraphView>(
             return Err(InvasionError::ThresholdNotFinite { index, value });
         }
     }
-    validate_seeds_and_policies(seeds, stop, trapping, vertices)?;
+    validate_seeds_and_policies(seeds, &stop, trapping, vertices)?;
     workspace.prepare(vertices, edges)?;
-    if let InvasionTrapping::Trapping { exit } = trapping {
-        for &vertex in exit {
-            workspace.exit_marks[vertex] = 1;
-        }
-    }
+    trapping.prepare(workspace);
 
     // Plant the seeds (substrate step 0).
     for &seed in seeds {
@@ -555,13 +706,8 @@ pub fn invasion_run<G: UndirectedGraphView>(
             .activate_vertex(graph, VertexId::from_valid_index(seed), 0)
             .map_err(|error| InvasionError::Substrate(error.to_string()))?;
     }
-    if let InvasionStop::FirstSpanning { from, to } = stop {
-        if workspace.is_invaded(from) && workspace.is_invaded(to) {
-            return Ok(finished(workspace, 0, InvasionStopReason::SpanningStep, 0));
-        }
-    }
-    if let InvasionStop::Steps(0) = stop {
-        return Ok(finished(workspace, 0, InvasionStopReason::StepBudget, 0));
+    if let Some(reason) = stop.after_seeding(workspace) {
+        return Ok(finished(workspace, 0, reason, 0));
     }
 
     for &seed in seeds {
@@ -573,11 +719,11 @@ pub fn invasion_run<G: UndirectedGraphView>(
         if workspace.parent[entry.vertex] != usize::MAX {
             continue; // stale bond entry: far endpoint invaded meanwhile
         }
-        if matches!(trapping, InvasionTrapping::Trapping { .. }) {
+        if trapping.filters_frontier() {
             if workspace.retired[entry.vertex] != 0 {
                 continue; // retired earlier: entry consumed without growth
             }
-            if !workspace.escapes_to_exit(graph, entry.vertex) {
+            if !trapping.invadable(graph, workspace, entry.vertex) {
                 // Trapped forever (the defending phase only shrinks):
                 // retire the site permanently.
                 workspace.retired[entry.vertex] = 1;
@@ -610,28 +756,8 @@ pub fn invasion_run<G: UndirectedGraphView>(
             .map_err(|error| InvasionError::Substrate(error.to_string()))?;
         workspace.push_growth(graph, thresholds, mode, entry.vertex);
 
-        match stop {
-            InvasionStop::GrowAll => {}
-            InvasionStop::Steps(budget) => {
-                if budget == step {
-                    return Ok(finished(
-                        workspace,
-                        trapped_sites,
-                        InvasionStopReason::StepBudget,
-                        step,
-                    ));
-                }
-            }
-            InvasionStop::FirstSpanning { from, to } => {
-                if workspace.is_invaded(from) && workspace.is_invaded(to) {
-                    return Ok(finished(
-                        workspace,
-                        trapped_sites,
-                        InvasionStopReason::SpanningStep,
-                        step,
-                    ));
-                }
-            }
+        if let Some(reason) = stop.after_step(workspace, step) {
+            return Ok(finished(workspace, trapped_sites, reason, step));
         }
     }
 
@@ -645,12 +771,16 @@ pub fn invasion_run<G: UndirectedGraphView>(
 }
 
 /// Shared seed/stop/trapping domain validation (core and adapter).
-fn validate_seeds_and_policies(
+fn validate_seeds_and_policies<S, P>(
     seeds: &[usize],
-    stop: InvasionStop,
-    trapping: &InvasionTrapping,
+    stop: &S,
+    trapping: &P,
     vertices: usize,
-) -> Result<(), InvasionError> {
+) -> Result<(), InvasionError>
+where
+    S: InvasionStopRule,
+    P: InvasionTrappingRule,
+{
     if seeds.is_empty() {
         return Err(InvasionError::EmptySeeds);
     }
@@ -664,31 +794,8 @@ fn validate_seeds_and_policies(
             return Err(InvasionError::DuplicateSeed { seed });
         }
     }
-    if let InvasionStop::FirstSpanning { from, to } = stop {
-        for vertex in [from, to] {
-            if vertex >= vertices {
-                return Err(InvasionError::SpanningDomain { vertex, vertices });
-            }
-        }
-    }
-    match trapping {
-        InvasionTrapping::NonTrapping => {}
-        InvasionTrapping::Trapping { exit } => {
-            if exit.is_empty() {
-                return Err(InvasionError::EmptyExitSet);
-            }
-            for &vertex in exit {
-                if vertex >= vertices {
-                    return Err(InvasionError::ExitDomain { vertex, vertices });
-                }
-            }
-            for (position, &vertex) in exit.iter().enumerate() {
-                if exit[..position].contains(&vertex) {
-                    return Err(InvasionError::DuplicateExit { vertex });
-                }
-            }
-        }
-    }
+    stop.validate(vertices)?;
+    trapping.validate(vertices)?;
     Ok(())
 }
 
@@ -727,28 +834,37 @@ fn finished(
 /// mode, stop, and trapping policies; `measure()` records it as ONE C0
 /// element-preserving vector sample plus scalars. Configure
 /// `thermalization_sweeps = 0`; realizations are i.i.d.
-pub struct InvasionPercolationMC<G: UndirectedGraphView> {
+pub struct InvasionPercolationMC<
+    G: UndirectedGraphView,
+    S: InvasionStopRule = InvasionStop,
+    P: InvasionTrappingRule = InvasionTrapping,
+> {
     graph: G,
     mode: InvasionMode,
     seeds: Vec<usize>,
-    stop: InvasionStop,
-    trapping: InvasionTrapping,
+    stop: S,
+    trapping: P,
     steps: usize,
     workspace: InvasionWorkspace,
     thresholds: Vec<f64>,
-    history: Vec<f64>,
+    history: FixedSeries,
     outcome: InvasionOutcome,
 }
 
-impl<G: UndirectedGraphView> InvasionPercolationMC<G> {
+impl<G, S, P> InvasionPercolationMC<G, S, P>
+where
+    G: UndirectedGraphView,
+    S: InvasionStopRule + Clone,
+    P: InvasionTrappingRule,
+{
     /// Build the adapter. `steps` is the recorded-array length (`>= 1`);
     /// every domain is validated here so `sweep` cannot fail.
     pub fn new(
         graph: G,
         mode: InvasionMode,
         seeds: Vec<usize>,
-        stop: InvasionStop,
-        trapping: InvasionTrapping,
+        stop: S,
+        trapping: P,
         steps: usize,
     ) -> Result<Self, InvasionError> {
         let vertices = graph.vertex_count();
@@ -758,7 +874,7 @@ impl<G: UndirectedGraphView> InvasionPercolationMC<G> {
         if steps == 0 {
             return Err(InvasionError::NoSteps);
         }
-        validate_seeds_and_policies(&seeds, stop, &trapping, vertices)?;
+        validate_seeds_and_policies(&seeds, &stop, &trapping, vertices)?;
         let mut workspace = InvasionWorkspace::new();
         workspace.prepare(vertices, graph.edge_count())?;
         let field_len = match mode {
@@ -770,9 +886,7 @@ impl<G: UndirectedGraphView> InvasionPercolationMC<G> {
             .try_reserve_exact(field_len)
             .map_err(|source| InvasionError::Capacity(ProcessError::from(source)))?;
         thresholds.resize(field_len, 0.0);
-        let mut history = Vec::new();
-        history
-            .try_reserve_exact(steps)
+        let history = FixedSeries::try_new(steps)
             .map_err(|source| InvasionError::Capacity(ProcessError::from(source)))?;
         Ok(Self {
             graph,
@@ -812,12 +926,12 @@ impl<G: UndirectedGraphView> InvasionPercolationMC<G> {
     }
 
     /// The explicit stop policy.
-    pub const fn stop(&self) -> InvasionStop {
-        self.stop
+    pub const fn stop(&self) -> &S {
+        &self.stop
     }
 
     /// The explicit trapping policy.
-    pub fn trapping(&self) -> &InvasionTrapping {
+    pub const fn trapping(&self) -> &P {
         &self.trapping
     }
 
@@ -833,7 +947,7 @@ impl<G: UndirectedGraphView> InvasionPercolationMC<G> {
 
     /// The fixed-length recorded array of the last realization.
     pub fn last_history(&self) -> &[f64] {
-        &self.history
+        self.history.as_slice()
     }
 
     /// Dense vertex indices in invasion order of the last realization.
@@ -872,27 +986,35 @@ impl<G: UndirectedGraphView> InvasionPercolationMC<G> {
                 thresholds,
                 ..
             } = self;
-            invasion_run(graph, *mode, thresholds, seeds, *stop, trapping, workspace)
-                .expect("constructor validated every domain")
+            invasion_run(
+                graph,
+                *mode,
+                thresholds,
+                seeds,
+                stop.clone(),
+                trapping,
+                workspace,
+            )
+            .expect("constructor validated every domain")
         };
         self.outcome = outcome;
         // Compress the accepted-threshold sequence into the fixed C0 shape:
         // entries past the growth length repeat the final accepted
         // threshold (zero acceptances fill 0.0).
         let accepted = self.workspace.accepted_thresholds();
-        let final_threshold = accepted.last().copied().unwrap_or(0.0);
-        self.history.clear();
-        self.history.extend((0..self.steps).map(|step| {
-            if step < accepted.len() {
-                accepted[step]
-            } else {
-                final_threshold
-            }
-        }));
+        self.history.fill(
+            accepted.iter().copied(),
+            SeriesPad::RepeatLast { fallback: 0.0 },
+        );
     }
 }
 
-impl<G: UndirectedGraphView> MonteCarlo for InvasionPercolationMC<G> {
+impl<G, S, P> MonteCarlo for InvasionPercolationMC<G, S, P>
+where
+    G: UndirectedGraphView,
+    S: InvasionStopRule + Clone,
+    P: InvasionTrappingRule,
+{
     type Rng = Xoshiro256PlusPlus;
 
     fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
@@ -900,7 +1022,7 @@ impl<G: UndirectedGraphView> MonteCarlo for InvasionPercolationMC<G> {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        ctx.measure_array("InvasionThresholdOrder", &self.history)
+        ctx.measure_array("InvasionThresholdOrder", self.history.as_slice())
             .expect("array shape is fixed at construction");
         ctx.measure("InvasionAcceptedTotal", self.outcome.accepted_total as f64);
         ctx.measure(

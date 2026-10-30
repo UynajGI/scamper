@@ -160,6 +160,8 @@ mod percolation_network_input;
 mod percolation_policy_extension;
 #[path = "physics/percolation_potts_phase.rs"]
 mod percolation_potts_phase;
+#[path = "physics/percolation_process_policy_extension.rs"]
+mod percolation_process_policy_extension;
 #[path = "physics/percolation_scan.rs"]
 mod percolation_scan;
 #[path = "physics/percolation_scan_heterogeneous.rs"]

@@ -18,22 +18,24 @@ mod kcore;
 use std::collections::TryReserveError;
 
 pub use achlioptas::{
-    AchlioptasError, AchlioptasGrid, AchlioptasProcessMC, AchlioptasRule, AchlioptasStepRecord,
-    CandidateSampling, EdgeUniverse, TiePolicy,
+    AchlioptasError, AchlioptasGrid, AchlioptasProcessMC, AchlioptasRule, AchlioptasScore,
+    AchlioptasStepRecord, AchlioptasTie, CandidateSampling, EdgeUniverse, TiePolicy,
 };
 pub use bootstrap::{
-    BootstrapDynamics, BootstrapError, BootstrapOutcome, BootstrapPercolationMC, BootstrapSeeds,
-    BootstrapThreshold, BootstrapWorkspace,
+    BootstrapDynamics, BootstrapError, BootstrapOutcome, BootstrapPercolationMC, BootstrapSeedRule,
+    BootstrapSeeds, BootstrapThreshold, BootstrapThresholdRule, BootstrapWorkspace,
 };
 pub use incremental::{
     IncrementalError, IncrementalSummary, IncrementalUnionWorkspace, ProcessTrajectory,
 };
 pub use invasion::{
     invasion_run, InvasionError, InvasionMode, InvasionOutcome, InvasionPercolationMC,
-    InvasionStop, InvasionStopReason, InvasionTrapping, InvasionWorkspace,
+    InvasionStop, InvasionStopReason, InvasionStopRule, InvasionTrapping, InvasionTrappingRule,
+    InvasionWorkspace,
 };
 pub use kcore::{
-    kcore_decompose, CoreThresholds, KCoreError, KCoreMC, KCoreSummary, KCoreWorkspace,
+    kcore_decompose, CoreThresholdRule, CoreThresholds, KCoreError, KCoreMC, KCoreSummary,
+    KCoreWorkspace,
 };
 
 /// Two-phase FIFO work queue over dense vertex indices.

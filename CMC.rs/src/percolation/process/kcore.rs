@@ -56,8 +56,8 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::{NeighborCounters, ProcessError, ProcessQueue, StampFlags};
 use crate::percolation::{
-    Probability, ProbabilityError, ProbabilityField, SiteBernoulli, StaticConfiguration,
-    VertexActivity,
+    FixedSeries, Probability, ProbabilityError, ProbabilityField, SeriesPad, SiteBernoulli,
+    StaticConfiguration, VertexActivity,
 };
 use crate::{CsrLattice, GraphView, UndirectedGraphView, VertexId};
 
@@ -77,6 +77,57 @@ impl CoreThresholds {
         u32::try_from(k)
             .map(Self::Uniform)
             .map_err(|_| KCoreError::ThresholdTooLarge { requested: k })
+    }
+}
+
+/// Policy for core-membership thresholds.
+///
+/// The workspace flattens the rule into one `u32` per vertex once per run.
+/// Reference order: built-ins read ascending dense vertex indices, and the
+/// final core is invariant under deletion order, so a custom rule only has
+/// to return the intended per-vertex threshold.
+pub trait CoreThresholdRule {
+    /// Reject a rule that cannot describe `vertices` vertices.
+    fn validate(&self, vertices: usize) -> Result<(), KCoreError>;
+
+    /// Fill the cleared workspace buffer with exactly `vertices` entries.
+    ///
+    /// Called only after [`Self::validate`] accepted the same vertex count.
+    fn fill(&self, thresholds: &mut Vec<u32>, vertices: usize);
+
+    /// Stable provenance name.
+    fn name(&self) -> &str;
+}
+
+impl CoreThresholdRule for CoreThresholds {
+    fn validate(&self, vertices: usize) -> Result<(), KCoreError> {
+        match self {
+            Self::Uniform(_) => Ok(()),
+            Self::PerVertex(per_vertex) => {
+                if per_vertex.len() == vertices {
+                    Ok(())
+                } else {
+                    Err(KCoreError::ThresholdLength {
+                        expected: vertices,
+                        actual: per_vertex.len(),
+                    })
+                }
+            }
+        }
+    }
+
+    fn fill(&self, thresholds: &mut Vec<u32>, vertices: usize) {
+        match self {
+            Self::Uniform(k) => thresholds.resize(vertices, *k),
+            Self::PerVertex(per_vertex) => thresholds.extend_from_slice(per_vertex),
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Self::Uniform(_) => "uniform",
+            Self::PerVertex(_) => "per-vertex",
+        }
     }
 }
 
@@ -192,9 +243,9 @@ fn reserve_vec<T>(buffer: &mut Vec<T>, capacity: usize) -> Result<(), KCoreError
 /// of the input, not of this order (see the module docs). Requires
 /// `initial_active.len() == graph.vertex_count()`; heterogeneous
 /// thresholds must match the vertex count.
-pub fn kcore_decompose<G: UndirectedGraphView>(
+pub fn kcore_decompose<G: UndirectedGraphView, T: CoreThresholdRule + ?Sized>(
     graph: &G,
-    thresholds: &CoreThresholds,
+    thresholds: &T,
     initial_active: &[bool],
     workspace: &mut KCoreWorkspace,
 ) -> Result<KCoreSummary, KCoreError> {
@@ -205,14 +256,7 @@ pub fn kcore_decompose<G: UndirectedGraphView>(
             actual: initial_active.len(),
         });
     }
-    if let CoreThresholds::PerVertex(per_vertex) = thresholds {
-        if per_vertex.len() != vertices {
-            return Err(KCoreError::ThresholdLength {
-                expected: vertices,
-                actual: per_vertex.len(),
-            });
-        }
-    }
+    thresholds.validate(vertices)?;
     // Wave and round counters are u32; one check covers both.
     u32::try_from(vertices).map_err(|_| KCoreError::CounterRange {
         value: vertices,
@@ -220,12 +264,7 @@ pub fn kcore_decompose<G: UndirectedGraphView>(
     })?;
     workspace.prepare(vertices)?;
     workspace.thresholds.clear();
-    match thresholds {
-        CoreThresholds::Uniform(k) => workspace.thresholds.resize(vertices, *k),
-        CoreThresholds::PerVertex(per_vertex) => {
-            workspace.thresholds.extend_from_slice(per_vertex);
-        }
-    }
+    thresholds.fill(&mut workspace.thresholds, vertices);
     workspace.active.clear();
     workspace.active.extend_from_slice(initial_active);
     workspace.queue.reset();
@@ -372,29 +411,29 @@ pub fn kcore_decompose<G: UndirectedGraphView>(
 /// value: the realization ensemble differs per point, so no single vector
 /// output could represent a sweep as one sample. `keep = 1` reduces the
 /// adapter to the deterministic full-activity decomposition.
-pub struct KCoreMC {
+pub struct KCoreMC<T = CoreThresholds> {
     lattice: CsrLattice,
     probability: Probability,
     law: SiteBernoulli<'static>,
     configuration: StaticConfiguration,
     workspace: KCoreWorkspace,
-    thresholds: CoreThresholds,
+    thresholds: T,
     budget: usize,
     /// Fixed-length C0 buffer: survivors truncated/padded to the budget.
-    survivors: Vec<f64>,
+    survivors: FixedSeries,
     /// Initial-activity copy handed to the analysis every sweep.
     initial: Vec<bool>,
     summary: KCoreSummary,
 }
 
-impl KCoreMC {
+impl<T: CoreThresholdRule> KCoreMC<T> {
     /// Build the adapter over an owned lattice.
     ///
     /// `recorded_rounds >= 1` fixes the `KCoreSurvivorCount` shape.
     pub fn new(
         lattice: CsrLattice,
         keep: f64,
-        thresholds: CoreThresholds,
+        thresholds: T,
         recorded_rounds: usize,
     ) -> Result<Self, KCoreError> {
         lattice
@@ -407,14 +446,7 @@ impl KCoreMC {
         if recorded_rounds == 0 {
             return Err(KCoreError::NoRecordedRounds);
         }
-        if let CoreThresholds::PerVertex(per_vertex) = &thresholds {
-            if per_vertex.len() != vertices {
-                return Err(KCoreError::ThresholdLength {
-                    expected: vertices,
-                    actual: per_vertex.len(),
-                });
-            }
-        }
+        thresholds.validate(vertices)?;
         let probability = Probability::new(keep).map_err(KCoreError::Probability)?;
         let law = SiteBernoulli::new(ProbabilityField::Uniform(probability));
         let mut workspace = KCoreWorkspace::default();
@@ -428,7 +460,7 @@ impl KCoreMC {
             workspace,
             thresholds,
             budget: recorded_rounds,
-            survivors: vec![0.0; recorded_rounds + 1],
+            survivors: FixedSeries::new(recorded_rounds + 1),
             initial: vec![false; vertices],
             summary: KCoreSummary::default(),
         })
@@ -444,8 +476,8 @@ impl KCoreMC {
         self.probability.get()
     }
 
-    /// The threshold set.
-    pub fn thresholds(&self) -> &CoreThresholds {
+    /// The threshold rule.
+    pub fn thresholds(&self) -> &T {
         &self.thresholds
     }
 
@@ -463,7 +495,7 @@ impl KCoreMC {
     /// `recorded_rounds + 1`; see the type documentation for the
     /// truncation/padding convention).
     pub fn round_survivors(&self) -> &[f64] {
-        &self.survivors
+        self.survivors.as_slice()
     }
 
     /// Deletion order of the last sweep.
@@ -503,17 +535,14 @@ impl KCoreMC {
         )
         .expect("constructor validated the analysis domains");
         let curve = self.workspace.round_survivors();
-        let recorded = curve.len().min(self.survivors.len());
-        self.survivors[..recorded].copy_from_slice(&curve[..recorded]);
         let final_size = summary.core_vertex_count as f64;
-        for value in &mut self.survivors[recorded..] {
-            *value = final_size;
-        }
+        self.survivors
+            .fill(curve.iter().copied(), SeriesPad::Value(final_size));
         self.summary = summary;
     }
 }
 
-impl MonteCarlo for KCoreMC {
+impl<T: CoreThresholdRule> MonteCarlo for KCoreMC<T> {
     type Rng = Xoshiro256PlusPlus;
 
     fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
@@ -521,7 +550,7 @@ impl MonteCarlo for KCoreMC {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        ctx.measure_array("KCoreSurvivorCount", &self.survivors)
+        ctx.measure_array("KCoreSurvivorCount", self.survivors.as_slice())
             .expect("recorded-round budget is fixed at construction");
         ctx.measure("KCoreFinalSize", self.summary.core_vertex_count as f64);
         ctx.measure("KCoreRounds", self.summary.peeling_rounds as f64);

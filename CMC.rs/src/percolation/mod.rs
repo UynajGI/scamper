@@ -152,13 +152,14 @@ pub use potts_phase::{
 pub use probability::{Probability, ProbabilityError, ProbabilityField};
 pub use process::{
     invasion_run, kcore_decompose, AchlioptasError, AchlioptasGrid, AchlioptasProcessMC,
-    AchlioptasRule, AchlioptasStepRecord, BootstrapDynamics, BootstrapError, BootstrapOutcome,
-    BootstrapPercolationMC, BootstrapSeeds, BootstrapThreshold, BootstrapWorkspace,
-    CandidateSampling, CoreThresholds, EdgeUniverse, IncrementalError, IncrementalSummary,
+    AchlioptasRule, AchlioptasScore, AchlioptasStepRecord, AchlioptasTie, BootstrapDynamics,
+    BootstrapError, BootstrapOutcome, BootstrapPercolationMC, BootstrapSeedRule, BootstrapSeeds,
+    BootstrapThreshold, BootstrapThresholdRule, BootstrapWorkspace, CandidateSampling,
+    CoreThresholdRule, CoreThresholds, EdgeUniverse, IncrementalError, IncrementalSummary,
     IncrementalUnionWorkspace, InvasionError, InvasionMode, InvasionOutcome, InvasionPercolationMC,
-    InvasionStop, InvasionStopReason, InvasionTrapping, InvasionWorkspace, KCoreError, KCoreMC,
-    KCoreSummary, KCoreWorkspace, NeighborCounters, ProcessError, ProcessQueue, ProcessTrajectory,
-    StampFlags, TiePolicy,
+    InvasionStop, InvasionStopReason, InvasionStopRule, InvasionTrapping, InvasionTrappingRule,
+    InvasionWorkspace, KCoreError, KCoreMC, KCoreSummary, KCoreWorkspace, NeighborCounters,
+    ProcessError, ProcessQueue, ProcessTrajectory, StampFlags, TiePolicy,
 };
 pub use query::{BoundaryQuery, BoundaryQueryError};
 pub use random_cluster::{ClusterQ, RandomClusterError, RandomClusterMC};

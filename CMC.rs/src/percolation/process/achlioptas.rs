@@ -145,13 +145,32 @@ impl AchlioptasRule {
             Self::Sum => "sum",
         }
     }
+}
 
+/// Scoring rule for the two competing candidate edges.
+///
+/// The process scores every candidate from its endpoints' component sizes and
+/// accepts the minimum score. Built-ins use exact `u128` arithmetic; a custom
+/// rule must be deterministic (the process spends no RNG on scoring).
+pub trait AchlioptasScore {
+    /// Score a candidate joining components of sizes `size_a` and `size_b`.
+    fn score(&self, size_a: usize, size_b: usize) -> u128;
+
+    /// Stable provenance name.
+    fn name(&self) -> &str;
+}
+
+impl AchlioptasScore for AchlioptasRule {
     #[inline]
-    fn score(self, size_a: usize, size_b: usize) -> u128 {
+    fn score(&self, size_a: usize, size_b: usize) -> u128 {
         match self {
             Self::Product => (size_a as u128) * (size_b as u128),
             Self::Sum => (size_a as u128) + (size_b as u128),
         }
+    }
+
+    fn name(&self) -> &str {
+        self.as_provenance()
     }
 }
 
@@ -199,6 +218,38 @@ impl TiePolicy {
             Self::LowestEdgeIndex => "lowest-edge-index",
             Self::EarliestDraw => "earliest-draw",
         }
+    }
+}
+
+/// Tie-breaking rule when two candidates share the minimum score.
+///
+/// The process always compares a later candidate against the best-so-far
+/// candidate, so a rule only decides whether the later one wins. Built-ins
+/// reproduce the two documented reference orders.
+pub trait AchlioptasTie {
+    /// Whether the candidate at dense index `candidate` with `score` beats
+    /// the best-so-far candidate `best` with `best_score`.
+    fn beats(&self, candidate: usize, score: u128, best: usize, best_score: u128) -> bool;
+
+    /// Stable provenance name.
+    fn name(&self) -> &str;
+}
+
+impl AchlioptasTie for TiePolicy {
+    #[inline]
+    fn beats(&self, candidate: usize, score: u128, best: usize, best_score: u128) -> bool {
+        match self {
+            Self::LowestEdgeIndex => {
+                score < best_score || (score == best_score && candidate < best)
+            }
+            // Strictly better only: on equal score the earlier draw stays
+            // the winner.
+            Self::EarliestDraw => score < best_score,
+        }
+    }
+
+    fn name(&self) -> &str {
+        self.as_provenance()
     }
 }
 
@@ -283,12 +334,15 @@ pub struct AchlioptasStepRecord {
 /// realizations are independent given their seeds. Drive single steps from
 /// an external candidate source (deterministic replay, traced diagnostics)
 /// with [`Self::step_with_candidates`].
-pub struct AchlioptasProcessMC {
+pub struct AchlioptasProcessMC<
+    Rule: AchlioptasScore = AchlioptasRule,
+    Tie: AchlioptasTie = TiePolicy,
+> {
     lattice: CsrLattice,
-    rule: AchlioptasRule,
+    rule: Rule,
     sampling: CandidateSampling,
     candidates_per_step: usize,
-    tie: TiePolicy,
+    tie: Tie,
     /// Dense edge indices of the universe, ascending.
     universe: Vec<usize>,
     /// Sorted occupied-edge counts (the recording grid).
@@ -322,7 +376,7 @@ pub struct AchlioptasProcessMC {
     steps_to_giant: Option<usize>,
 }
 
-impl AchlioptasProcessMC {
+impl<Rule: AchlioptasScore, Tie: AchlioptasTie> AchlioptasProcessMC<Rule, Tie> {
     /// Build the adapter over an owned lattice.
     ///
     /// The trajectory budget of the underlying G1 workspace is `V + E`
@@ -330,10 +384,10 @@ impl AchlioptasProcessMC {
     /// edge; `E >= |U|` always).
     pub fn new(
         lattice: CsrLattice,
-        rule: AchlioptasRule,
+        rule: Rule,
         sampling: CandidateSampling,
         candidates_per_step: usize,
-        tie: TiePolicy,
+        tie: Tie,
         universe: EdgeUniverse,
         grid: AchlioptasGrid,
     ) -> Result<Self, AchlioptasError> {
@@ -425,8 +479,8 @@ impl AchlioptasProcessMC {
     }
 
     /// The competitive scoring rule.
-    pub const fn rule(&self) -> AchlioptasRule {
-        self.rule
+    pub const fn rule(&self) -> &Rule {
+        &self.rule
     }
 
     /// The candidate sampling mode.
@@ -440,8 +494,8 @@ impl AchlioptasProcessMC {
     }
 
     /// The tie policy.
-    pub const fn tie(&self) -> TiePolicy {
-        self.tie
+    pub const fn tie(&self) -> &Tie {
+        &self.tie
     }
 
     /// Universe size (number of permitted edges).
@@ -655,15 +709,9 @@ impl AchlioptasProcessMC {
         let mut best_score = self.score_of(candidates[best]);
         for candidate in 1..candidates.len() {
             let score = self.score_of(candidates[candidate]);
-            let better = match self.tie {
-                TiePolicy::LowestEdgeIndex => {
-                    score < best_score
-                        || (score == best_score && candidates[candidate] < candidates[best])
-                }
-                // Strictly better only: on equal score the earlier draw
-                // stays the winner.
-                TiePolicy::EarliestDraw => score < best_score,
-            };
+            let better = self
+                .tie
+                .beats(candidates[candidate], score, candidates[best], best_score);
             if better {
                 best = candidate;
                 best_score = score;
@@ -750,7 +798,7 @@ impl AchlioptasProcessMC {
     }
 }
 
-impl MonteCarlo for AchlioptasProcessMC {
+impl<Rule: AchlioptasScore, Tie: AchlioptasTie> MonteCarlo for AchlioptasProcessMC<Rule, Tie> {
     type Rng = Xoshiro256PlusPlus;
 
     fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {

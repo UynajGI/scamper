@@ -51,7 +51,7 @@ use rand::{Rng, RngExt};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 use super::{NeighborCounters, ProcessError, ProcessQueue, StampFlags};
-use crate::percolation::{Probability, ProbabilityError, VertexActivity};
+use crate::percolation::{FixedSeries, Probability, ProbabilityError, SeriesPad, VertexActivity};
 use crate::{UndirectedGraphView, VertexId};
 
 /// Activation thresholds.
@@ -70,6 +70,58 @@ pub enum BootstrapThreshold {
     },
 }
 
+/// Policy for activation thresholds: one rule shared by every vertex, or a
+/// per-vertex field. The workspace flattens the rule into its cached array
+/// exactly once per run; a custom rule supplies the same two operations.
+///
+/// Reference order: every built-in and the closure implementations read
+/// vertex indices in ascending dense order; the threshold value itself never
+/// depends on the RNG stream.
+pub trait BootstrapThresholdRule {
+    /// Reject a rule that cannot describe `vertices` vertices.
+    fn validate(&self, vertices: usize) -> Result<(), BootstrapError>;
+
+    /// Write one threshold per vertex into `thresholds` (length `vertices`).
+    ///
+    /// Called only after [`Self::validate`] accepted the same vertex count.
+    fn fill(&self, thresholds: &mut [u32]);
+
+    /// Stable provenance name.
+    fn name(&self) -> &str;
+}
+
+impl BootstrapThresholdRule for BootstrapThreshold {
+    fn validate(&self, vertices: usize) -> Result<(), BootstrapError> {
+        match self {
+            Self::Homogeneous { .. } => Ok(()),
+            Self::Heterogeneous { values } => {
+                if values.len() == vertices {
+                    Ok(())
+                } else {
+                    Err(BootstrapError::ThresholdLengthMismatch {
+                        expected: vertices,
+                        actual: values.len(),
+                    })
+                }
+            }
+        }
+    }
+
+    fn fill(&self, thresholds: &mut [u32]) {
+        match self {
+            Self::Homogeneous { value } => thresholds.fill(*value),
+            Self::Heterogeneous { values } => thresholds.copy_from_slice(values),
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Self::Homogeneous { .. } => "homogeneous",
+            Self::Heterogeneous { .. } => "heterogeneous",
+        }
+    }
+}
+
 /// How initial seeds are produced for one realization.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BootstrapSeeds {
@@ -82,6 +134,69 @@ pub enum BootstrapSeeds {
     /// with an externally sampled [`VertexActivity`] through the core
     /// workspace when more general seed laws are needed.
     Fixed { vertices: Vec<usize> },
+}
+
+/// Policy for producing the initial active set of one realization.
+///
+/// `fill` writes exactly one `0`/`1` byte per dense vertex index. The built-in
+/// density law consumes one `f64` draw per vertex in ascending index order;
+/// a custom rule owns its own draw contract and must document it.
+pub trait BootstrapSeedRule {
+    /// Reject a rule that cannot describe `vertices` vertices.
+    fn validate(&self, vertices: usize) -> Result<(), BootstrapError>;
+
+    /// Fill the active bytes for one realization.
+    ///
+    /// Called only after [`Self::validate`] accepted the same vertex count.
+    fn fill<R: rand::Rng + ?Sized>(&mut self, active: &mut [u8], rng: &mut R);
+
+    /// Stable provenance name.
+    fn name(&self) -> &str;
+}
+
+impl BootstrapSeedRule for BootstrapSeeds {
+    fn validate(&self, vertices: usize) -> Result<(), BootstrapError> {
+        match self {
+            Self::Density { p } => {
+                Probability::new(*p).map_err(BootstrapError::Probability)?;
+                Ok(())
+            }
+            Self::Fixed { vertices: fixed } => {
+                for &seed in fixed {
+                    if seed >= vertices {
+                        return Err(BootstrapError::SeedDomain { seed, vertices });
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn fill<R: rand::Rng + ?Sized>(&mut self, active: &mut [u8], rng: &mut R) {
+        match self {
+            Self::Density { p } => {
+                let p = Probability::new(*p)
+                    .expect("constructor validated the seed density")
+                    .get();
+                for slot in active.iter_mut() {
+                    *slot = u8::from(rng.random::<f64>() < p);
+                }
+            }
+            Self::Fixed { vertices } => {
+                active.fill(0);
+                for &seed in vertices.iter() {
+                    active[seed] = 1;
+                }
+            }
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Self::Density { .. } => "density",
+            Self::Fixed { .. } => "fixed",
+        }
+    }
 }
 
 /// Which dynamics the recorded time axis means.
@@ -190,23 +305,13 @@ impl BootstrapWorkspace {
     }
 
     /// Flatten the threshold rule into the cached per-vertex array.
-    fn materialize(
+    fn materialize<T: BootstrapThresholdRule + ?Sized>(
         &mut self,
-        thresholds: &BootstrapThreshold,
+        thresholds: &T,
         vertices: usize,
     ) -> Result<(), BootstrapError> {
-        match thresholds {
-            BootstrapThreshold::Homogeneous { value } => self.thresholds.fill(*value),
-            BootstrapThreshold::Heterogeneous { values } => {
-                if values.len() != vertices {
-                    return Err(BootstrapError::ThresholdLengthMismatch {
-                        expected: vertices,
-                        actual: values.len(),
-                    });
-                }
-                self.thresholds.copy_from_slice(values);
-            }
-        }
+        thresholds.validate(vertices)?;
+        thresholds.fill(&mut self.thresholds[..vertices]);
         Ok(())
     }
 
@@ -241,16 +346,17 @@ impl BootstrapWorkspace {
     /// (caller-owned buffer, capacity reused). Each vertex enters a round
     /// frontier at most once, so the trajectory has at most `V + 1`
     /// entries.
-    pub fn synchronous_rounds<G, V>(
+    pub fn synchronous_rounds<G, V, T>(
         &mut self,
         graph: &G,
         seeds: &V,
-        thresholds: &BootstrapThreshold,
+        thresholds: &T,
         trajectory: &mut Vec<usize>,
     ) -> Result<BootstrapOutcome, BootstrapError>
     where
         G: UndirectedGraphView,
         V: VertexActivity,
+        T: BootstrapThresholdRule + ?Sized,
     {
         let vertices = graph.vertex_count();
         self.prepare(vertices)?;
@@ -320,16 +426,17 @@ impl BootstrapWorkspace {
     /// `V + 1` entries). The initial queue is seeds in ascending order,
     /// then threshold-0 inactive vertices ascending; every later event is
     /// a first crossing. The final closure is independent of this order.
-    pub fn queue_closure<G, V>(
+    pub fn queue_closure<G, V, T>(
         &mut self,
         graph: &G,
         seeds: &V,
-        thresholds: &BootstrapThreshold,
+        thresholds: &T,
         trajectory: &mut Vec<usize>,
     ) -> Result<BootstrapOutcome, BootstrapError>
     where
         G: UndirectedGraphView,
         V: VertexActivity,
+        T: BootstrapThresholdRule + ?Sized,
     {
         let vertices = graph.vertex_count();
         self.prepare(vertices)?;
@@ -418,30 +525,39 @@ impl VertexActivity for SampledSeeds {
 ///   clock's closure time.
 ///
 /// Configure `thermalization_sweeps = 0`; realizations are i.i.d.
-pub struct BootstrapPercolationMC<G: UndirectedGraphView> {
+pub struct BootstrapPercolationMC<
+    G: UndirectedGraphView,
+    T = BootstrapThreshold,
+    S = BootstrapSeeds,
+> {
     graph: G,
-    thresholds: BootstrapThreshold,
+    thresholds: T,
     dynamics: BootstrapDynamics,
-    seeds: BootstrapSeeds,
+    seeds: S,
     steps: usize,
     workspace: BootstrapWorkspace,
     sampled: SampledSeeds,
     /// Full trajectory of the last realization (scratch, capacity V + 1).
     trajectory: Vec<usize>,
     /// Fixed-length recorded array of the last realization.
-    history: Vec<f64>,
+    history: FixedSeries,
     outcome: BootstrapOutcome,
 }
 
-impl<G: UndirectedGraphView> BootstrapPercolationMC<G> {
+impl<G, T, S> BootstrapPercolationMC<G, T, S>
+where
+    G: UndirectedGraphView,
+    T: BootstrapThresholdRule,
+    S: BootstrapSeedRule,
+{
     /// Build the adapter.
     ///
     /// `steps` is the recorded-array length (`>= 1`). All domains are
     /// validated here so `sweep` cannot fail.
     pub fn new(
         graph: G,
-        thresholds: BootstrapThreshold,
-        seeds: BootstrapSeeds,
+        thresholds: T,
+        seeds: S,
         dynamics: BootstrapDynamics,
         steps: usize,
     ) -> Result<Self, BootstrapError> {
@@ -452,26 +568,8 @@ impl<G: UndirectedGraphView> BootstrapPercolationMC<G> {
         if steps == 0 {
             return Err(BootstrapError::NoSteps);
         }
-        if let BootstrapThreshold::Heterogeneous { values } = &thresholds {
-            if values.len() != vertices {
-                return Err(BootstrapError::ThresholdLengthMismatch {
-                    expected: vertices,
-                    actual: values.len(),
-                });
-            }
-        }
-        match &seeds {
-            BootstrapSeeds::Density { p } => {
-                Probability::new(*p).map_err(BootstrapError::Probability)?;
-            }
-            BootstrapSeeds::Fixed { vertices: fixed } => {
-                for &seed in fixed {
-                    if seed >= vertices {
-                        return Err(BootstrapError::SeedDomain { seed, vertices });
-                    }
-                }
-            }
-        }
+        thresholds.validate(vertices)?;
+        seeds.validate(vertices)?;
         let mut workspace = BootstrapWorkspace::new();
         workspace.prepare(vertices)?;
         let sampled = SampledSeeds {
@@ -481,7 +579,7 @@ impl<G: UndirectedGraphView> BootstrapPercolationMC<G> {
         trajectory
             .try_reserve_exact(vertices + 1)
             .map_err(|source| BootstrapError::Capacity(ProcessError::from(source)))?;
-        let history = Vec::with_capacity(steps);
+        let history = FixedSeries::new(steps);
         Ok(Self {
             graph,
             thresholds,
@@ -508,12 +606,12 @@ impl<G: UndirectedGraphView> BootstrapPercolationMC<G> {
     }
 
     /// The activation-threshold rule.
-    pub fn threshold(&self) -> &BootstrapThreshold {
+    pub fn threshold(&self) -> &T {
         &self.thresholds
     }
 
-    /// The seed law.
-    pub fn seeds(&self) -> &BootstrapSeeds {
+    /// The seed rule.
+    pub fn seeds(&self) -> &S {
         &self.seeds
     }
 
@@ -534,7 +632,7 @@ impl<G: UndirectedGraphView> BootstrapPercolationMC<G> {
 
     /// The fixed-length recorded array of the last realization.
     pub fn last_history(&self) -> &[f64] {
-        &self.history
+        self.history.as_slice()
     }
 
     /// The full per-round/per-event trajectory of the last realization.
@@ -547,22 +645,7 @@ impl<G: UndirectedGraphView> BootstrapPercolationMC<G> {
     /// Deterministic given the seed law and RNG stream; exposed for tests
     /// and RNG-free analysis paths that do not record measurements.
     pub fn realize<R: Rng + ?Sized>(&mut self, rng: &mut R) {
-        match &self.seeds {
-            BootstrapSeeds::Density { p } => {
-                let p = Probability::new(*p)
-                    .expect("constructor validated the seed density")
-                    .get();
-                for slot in self.sampled.active.iter_mut() {
-                    *slot = u8::from(rng.random::<f64>() < p);
-                }
-            }
-            BootstrapSeeds::Fixed { vertices } => {
-                self.sampled.active.fill(0);
-                for &seed in vertices {
-                    self.sampled.active[seed] = 1;
-                }
-            }
-        }
+        self.seeds.fill(&mut self.sampled.active, rng);
         let Self {
             graph,
             thresholds,
@@ -585,19 +668,19 @@ impl<G: UndirectedGraphView> BootstrapPercolationMC<G> {
         // Compress the full trajectory into the fixed C0 shape: steps past
         // the closure repeat the final count.
         let trajectory = &self.trajectory;
-        let final_active = trajectory[trajectory.len() - 1] as f64;
-        self.history.clear();
-        self.history.extend((0..self.steps).map(|step| {
-            if step < trajectory.len() {
-                trajectory[step] as f64
-            } else {
-                final_active
-            }
-        }));
+        self.history.fill(
+            trajectory.iter().map(|&count| count as f64),
+            SeriesPad::RepeatLast { fallback: 0.0 },
+        );
     }
 }
 
-impl<G: UndirectedGraphView> MonteCarlo for BootstrapPercolationMC<G> {
+impl<G, T, S> MonteCarlo for BootstrapPercolationMC<G, T, S>
+where
+    G: UndirectedGraphView,
+    T: BootstrapThresholdRule,
+    S: BootstrapSeedRule,
+{
     type Rng = Xoshiro256PlusPlus;
 
     fn sweep(&mut self, ctx: &mut Context<Self::Rng>) {
@@ -605,7 +688,7 @@ impl<G: UndirectedGraphView> MonteCarlo for BootstrapPercolationMC<G> {
     }
 
     fn measure(&mut self, ctx: &mut Context<Self::Rng>) {
-        ctx.measure_array("BootstrapActiveCount", &self.history)
+        ctx.measure_array("BootstrapActiveCount", self.history.as_slice())
             .expect("array shape is fixed at construction");
         ctx.measure("BootstrapFinalActive", self.outcome.final_active as f64);
         ctx.measure(
