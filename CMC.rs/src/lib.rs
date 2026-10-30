@@ -178,15 +178,16 @@ pub use percolation::{
 };
 pub use percolation::{
     bootstrap, bracket, collapse_residual, critical_probability, crossing, flip_bracket,
-    inverse_normal_cdf, multiplex_from_edges, phase_scan, second_moment_correlation_length,
-    ChayesMachtaError, ChayesMachtaMC, CorrelatedError, CorrelatedFieldSpec,
-    CorrelatedGaussianField, CorrelatedPercolationMC, CorrelatedSiteLaw, CorrelatedThresholdError,
-    FlipBracket, FractalDimensionEstimate, HarrisBracket, Hypergraph, HypergraphError,
-    HypergraphSummary, IntervalEstimate, LinearFit, NuEstimate, PcExtrapolation, PcShiftNuEstimate,
-    PcShiftRung, PottsPhaseError, PottsPhaseEstimate, PottsPhaseSpec, RungObservables, RungSlope,
+    inverse_normal_cdf, multiplex_from_edges, phase_scan, phase_scan_samples,
+    second_moment_correlation_length, two_mode_estimate, ChayesMachtaError, ChayesMachtaMC,
+    CorrelatedError, CorrelatedFieldSpec, CorrelatedGaussianField, CorrelatedPercolationMC,
+    CorrelatedSiteLaw, CorrelatedThresholdError, FlipBracket, FractalDimensionEstimate,
+    HarrisBracket, Hypergraph, HypergraphError, HypergraphSummary, IntervalEstimate, LinearFit,
+    NuEstimate, PcExtrapolation, PcShiftNuEstimate, PcShiftRung, PottsPhaseError,
+    PottsPhaseEstimate, PottsPhaseSamples, PottsPhaseSpec, RungObservables, RungSlope,
     SweenyAcceptance, SweenyError, SweenyMC, SweenyProposal, SweenyRates, ThresholdLadder,
-    ThresholdLadderSpec, WeinribHalperinError, WeinribHalperinMap, BOOTSTRAP_RESAMPLES,
-    PEAK_FIT_RADIUS,
+    ThresholdLadderSpec, TwoModeEstimate, WeinribHalperinError, WeinribHalperinMap,
+    BOOTSTRAP_RESAMPLES, PEAK_FIT_RADIUS,
 };
 #[cfg(feature = "temporal")]
 pub use percolation::{

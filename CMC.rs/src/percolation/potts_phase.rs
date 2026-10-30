@@ -130,6 +130,19 @@ pub struct PottsPhaseEstimate {
 
 /// Run one exploratory phase scan at the exact `p_c(q)`.
 pub fn phase_scan(spec: PottsPhaseSpec) -> Result<PottsPhaseEstimate, PottsPhaseError> {
+    Ok(phase_scan_samples(spec)?.estimate)
+}
+
+/// Raw bond-density samples of one scan plus the descriptive estimate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PottsPhaseSamples {
+    pub estimate: PottsPhaseEstimate,
+    /// Open-bond density `|A|/E` per measured sweep, in draw order.
+    pub densities: Vec<f64>,
+}
+
+/// Run one scan and return the raw density samples.
+pub fn phase_scan_samples(spec: PottsPhaseSpec) -> Result<PottsPhaseSamples, PottsPhaseError> {
     let probability = critical_probability(spec.q)?;
     let probability = Probability::new(probability).map_err(PottsPhaseError::Probability)?;
     let lattice = build_square(spec.side, spec.side, true);
@@ -173,16 +186,123 @@ pub fn phase_scan(spec: PottsPhaseSpec) -> Result<PottsPhaseEstimate, PottsPhase
         .sum::<f64>()
         / count as f64;
     let bimodality = (skewness * skewness + 1.0) / kurtosis;
-    Ok(PottsPhaseEstimate {
-        q: spec.q,
-        critical_probability: probability.get(),
-        side: spec.side,
-        samples: spec.samples,
-        density_mean: mean,
-        density_variance: variance,
-        skewness,
-        kurtosis,
-        bimodality,
+    Ok(PottsPhaseSamples {
+        estimate: PottsPhaseEstimate {
+            q: spec.q,
+            critical_probability: probability.get(),
+            side: spec.side,
+            samples: spec.samples,
+            density_mean: mean,
+            density_variance: variance,
+            skewness,
+            kurtosis,
+            bimodality,
+        },
+        densities: values,
+    })
+}
+
+/// Two-mode (latent-heat proxy) decomposition of density samples.
+///
+/// A deterministic one-dimensional two-means clustering splits the samples
+/// into a lower and an upper mode. `gap` is the distance between the mode
+/// centers and `separation` divides it by the pooled within-mode standard
+/// deviation, so overlapping peaks score low. This is a definitional
+/// estimator, not a thermodynamic latent-heat measurement: the finite-size
+/// bracket is recorded, and a large `separation` alone does not certify a
+/// first-order transition.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TwoModeEstimate {
+    /// Lower mode center.
+    pub lower: f64,
+    /// Upper mode center.
+    pub upper: f64,
+    /// `upper - lower`.
+    pub gap: f64,
+    /// `gap / sqrt(pooled within-mode variance)` (`+inf` for exactly
+    /// separated constant modes).
+    pub separation: f64,
+    /// Fraction of samples in the lower mode.
+    pub lower_weight: f64,
+    /// Midpoint between the two mode centers.
+    pub threshold: f64,
+}
+
+/// Split density samples into lower/upper modes with deterministic 2-means.
+pub fn two_mode_estimate(samples: &[f64]) -> Result<TwoModeEstimate, PottsPhaseError> {
+    if samples.len() < 4 {
+        return Err(PottsPhaseError::TooFewSamples {
+            samples: samples.len(),
+        });
+    }
+    if let Some(&value) = samples.iter().find(|value| !value.is_finite()) {
+        return Err(PottsPhaseError::NonFiniteSample { value });
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let minimum = sorted[0];
+    let maximum = sorted[sorted.len() - 1];
+    if maximum <= minimum {
+        return Err(PottsPhaseError::DegenerateVariance);
+    }
+    let mut lower = sorted[sorted.len() / 4];
+    let mut upper = sorted[3 * sorted.len() / 4];
+    if lower == upper {
+        lower = minimum;
+        upper = maximum;
+    }
+    for _ in 0..100 {
+        let mut lower_sum = 0.0;
+        let mut upper_sum = 0.0;
+        let mut lower_count = 0usize;
+        let mut upper_count = 0usize;
+        let threshold = 0.5 * (lower + upper);
+        for &value in &sorted {
+            if value <= threshold {
+                lower_sum += value;
+                lower_count += 1;
+            } else {
+                upper_sum += value;
+                upper_count += 1;
+            }
+        }
+        if lower_count == 0 || upper_count == 0 {
+            return Err(PottsPhaseError::DegenerateTwoMode);
+        }
+        let next_lower = lower_sum / lower_count as f64;
+        let next_upper = upper_sum / upper_count as f64;
+        let moved = (next_lower - lower).abs() + (next_upper - upper).abs();
+        lower = next_lower;
+        upper = next_upper;
+        if moved < 1e-12 {
+            break;
+        }
+    }
+    let threshold = 0.5 * (lower + upper);
+    let lower_count = sorted.iter().filter(|&&value| value <= threshold).count();
+    if lower_count == 0 || lower_count == sorted.len() {
+        return Err(PottsPhaseError::DegenerateTwoMode);
+    }
+    let lower_weight = lower_count as f64 / sorted.len() as f64;
+    let mut within = 0.0;
+    for &value in &sorted {
+        let center = if value <= threshold { lower } else { upper };
+        within += (value - center) * (value - center);
+    }
+    within /= sorted.len() as f64;
+    let gap = upper - lower;
+    let separation = if within > 0.0 {
+        gap / within.sqrt()
+    } else {
+        f64::INFINITY
+    };
+    Ok(TwoModeEstimate {
+        lower,
+        upper,
+        gap,
+        separation,
+        lower_weight,
+        threshold,
     })
 }
 
@@ -209,6 +329,12 @@ pub enum PottsPhaseError {
     Sweeny(SweenyError),
     /// The measured density has zero variance.
     DegenerateVariance,
+    /// Fewer than four samples cannot support a two-mode split.
+    TooFewSamples { samples: usize },
+    /// A sampled density is not finite.
+    NonFiniteSample { value: f64 },
+    /// The two-means split emptied one mode.
+    DegenerateTwoMode,
     /// Result storage could not be reserved.
     Capacity,
 }
@@ -234,9 +360,67 @@ impl fmt::Display for PottsPhaseError {
             Self::Probability(error) => write!(formatter, "critical probability rejected: {error}"),
             Self::Sweeny(error) => write!(formatter, "Sweeny chain rejected: {error}"),
             Self::DegenerateVariance => write!(formatter, "the measured density has zero variance"),
+            Self::TooFewSamples { samples } => write!(
+                formatter,
+                "two-mode estimation needs at least four samples, got {samples}"
+            ),
+            Self::NonFiniteSample { value } => {
+                write!(formatter, "density sample {value} is not finite")
+            }
+            Self::DegenerateTwoMode => {
+                write!(formatter, "the two-means split emptied one mode")
+            }
             Self::Capacity => write!(formatter, "phase-scan storage could not be reserved"),
         }
     }
 }
 
 impl std::error::Error for PottsPhaseError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_mode_recovers_synthetic_peaks() {
+        let mut samples = Vec::new();
+        for index in 0..300 {
+            samples.push(0.2 + 0.001 * (index % 5) as f64);
+            samples.push(0.8 + 0.001 * (index % 5) as f64);
+        }
+        let estimate = two_mode_estimate(&samples).expect("two modes");
+        assert!((estimate.lower - 0.202).abs() < 0.01);
+        assert!((estimate.upper - 0.802).abs() < 0.01);
+        assert!(estimate.gap > 0.55);
+        assert!(estimate.separation > 10.0);
+        assert!((estimate.lower_weight - 0.5).abs() < 0.01);
+        assert!(estimate.threshold > estimate.lower && estimate.threshold < estimate.upper);
+    }
+
+    #[test]
+    fn uniform_samples_are_not_strongly_separated() {
+        let samples: Vec<f64> = (0..=1000).map(|index| index as f64 / 1000.0).collect();
+        let estimate = two_mode_estimate(&samples).expect("split");
+        assert!(
+            estimate.separation < 4.0,
+            "uniform separation {:.3} is not the bimodal regime",
+            estimate.separation
+        );
+    }
+
+    #[test]
+    fn two_mode_rejections_are_typed() {
+        assert!(matches!(
+            two_mode_estimate(&[0.1, 0.2, 0.3]),
+            Err(PottsPhaseError::TooFewSamples { samples: 3 })
+        ));
+        assert!(matches!(
+            two_mode_estimate(&[0.1, 0.1, f64::NAN, 0.2]),
+            Err(PottsPhaseError::NonFiniteSample { .. })
+        ));
+        assert!(matches!(
+            two_mode_estimate(&[0.5, 0.5, 0.5, 0.5]),
+            Err(PottsPhaseError::DegenerateVariance)
+        ));
+    }
+}

@@ -106,3 +106,40 @@ fn q_eight_bimodality_ordering_at_l16() {
         estimates[2].bimodality
     );
 }
+
+#[test]
+fn two_mode_estimator_separates_first_order_from_continuous_cases() {
+    // Exploratory q-ladder at L=12: q=1/2 are continuous, q=8 is first
+    // order. The two-mode separation is a finite-size latent-heat proxy;
+    // the gate asserts the expected ordering at this one size and prints
+    // the L ladder, not a thermodynamic claim.
+    let mut rows = Vec::new();
+    for &q in &[1.0_f64, 2.0, 4.0, 8.0] {
+        let spec = PottsPhaseSpec::new(q, 12, 400, 2000, 0x5133_2001 + q as u64).expect("spec");
+        let scan = cmc_rs::phase_scan_samples(spec).expect("scan");
+        let modes = cmc_rs::two_mode_estimate(&scan.densities).expect("two-mode split");
+        eprintln!(
+            "Q3 two-mode L=12 q={q}: gap={:.4} separation={:.3} weights=({:.2}, {:.2}) mean={:.4}",
+            modes.gap,
+            modes.separation,
+            modes.lower_weight,
+            1.0 - modes.lower_weight,
+            scan.estimate.density_mean
+        );
+        rows.push(modes);
+    }
+    assert!(
+        rows[3].separation > rows[1].separation,
+        "q=8 separation {:.3} must exceed q=2 {:.3}",
+        rows[3].separation,
+        rows[1].separation
+    );
+    assert!(
+        rows[3].gap > rows[1].gap,
+        "q=8 gap {:.4} must exceed q=2 {:.4}",
+        rows[3].gap,
+        rows[1].gap
+    );
+    // q=1 (bond percolation at p=0.5) must not look more bimodal than q=8.
+    assert!(rows[3].separation > rows[0].separation);
+}

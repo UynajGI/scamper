@@ -150,7 +150,8 @@ pub use observable::{
     StaticObservable,
 };
 pub use potts_phase::{
-    critical_probability, phase_scan, PottsPhaseError, PottsPhaseEstimate, PottsPhaseSpec,
+    critical_probability, phase_scan, phase_scan_samples, two_mode_estimate, PottsPhaseError,
+    PottsPhaseEstimate, PottsPhaseSamples, PottsPhaseSpec, TwoModeEstimate,
 };
 pub use probability::{Probability, ProbabilityError, ProbabilityField};
 pub use process::{

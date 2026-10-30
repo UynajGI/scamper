@@ -142,11 +142,16 @@ scan estimators. A3b makes the static adapter generic:
 `PercolationAdapter<L = StaticLaw>` keeps `StaticPercolationMC` as a
 compatibility alias, and a custom law composes with a custom observable
 through `Run::from_parts`. Custom laws use the F2 `SamplingError`
-vabulary (`Error = SamplingError`) so construction-time rejections keep
+vocabulary (`Error = SamplingError`) so construction-time rejections keep
 their typed `LawDomain` variant; laws with richer error contracts (the
-correlated field) keep dedicated adapters for now. The generic C0 writer
-and the remaining preset collapse (bond dynamics, continuum, scans) are
-outstanding.
+correlated field) keep dedicated adapters for now. A3c adds `FixedSeries`,
+a fixed-shape C0 buffer with the two documented padding conventions
+(repeat-last with a fallback, or a constant tail) and in-place rewriting,
+and `record_component_analysis`/`record_bond_analysis`, which own the
+analyze/label/record tail that seven adapters had duplicated; the
+invasion, bootstrap, k-core, and long-range adapters now share the C0
+writer with bitwise-identical contents. The remaining preset collapse
+(bond dynamics, continuum, scans) is outstanding.
 
 ### A4 — Policy traits for processes, scans, and attacks
 
@@ -163,6 +168,20 @@ or provenance.
 
 Deps: A3. Risks: semantic drift in tie-breaking; directed provenance
 rules.
+
+Progress note (2026-10-30): A4c opens the value policies: `AchlioptasScore`
+and `AchlioptasTie` (with the closed enums as presets), `InvasionStopRule`
+and `InvasionTrappingRule`, `BootstrapThresholdRule` and
+`BootstrapSeedRule`, and `CoreThresholdRule`. Every adapter keeps the
+closed enum as its default type parameter, so existing constructions and
+the recorded reference orders are unchanged; external implementations
+reproduce the built-in trajectories bitwise, and a deliberately different
+tie/frontier rule changes the order as expected. Directed incidence is
+already first-class through D1's public `DirectedGraphView` /
+`DirectedOutGraphView` / `DirectedInGraphView`. The structural mode
+enums (site/bond invasion, with/without-replacement sampling,
+synchronous/queue clock) and the checkpoint grids remain closed because
+they select different algorithms rather than parameterizing one.
 
 ### A5 — Generic finite-size-scaling toolkit
 
@@ -199,7 +218,14 @@ zero total weight. A5d adds `ScalingWindow`
 `collapse_residual`, which scores a candidate window by the RMS
 z-score of scaled-value differences over cross-size pairs inside a
 caller-supplied coordinate tolerance; exponent fitting stays caller-driven.
-Reproduction of the v2 C2/C3 brackets remains outstanding.
+A5e reproduces the v2 white-noise C2 crossing calibration with the generic
+toolkit alone (independent `SiteBernoulli` realizations, `BinderEstimator`
+curves, `crossing`): the nightly L=64/128 calibration lands at 0.5995
+against the v2 0.5987 and the exact 0.592746, and a fast L=32/48/64 ladder
+brackets the threshold within 0.06 per crossing (mean within 0.03) with a
+Binder crossing inside 0.05. The correlated C2 peak bracket and the C3
+`nu` bracket still use the v2 `ThresholdLadder` pc-shift estimator; their
+certification belongs to R1.
 
 ### A6 — Generic specification, builder, and provenance
 
@@ -216,6 +242,22 @@ typed rejection matrix; no hidden defaults.
 
 Deps: A3. Risks: schema creep; compatibility with existing Results
 metadata.
+
+Progress note (2026-10-30): A6a lands `PercolationSpec` for the
+independent-occupation family: resolved topology (no parameter defaults
+survive into the spec), `StaticLaw`, process and estimator versions,
+built-in observables, and an explicit optional boundary query, with
+`from_params`/`to_params` round-trip for every parameter-preset shape.
+`build()` validates and composes the scheduler-ready adapter (embedding
+only when winding is requested, exactly the preset behavior), and
+`provenance()` emits the versioned `cmc.percolation.provenance` JSON
+object that `stamp()` records under the `percolation` Results attribute.
+Heterogeneous law fields, custom observables, and the non-static
+families stay on their constructors or `Run::from_parts` until the
+schema widens. Gates: 6 unit tests (round-trip across 15 preset shapes,
+preset parity, provenance JSON, typed rejections), 4 external tests
+(bitwise scheduler replay, JSON round-trip, non-schema law through
+`Run::from_parts`, topology parity), rustdoc, and clippy.
 
 ## 4. Domain track X
 
@@ -245,6 +287,16 @@ review; documented cascade semantics (mutual vs. single-layer giant).
 
 Deps: X1. Risks: under-specified cascade rules; node/layer identity.
 
+Progress note (2026-10-30): X2b adds explicit initial-activity masks
+(`mutual_component_from`) and the `MultiplexCascadeMC` adapter (random
+primary survival, then the cascade; records mutual fraction, mutual and
+initial vertex counts, contractions). Anchor bracket: on configuration-
+model Poisson ER layers with N=1024, the mutual fraction is ~0.001 below
+mean degree 2.2 and grows above it; the 0.2-fraction crossing lands at
+c=2.399 against Buldyrev's 2.4554 (finite-size bracket, not a four-digit
+reproduction). A layer-aware `SampleView` and more than two layers remain
+outstanding.
+
 ### X3 — Hypergraph and simplicial percolation
 
 Incidence view + hypergraph component analysis + a documented canonical
@@ -272,6 +324,20 @@ statistical-only non-equilibrium caveats; independent review.
 Deps: A2, A4, X1. Risks: non-equilibrium validation is weaker than
 equilibrium exact enumeration.
 
+Progress note (2026-10-30): X4a lands the feature-gated (`temporal`)
+contact process on static topologies, driven by the existing
+`RejectionFreeModel`/`GillespieKernel` substrate. The event catalog is the
+direct reference order (recovery events in ascending vertex order, then
+transmission events in ascending edge order; zero-rate events are never
+selected), states are explicit activity masks, and `contact_ensemble`
+reports finite-time survival and density over seeded initial draws. The
+anchor bracket uses the branching threshold `lambda_c = 1/(k-1)` on a
+3-regular random graph: the 0.05-density crossing is lambda=0.535 against
+0.5, with subcritical extinction and supercritical survival. Temporal-
+network input (time-varying edge activity) and a scheduler adapter remain
+X4b; the recorded claims are finite-time, finite-size brackets, never a
+thermodynamic-limit order parameter.
+
 ## 5. Research track R
 
 ### R1 — C3 Weinrib–Halperin certification
@@ -284,6 +350,15 @@ Outcome: promote C3 only with L≥4096–8192 or an independent 0.001-level
 `p_c(inf)` (Binder cumulant/very-large-L crossing); otherwise keep
 Experimental with the negative result. Deps: A5.
 
+Progress note (2026-10-30): R1 outcome recorded — **C3 stays
+Experimental**. The iid control is calibrated (pooled pc-shift nu=1.379,
+CI 1.325–1.433, contains 4/3) but the correlated rows are prior-dominated
+and the 1.5-vs-1.25 gap is 1.1 sigma at L<=2048; the one-off larger-L
+cross-check does not certify the branch flip. Promotion requires
+L>=4096–8192 or an independent 0.001-level `p_c(inf)`. No code change was
+made; the existing C3/Weinrib–Halperin gates and the ignored nightly iid
+control remain the evidence.
+
 ### R2 — Q3 phase diagram
 
 Current state: exact self-dual curve; exploratory bimodality
@@ -293,6 +368,16 @@ Outcome: latent-heat/two-mode estimator, q-ladder FSS, exact q≤4
 cross-checks; promote only if certified. Anchor: Wu 1982 / FK duality
 ([note](../ref/md/Potts_FK_duality_note.md)). Deps: A5.
 
+Progress note (2026-10-30): R2 delivers the definitional two-mode
+estimator (`phase_scan_samples` + `two_mode_estimate`: deterministic 1D
+2-means, mode centers, gap, separation, weights) and a q-ladder. At L=12
+the separation orders as expected (q=1/2/4/8: 2.63/2.74/2.87/3.63) with
+q=8 gaps clearly wider, but this is one small size and a finite-size
+proxy, not a certified latent heat; q<=4 has no exact latent-heat
+cross-check beyond the exact self-dual curve. **Q3 stays Experimental**
+with this precise negative result; promotion needs a larger q-ladder with
+FSS control of the estimator.
+
 ### R3 — F3 large-scale shape and aging
 
 Current state: directional time constants, exact geodesic counts, and an
@@ -301,6 +386,14 @@ explicitly exploratory aging statistic.
 Outcome: ADH-anchored large-scale brackets for the shape/time constant
 and geodesic statistics; research-grade, may remain Experimental. Anchor:
 Auffinger–Damron–Hanson 2017 (archived). Deps: A5.
+
+Progress note (2026-10-30): R3 outcome recorded — the F3 layer is
+Validated at its recorded scale (directional time constants with CI,
+exact geodesic counts, the paired norm inequality), while the aging
+statistic remains explicitly exploratory and no large-scale
+shape-theorem bracket has been certified. **F3 large-scale remains
+Experimental**; the existing F3 gates are the evidence and no new
+asymptotic claim is made.
 
 ## 6. Uniform definition of done (every stage)
 
@@ -365,17 +458,24 @@ roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
 |---|---|
 | A1 Observable trait/open plan | Done (A1a+A1b: `ScalarObservable` + `SampleView`, capability-driven label/winding/moment requests, built-in `ObservableSpec` impls, `StaticObservable` shim; external-crate, golden, and 0-allocation gates green) |
 | A2 SampleView/OccupationLaw/WeightLaw | Done (A2a: `OccupationLaw` for Bernoulli/correlated laws, `WeightLaw` for FPP with bitwise replay; A2b: public `SampleView::new`/`vacuum`/`from_analysis`, workspace-lifetime analyzer accessors, and checked public activity setters; external-crate law, golden, and rustdoc gates green) |
-| A3 generic adapter/estimator/C0 | In progress (A3a: shared `Moments` accumulator replaces four duplicated count/sum/sum_sq estimators; A3b: `PercolationAdapter<L>` with `StaticPercolationMC` preset and external custom-law composition; C0 writer and remaining preset collapse pending) |
-| A4 policy traits | In progress (A4a: `AttackOrder` trait with a zero-cost `AttackPolicy` preset and external custom orders; A4b: `ScanObservableSpec` with custom uniform/heterogeneous reweighting; process/Achlioptas/Invasion/Bootstrap/KCore policies and the directed view capability pending) |
-| A5 FSS toolkit | In progress (A5a: Binder cumulant + common-grid linear crossing; A5b: deterministic percentile bootstrap; A5c: second-moment correlation length; A5d: scaling-window collapse score; v2 bracket reproduction pending) |
-| A6 specification/provenance | Not started |
+| A3 generic adapter/estimator/C0 | In progress (A3a: shared `Moments` accumulator replaces four duplicated count/sum/sum_sq estimators; A3b: `PercolationAdapter<L>` with `StaticPercolationMC` preset and external custom-law composition; A3c: `FixedSeries` C0 writer and shared analyze/label/record helpers replace the hand-written pad/truncate and recording tails in seven adapters; remaining preset collapse pending) |
+| A4 policy traits | In progress (A4a: `AttackOrder`; A4b: `ScanObservableSpec`; A4c: `AchlioptasScore`/`AchlioptasTie`, `InvasionStopRule`/`InvasionTrappingRule`, `BootstrapThresholdRule`/`BootstrapSeedRule`, `CoreThresholdRule`, with enum presets and bitwise reference-order reuse; directed incidence is D1-first-class; structural modes and checkpoint grids remain closed) |
+| A5 FSS toolkit | In progress (A5a: Binder cumulant + common-grid linear crossing; A5b: deterministic percentile bootstrap; A5c: second-moment correlation length; A5d: scaling-window collapse score; A5e: generic-toolkit reproduction of the v2 white-noise C2 calibration, with fast and nightly FSS ladders) |
+| A6 specification/provenance | In progress (A6a: explicit `PercolationSpec` with Params round-trip, adapter builder, and versioned Results provenance for the independent-occupation family; other families pending) |
 | X1 network I/O | Done (feature-gated `io`: weighted edge-list v1 text + multiplex JSON v1 over one validated document; round-trip, reference-graph, rejection, and Criterion gates green; independent review pending) |
-| X2 multiplex/interdependent | In progress (two-layer one-to-one mutual-component/cascade analysis over a shared vertex set, with an independent reference-map enumeration and typed rejections; quantitative bracket and preset adapters pending) |
+| X2 multiplex/interdependent | In progress (X2a: two-layer one-to-one mutual-component/cascade analysis over a shared vertex set, independent reference-map enumeration, typed rejections; X2b: explicit initial activity, `MultiplexCascadeMC` preset adapter, and the Buldyrev c*=2.4554 finite-size bracket; layer-aware views and >2 layers pending) |
 | X3 hypergraph/simplicial | Done (dense incidence hypergraph with Bernoulli vertex/hyperedge activity, union-find component analysis, canonical lowest-ID rule, per-vertex labels; exact incidence-BFS enumeration and rejection matrix; independent review pending) |
-| X4 temporal/directed dynamics | Not started |
-| R1 C3 certification | Not started |
-| R2 Q3 phase diagram | Not started |
-| R3 F3 large-scale research | Not started |
+| X4 temporal/directed dynamics | In progress (X4a: feature-gated contact process on the Gillespie substrate with direct reference-order events, deterministic ensemble runs, and the 3-regular branching-threshold bracket lambda_c=0.535 vs 0.5; temporal-network input and scheduler adapter pending) |
+| R1 C3 certification | Done — Experimental (negative result recorded: iid control calibrated, correlated flip not certified at L<=2048; evidence above) |
+| R2 Q3 phase diagram | Done — Experimental (two-mode estimator + exploratory q-ladder delivered; L=12 ordering correct, no certified latent heat; evidence above) |
+| R3 F3 large-scale research | Done — Experimental (F3 Validated at its recorded scale; aging exploratory; no large-scale ADH bracket certified) |
+
+Final audit (2026-10-30): [2026-10-30-v3-final-audit.md](../reviews/2026-10-30-v3-final-audit.md).
+Verdict: conditional merge readiness — the quick suite and clippy are
+green, A3c/A4c/A5e/A6a/X2b/X4a are delivered, and R1–R3 record
+Experimental outcomes; A3 preset collapse, A4 grids/structural modes, A6
+breadth, X2 layer-aware/3+ layers, X4b temporal input, and independent
+reviews remain open.
 
 ## 12. Non-goals
 
