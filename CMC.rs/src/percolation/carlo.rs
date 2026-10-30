@@ -592,7 +592,7 @@ fn embedded_triangular(params: &Params) -> Result<(CsrLattice, LatticeEmbedding)
     build_triangular_with_embedding(lx, ly).map_err(embedding_param_error)
 }
 
-fn parse_law(params: &Params) -> Result<StaticLaw, CarloError> {
+pub(crate) fn parse_law(params: &Params) -> Result<StaticLaw, CarloError> {
     let mode = parse_param::<String>(params, "mode")?.unwrap_or_else(|| "site".to_string());
     let probability = |name: &str| -> Result<f64, CarloError> {
         parse_param::<f64>(params, name)?
@@ -628,7 +628,7 @@ fn parse_law(params: &Params) -> Result<StaticLaw, CarloError> {
     }
 }
 
-fn parse_observables(params: &Params) -> Result<Vec<StaticObservable>, CarloError> {
+pub(crate) fn parse_observables(params: &Params) -> Result<Vec<StaticObservable>, CarloError> {
     let Some(raw) = parse_param::<String>(params, "observables")? else {
         return Ok(vec![
             StaticObservable::ActiveVertexCount,
@@ -662,7 +662,7 @@ fn parse_observables(params: &Params) -> Result<Vec<StaticObservable>, CarloErro
         .collect()
 }
 
-fn resolve_spanning_sets(
+pub(crate) fn resolve_spanning_sets(
     params: &Params,
     lattice: &CsrLattice,
 ) -> Result<(Vec<usize>, Vec<usize>), CarloError> {

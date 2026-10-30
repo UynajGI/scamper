@@ -56,6 +56,7 @@ mod random_cluster;
 mod recording;
 mod scan;
 mod series;
+mod spec;
 mod summary;
 mod sweeny;
 mod weinrib_halperin;
@@ -173,6 +174,10 @@ pub use scan::{
 #[doc(hidden)]
 pub use scan::{HetReweightCapacityAudit, ReweightCapacityAudit, WorkspaceScanCapacityAudit};
 pub use series::{FixedSeries, SeriesPad};
+pub use spec::{
+    BoundarySets, EstimatorSpec, LatticeKind, PercolationProvenance, PercolationSpec, ProcessSpec,
+    SpecError, TopologySpec,
+};
 pub use summary::ComponentSummary;
 pub use sweeny::{SweenyAcceptance, SweenyError, SweenyMC, SweenyProposal, SweenyRates};
 pub use weinrib_halperin::{

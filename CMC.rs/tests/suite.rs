@@ -168,6 +168,8 @@ mod percolation_process_policy_extension;
 mod percolation_scan;
 #[path = "physics/percolation_scan_heterogeneous.rs"]
 mod percolation_scan_heterogeneous;
+#[path = "physics/percolation_spec.rs"]
+mod percolation_spec;
 #[path = "physics/percolation_sweeny.rs"]
 mod percolation_sweeny;
 #[path = "physics/percolation_winding.rs"]
