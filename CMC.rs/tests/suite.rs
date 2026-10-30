@@ -88,6 +88,8 @@ mod first_passage;
 mod first_passage_observables;
 #[path = "physics/first_passage_shape.rs"]
 mod first_passage_shape;
+#[path = "physics/fss_brackets.rs"]
+mod fss_brackets;
 #[path = "physics/generalized_exact.rs"]
 mod generalized_exact;
 #[path = "physics/heat_bath_exact.rs"]
