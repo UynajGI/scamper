@@ -135,8 +135,8 @@ impl<B: Backend> Scheduler<B> {
         mc.on_phase_start(RunPhase::Finished, &mut ctx);
 
         // Finalize measurements
-        let estimates = ctx.finalize_measurements();
-        let mut results = Results::from_measurements(&estimates);
+        let (estimates, arrays) = ctx.finalize_measurements_split();
+        let mut results = Results::from_measurements_with_arrays(&estimates, &arrays);
 
         // Set metadata
         results.set_metadata(Metadata {
@@ -146,6 +146,7 @@ impl<B: Backend> Scheduler<B> {
             thermalization_sweeps: self.config.thermalization_sweeps,
             measurement_sweeps: self.config.measurement_sweeps,
             n_tasks: 1,
+            attributes: std::collections::BTreeMap::new(),
         });
 
         let _duration = start.elapsed();
@@ -234,8 +235,8 @@ impl<B: Backend> Scheduler<B> {
         ctx.enter_phase(RunPhase::Finished);
         mc.on_phase_start(RunPhase::Finished, &mut ctx);
 
-        let estimates = ctx.finalize_measurements();
-        let mut results = Results::from_measurements(&estimates);
+        let (estimates, arrays) = ctx.finalize_measurements_split();
+        let mut results = Results::from_measurements_with_arrays(&estimates, &arrays);
         results.set_metadata(Metadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
             timestamp: chrono::Utc::now(),
@@ -243,6 +244,7 @@ impl<B: Backend> Scheduler<B> {
             thermalization_sweeps,
             measurement_sweeps,
             n_tasks: 1,
+            attributes: std::collections::BTreeMap::new(),
         });
         Ok(results)
     }
@@ -328,8 +330,8 @@ impl<B: Backend> Scheduler<B> {
         ctx.enter_phase(RunPhase::Finished);
         mc.on_phase_start(RunPhase::Finished, &mut ctx);
 
-        let estimates = ctx.finalize_measurements();
-        let mut results = Results::from_measurements(&estimates);
+        let (estimates, arrays) = ctx.finalize_measurements_split();
+        let mut results = Results::from_measurements_with_arrays(&estimates, &arrays);
         results.set_metadata(Metadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
             timestamp: chrono::Utc::now(),
@@ -337,6 +339,7 @@ impl<B: Backend> Scheduler<B> {
             thermalization_sweeps,
             measurement_sweeps,
             n_tasks: 1,
+            attributes: std::collections::BTreeMap::new(),
         });
         Ok((mc, results))
     }
@@ -386,8 +389,8 @@ impl<B: Backend> Scheduler<B> {
                 ctx.enter_phase(RunPhase::Finished);
                 mc.on_phase_start(RunPhase::Finished, &mut ctx);
 
-                let estimates = ctx.finalize_measurements();
-                let mut result = Results::from_measurements(&estimates);
+                let (estimates, arrays) = ctx.finalize_measurements_split();
+                let mut result = Results::from_measurements_with_arrays(&estimates, &arrays);
                 result.set_metadata(Metadata {
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     timestamp: chrono::Utc::now(),
@@ -395,6 +398,7 @@ impl<B: Backend> Scheduler<B> {
                     thermalization_sweeps: config.thermalization_sweeps,
                     measurement_sweeps: config.measurement_sweeps,
                     n_tasks,
+                    attributes: std::collections::BTreeMap::new(),
                 });
 
                 results.lock().expect("results mutex poisoned").push(result);

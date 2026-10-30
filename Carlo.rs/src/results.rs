@@ -1,18 +1,26 @@
 //! Simulation result containers and metadata.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as Json;
 
-use crate::{CarloError, ComplexEstimate, Estimate};
+use crate::{ArrayEstimate, CarloError, ComplexEstimate, Estimate};
 
 /// Simulation results container.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Results {
-    /// Observable estimates (scalar and array).
+    /// Observable estimates (scalar).
     #[serde(default)]
     estimates: HashMap<String, Estimate>,
+
+    /// Array observable estimates, element-preserving.
+    ///
+    /// Serialized as `array_observables` and omitted entirely when empty, so
+    /// JSON written before this field existed round-trips unchanged.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    array_estimates: HashMap<String, ArrayEstimate>,
 
     /// Complex observable estimates (stored as {re, im}).
     #[serde(default)]
@@ -67,6 +75,16 @@ pub struct Metadata {
 
     /// Number of parallel tasks.
     pub n_tasks: usize,
+
+    /// Extensible provenance attributes.
+    ///
+    /// A generic string-keyed map for domain adapters to record run
+    /// provenance (model family, process policy, curve coordinates, ...).
+    /// Carlo.rs itself never reads these values; it only stores, merges,
+    /// and round-trips them. Omitted from JSON when empty so pre-existing
+    /// results files stay byte-compatible.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attributes: BTreeMap<String, Json>,
 }
 
 impl Default for Metadata {
@@ -78,7 +96,23 @@ impl Default for Metadata {
             thermalization_sweeps: 0,
             measurement_sweeps: 0,
             n_tasks: 1,
+            attributes: BTreeMap::new(),
         }
+    }
+}
+
+impl Metadata {
+    /// Record one provenance attribute.
+    ///
+    /// Keys are domain-defined; Carlo.rs attaches no semantics to them.
+    /// Later writes under the same key overwrite earlier ones.
+    pub fn set_attribute(&mut self, key: impl Into<String>, value: impl Into<Json>) {
+        self.attributes.insert(key.into(), value.into());
+    }
+
+    /// Look up one provenance attribute.
+    pub fn attribute(&self, key: &str) -> Option<&Json> {
+        self.attributes.get(key)
     }
 }
 
@@ -87,6 +121,7 @@ impl Results {
     pub fn new() -> Self {
         Self {
             estimates: HashMap::new(),
+            array_estimates: HashMap::new(),
             complex_estimates: HashMap::new(),
             metadata: Metadata::default(),
         }
@@ -96,6 +131,24 @@ impl Results {
     pub fn from_measurements(measurements: &HashMap<String, Estimate>) -> Self {
         Self {
             estimates: measurements.clone(),
+            array_estimates: HashMap::new(),
+            complex_estimates: HashMap::new(),
+            metadata: Metadata::default(),
+        }
+    }
+
+    /// Create from split measurements output (scalar plus array observables).
+    ///
+    /// This is the finalize path that keeps array observables
+    /// element-preserving; see
+    /// [`Measurements::finalize_split`](crate::Measurements::finalize_split).
+    pub fn from_measurements_with_arrays(
+        measurements: &HashMap<String, Estimate>,
+        arrays: &HashMap<String, ArrayEstimate>,
+    ) -> Self {
+        Self {
+            estimates: measurements.clone(),
+            array_estimates: arrays.clone(),
             complex_estimates: HashMap::new(),
             metadata: Metadata::default(),
         }
@@ -108,6 +161,7 @@ impl Results {
     ) -> Self {
         Self {
             estimates: measurements.clone(),
+            array_estimates: HashMap::new(),
             complex_estimates: complex
                 .iter()
                 .map(|(k, v)| (k.clone(), ComplexResult::from_estimate(v)))
@@ -121,6 +175,11 @@ impl Results {
         self.estimates.insert(name.to_string(), estimate);
     }
 
+    /// Add an array observable estimate (element-preserving).
+    pub fn add_array(&mut self, name: &str, estimate: ArrayEstimate) {
+        self.array_estimates.insert(name.to_string(), estimate);
+    }
+
     /// Add a complex observable estimate.
     pub fn add_complex(&mut self, name: &str, estimate: ComplexEstimate) {
         self.complex_estimates
@@ -132,6 +191,11 @@ impl Results {
         self.estimates.get(name)
     }
 
+    /// Get an array observable estimate.
+    pub fn get_array(&self, name: &str) -> Option<&ArrayEstimate> {
+        self.array_estimates.get(name)
+    }
+
     /// Get a complex observable estimate.
     pub fn get_complex(&self, name: &str) -> Option<&ComplexResult> {
         self.complex_estimates.get(name)
@@ -139,6 +203,10 @@ impl Results {
 
     /// Merge multiple results into one.
     /// Uses weighted averaging based on inverse variance weighting.
+    ///
+    /// Array observables merge element-by-element with the same weighting;
+    /// results disagreeing on an array observable's shape skip that
+    /// observable with a warning instead of being silently flattened.
     pub fn merge(results: &[Results]) -> Self {
         if results.is_empty() {
             return Self::new();
@@ -168,55 +236,11 @@ impl Results {
                 continue;
             }
 
-            // Weighted average: weight = n_bins (inverse variance proxy)
-            let total_bins: usize = estimates.iter().map(|e| e.n_bins).sum();
-
-            if total_bins == 0 {
-                merged_estimates.insert(
-                    name,
-                    Estimate {
-                        mean: 0.0,
-                        stderr: 0.0,
-                        autocorr_time: 1.0,
-                        n_bins: 0,
-                    },
-                );
-                continue;
-            }
-
-            // Weighted mean: sum(mean * n_bins) / total_bins
-            let weighted_mean: f64 = estimates
-                .iter()
-                .map(|e| e.mean * e.n_bins as f64)
-                .sum::<f64>()
-                / total_bins as f64;
-
-            // Combined variance estimate
-            // For independent runs: variance_combined ≈ sum(var_i) / n_runs²
-            // Using stderr² = variance / n_bins
-            let combined_variance: f64 = if estimates.len() > 1 {
-                estimates
-                    .iter()
-                    .map(|e| (e.stderr * (e.n_bins as f64).sqrt()).powi(2))
-                    .sum::<f64>()
-                    / (estimates.len() as f64).powi(2)
-            } else {
-                estimates[0].stderr.powi(2) * estimates[0].n_bins as f64
-            };
-
-            let combined_stderr = combined_variance.sqrt() / (total_bins as f64).sqrt();
-
-            merged_estimates.insert(
-                name,
-                Estimate {
-                    mean: weighted_mean,
-                    stderr: combined_stderr,
-                    autocorr_time: estimates.iter().map(|e| e.autocorr_time).sum::<f64>()
-                        / estimates.len() as f64,
-                    n_bins: total_bins,
-                },
-            );
+            merged_estimates.insert(name, merge_weighted(&estimates));
         }
+
+        // Merge array estimates element-wise, preserving shape
+        let merged_arrays = merge_array_estimates(results);
 
         // Merge metadata
         let total_measurement_sweeps = results.iter().map(|r| r.metadata.measurement_sweeps).sum();
@@ -228,6 +252,7 @@ impl Results {
             thermalization_sweeps: results[0].metadata.thermalization_sweeps,
             measurement_sweeps: total_measurement_sweeps,
             n_tasks: results.len(),
+            attributes: merge_metadata_attributes(results),
         };
 
         // Merge complex estimates
@@ -250,28 +275,11 @@ impl Results {
                     return None;
                 }
 
-                let merge_real = |ests: &[&Estimate]| -> Estimate {
-                    let total_bins: usize = ests.iter().map(|e| e.n_bins).sum();
-                    if total_bins == 0 {
-                        return Estimate::from_bins(&[]);
-                    }
-                    let weighted_mean: f64 =
-                        ests.iter().map(|e| e.mean * e.n_bins as f64).sum::<f64>()
-                            / total_bins as f64;
-                    Estimate {
-                        mean: weighted_mean,
-                        stderr: ests[0].stderr,
-                        autocorr_time: ests.iter().map(|e| e.autocorr_time).sum::<f64>()
-                            / ests.len() as f64,
-                        n_bins: total_bins,
-                    }
-                };
-
                 Some((
                     name,
                     ComplexResult {
-                        re: merge_real(&re_estimates),
-                        im: merge_real(&im_estimates),
+                        re: merge_weighted(&re_estimates),
+                        im: merge_weighted(&im_estimates),
                     },
                 ))
             })
@@ -279,6 +287,7 @@ impl Results {
 
         Self {
             estimates: merged_estimates,
+            array_estimates: merged_arrays,
             complex_estimates: merged_complex,
             metadata,
         }
@@ -286,10 +295,17 @@ impl Results {
 
     /// Export to JSON string.
     /// Complex observables are serialized in {re, im} format matching Carlo.jl.
+    ///
+    /// Array observables appear under `array_observables` with their shape
+    /// and one element estimate per element; the key is omitted when there
+    /// are none, so scalar-only output is byte-identical to the legacy
+    /// format.
     pub fn to_json(&self) -> Result<String, CarloError> {
         #[derive(Serialize)]
         struct JsonResults<'a> {
             observables: &'a HashMap<String, Estimate>,
+            #[serde(skip_serializing_if = "HashMap::is_empty")]
+            array_observables: &'a HashMap<String, ArrayEstimate>,
             #[serde(skip_serializing_if = "HashMap::is_empty")]
             complex_observables: &'a HashMap<String, ComplexResult>,
             metadata: &'a Metadata,
@@ -297,6 +313,7 @@ impl Results {
 
         let json_data = JsonResults {
             observables: &self.estimates,
+            array_observables: &self.array_estimates,
             complex_observables: &self.complex_estimates,
             metadata: &self.metadata,
         };
@@ -307,9 +324,52 @@ impl Results {
         })
     }
 
+    /// Parse results from a JSON string produced by [`Results::to_json`].
+    ///
+    /// Accepts legacy files without `array_observables` and metadata without
+    /// `attributes`: both default to empty.
+    pub fn from_json(json: &str) -> Result<Self, CarloError> {
+        #[derive(Deserialize)]
+        struct JsonResults {
+            #[serde(default)]
+            observables: HashMap<String, Estimate>,
+            #[serde(default)]
+            array_observables: HashMap<String, ArrayEstimate>,
+            #[serde(default)]
+            complex_observables: HashMap<String, ComplexResult>,
+            #[serde(default)]
+            metadata: Metadata,
+        }
+
+        let parsed: JsonResults =
+            serde_json::from_str(json).map_err(CarloError::SerializationError)?;
+        Ok(Self {
+            estimates: parsed.observables,
+            array_estimates: parsed.array_observables,
+            complex_estimates: parsed.complex_observables,
+            metadata: parsed.metadata,
+        })
+    }
+
     /// Set metadata.
     pub fn set_metadata(&mut self, metadata: Metadata) {
         self.metadata = metadata;
+    }
+
+    /// Record one provenance attribute on this result's metadata.
+    ///
+    /// Convenience for run-owning adapters (attack policies, curve
+    /// coordinates, process identifiers) to stamp provenance onto finalized
+    /// results without cloning the whole metadata struct. Generic and
+    /// domain-agnostic: Carlo.rs stores and round-trips the value without
+    /// interpreting it.
+    pub fn set_attribute(&mut self, key: impl Into<String>, value: impl Into<Json>) {
+        self.metadata.set_attribute(key, value);
+    }
+
+    /// Look up one provenance attribute.
+    pub fn attribute(&self, key: &str) -> Option<&Json> {
+        self.metadata.attribute(key)
     }
 
     /// Get metadata.
@@ -322,10 +382,148 @@ impl Results {
         &self.estimates
     }
 
+    /// Get all array estimates.
+    pub fn array_estimates(&self) -> &HashMap<String, ArrayEstimate> {
+        &self.array_estimates
+    }
+
     /// Get all complex estimates.
     pub fn complex_estimates(&self) -> &HashMap<String, ComplexResult> {
         &self.complex_estimates
     }
+}
+
+/// Merge one observable's estimates across runs.
+///
+/// Weighted mean by bin count; combined stderr from per-run variances;
+/// autocorrelation times averaged; bin counts summed. This is exactly the
+/// weighting [`Results::merge`] has always applied to scalars, factored out
+/// so array elements merge identically.
+fn merge_weighted(estimates: &[&Estimate]) -> Estimate {
+    let total_bins: usize = estimates.iter().map(|e| e.n_bins).sum();
+
+    if total_bins == 0 {
+        return Estimate {
+            mean: 0.0,
+            stderr: 0.0,
+            autocorr_time: 1.0,
+            n_bins: 0,
+        };
+    }
+
+    // Weighted mean: sum(mean * n_bins) / total_bins — the pooled-bin mean.
+    let weighted_mean: f64 = estimates
+        .iter()
+        .map(|e| e.mean * e.n_bins as f64)
+        .sum::<f64>()
+        / total_bins as f64;
+
+    // Variance of the pooled-bin mean for independent runs.
+    //
+    // With weights w_i = n_i / total_bins and run means of variance
+    // s_i^2 / n_i (s_i^2 = the run's per-bin variance, recovered as
+    // stderr_i^2 * n_i), Var(mean) = sum w_i^2 s_i^2 / n_i
+    // = sum n_i s_i^2 / total_bins^2. The pre-C0 code divided by
+    // n_runs^2 instead, underestimating merged stderr by sqrt(n_runs)
+    // for equal runs; corrected after independent review (2026-10-22).
+    let combined_variance: f64 = estimates
+        .iter()
+        .map(|e| {
+            let bins = e.n_bins as f64;
+            bins * (e.stderr * bins.sqrt()).powi(2)
+        })
+        .sum::<f64>()
+        / (total_bins as f64).powi(2);
+
+    let combined_stderr = combined_variance.sqrt();
+
+    Estimate {
+        mean: weighted_mean,
+        stderr: combined_stderr,
+        autocorr_time: estimates.iter().map(|e| e.autocorr_time).sum::<f64>()
+            / estimates.len() as f64,
+        n_bins: total_bins,
+    }
+}
+
+/// Merge array observables element-wise across runs.
+///
+/// An observable name is merged only when every result carrying it reports
+/// the same shape; otherwise the observable is skipped with a warning (never
+/// flattened or truncated). Observables missing from some results merge the
+/// ones present, matching the scalar behavior.
+fn merge_array_estimates(results: &[Results]) -> HashMap<String, ArrayEstimate> {
+    let all_names: std::collections::HashSet<String> = results
+        .iter()
+        .flat_map(|r| r.array_estimates.keys().cloned())
+        .collect();
+
+    let mut merged = HashMap::new();
+    for name in all_names {
+        let entries: Vec<&ArrayEstimate> = results
+            .iter()
+            .filter_map(|r| r.array_estimates.get(&name))
+            .collect();
+        if entries.is_empty() {
+            continue;
+        }
+
+        let shape = &entries[0].shape;
+        if entries.iter().any(|e| e.shape != *shape) {
+            tracing::warn!(
+                observable = %name,
+                "array observable shape differs across results; skipping in merge"
+            );
+            continue;
+        }
+
+        let n_elements = shape.iter().product::<usize>();
+        let elements: Vec<Estimate> = (0..n_elements)
+            .map(|i| {
+                let column: Vec<&Estimate> = entries.iter().map(|e| &e.elements[i]).collect();
+                merge_weighted(&column)
+            })
+            .collect();
+
+        // Element count equals the shape product by construction, so this
+        // cannot fail; map the impossible case to a skip defensively.
+        if let Ok(estimate) = ArrayEstimate::new(shape.clone(), elements) {
+            merged.insert(name, estimate);
+        } else {
+            tracing::warn!(observable = %name, "merged array estimate failed validation");
+        }
+    }
+    merged
+}
+
+/// Merge provenance attributes across runs.
+///
+/// Attributes are kept when every result that has them agrees; conflicting
+/// values are dropped with a warning rather than picking a winner silently.
+fn merge_metadata_attributes(results: &[Results]) -> BTreeMap<String, Json> {
+    let mut merged: BTreeMap<String, Json> = BTreeMap::new();
+    let mut conflicts: Vec<String> = Vec::new();
+
+    for result in results {
+        for (key, value) in &result.metadata.attributes {
+            match merged.get(key) {
+                Some(existing) if existing != value => {
+                    if !conflicts.contains(key) {
+                        conflicts.push(key.clone());
+                    }
+                }
+                _ => {
+                    merged.insert(key.clone(), value.clone());
+                }
+            }
+        }
+    }
+
+    for key in conflicts {
+        tracing::warn!(attribute = %key, "metadata attribute differs across results; dropping it from the merge");
+        merged.remove(&key);
+    }
+    merged
 }
 
 impl Default for Results {

@@ -40,10 +40,14 @@ fn test_measurements_register_scalar() {
 #[test]
 fn test_measurements_add_sample_array() {
     let mut meas = Measurements::new(2);
-    meas.add_sample_array("Correlation", &[1.0, 2.0, 3.0]);
-    meas.add_sample_array("Correlation", &[4.0, 5.0, 6.0]);
-    meas.add_sample_array("Correlation", &[7.0, 8.0, 9.0]);
-    meas.add_sample_array("Correlation", &[10.0, 11.0, 12.0]);
+    meas.add_sample_array("Correlation", &[1.0, 2.0, 3.0])
+        .unwrap();
+    meas.add_sample_array("Correlation", &[4.0, 5.0, 6.0])
+        .unwrap();
+    meas.add_sample_array("Correlation", &[7.0, 8.0, 9.0])
+        .unwrap();
+    meas.add_sample_array("Correlation", &[10.0, 11.0, 12.0])
+        .unwrap();
 
     let results = meas.finalize();
     assert!(results.contains_key("Correlation"));
@@ -56,8 +60,10 @@ fn test_measurements_register_array() {
     let mut meas = Measurements::new(1);
     meas.register_array("SpinProfile", 1, &[4]);
 
-    meas.add_sample_array("SpinProfile", &[1.0, 2.0, 3.0, 4.0]);
-    meas.add_sample_array("SpinProfile", &[5.0, 6.0, 7.0, 8.0]);
+    meas.add_sample_array("SpinProfile", &[1.0, 2.0, 3.0, 4.0])
+        .unwrap();
+    meas.add_sample_array("SpinProfile", &[5.0, 6.0, 7.0, 8.0])
+        .unwrap();
 
     let results = meas.finalize();
     assert!(results.contains_key("SpinProfile"));
@@ -145,4 +151,66 @@ fn test_measurements_empty_finalize() {
 
     let complex = meas.finalize_complex();
     assert!(complex.is_empty());
+}
+
+#[test]
+fn test_add_sample_array_mismatch_names_observable() {
+    use carlo_rs::CarloError;
+
+    let mut meas = Measurements::new(10);
+    meas.add_sample_array("Correlation", &[1.0, 2.0, 3.0])
+        .unwrap();
+
+    let err = meas
+        .add_sample_array("Correlation", &[1.0, 2.0])
+        .unwrap_err();
+    match &err {
+        CarloError::ShapeMismatch { observable, .. } => {
+            assert_eq!(observable, "Correlation");
+        }
+        other => panic!("expected ShapeMismatch, got {other:?}"),
+    }
+
+    // Empty samples never auto-create a degenerate observable.
+    meas.add_sample_array("Empty", &[]).unwrap();
+    assert!(meas.observables().get("Empty").is_none());
+}
+
+#[test]
+fn test_finalize_split_separates_scalars_and_arrays() {
+    let mut meas = Measurements::new(2);
+    meas.add_sample("Energy", 1.0);
+    meas.add_sample("Energy", 2.0);
+    for i in 0..4 {
+        let i = i as f64;
+        meas.add_sample_array("Profile", &[i, 10.0 * i]).unwrap();
+    }
+
+    let (scalars, arrays) = meas.finalize_split();
+    assert!(scalars.contains_key("Energy"));
+    assert!(!scalars.contains_key("Profile")); // arrays no longer leak into the scalar map
+    assert_eq!(arrays.len(), 1);
+    let profile = arrays.get("Profile").expect("Profile");
+    assert_eq!(profile.shape(), &[2]);
+
+    // Cross-check element statistics against scalar accumulation.
+    let mut scalar_ref = carlo_rs::Accumulator::new(2);
+    for i in 0..4 {
+        scalar_ref.add(i as f64);
+    }
+    let expected = scalar_ref.finalize();
+    let element = profile.element(0).unwrap();
+    assert!((element.mean - expected.mean).abs() < 1e-12);
+    assert!((element.stderr - expected.stderr).abs() < 1e-12);
+
+    // finalize_arrays agrees with the split output.
+    let arrays_only = meas.finalize_arrays();
+    assert_eq!(arrays_only.len(), 1);
+    assert_eq!(arrays_only.get("Profile").unwrap().shape(), &[2]);
+
+    // Legacy finalize still reports Profile as one element-averaged scalar.
+    // Bins [0.5, 5] and [2.5, 25] average to 2.75 and 13.75 → mean 8.25.
+    let legacy = meas.finalize();
+    let collapsed = legacy.get("Profile").expect("legacy Profile");
+    assert!((collapsed.mean - 8.25).abs() < 1e-12);
 }

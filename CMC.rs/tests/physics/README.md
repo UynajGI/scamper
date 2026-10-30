@@ -1,7 +1,7 @@
 # CMC.rs physical validation tests
 
-This directory is the physics-correctness gate for CMC.rs. It is included by
-`../physics_validation.rs` because Cargo integration tests require a top-level
+This directory is the physics-correctness gate for CMC.rs. Its modules are
+included by `../suite.rs`, the crate's single top-level integration-test
 harness.
 
 ## Placement policy
@@ -19,9 +19,9 @@ harness.
 ## Commands
 
 ```bash
-cargo test -p cmc-rs --test physics_validation
-cargo test -p cmc-rs --features cache-audit --test physics_validation
-cargo test -p cmc-rs --test physics_validation -- --ignored --test-threads=1
+cargo test -p cmc-rs --test suite
+cargo test -p cmc-rs --features cache-audit --test suite
+cargo test -p cmc-rs --test suite -- --ignored --test-threads=1
 ```
 
 ## Strictness rules

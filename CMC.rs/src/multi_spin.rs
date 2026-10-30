@@ -270,11 +270,16 @@ impl MonteCarlo for MultiSpinIsing {
         }
 
         // Per-replica array observables (length 64).
-        ctx.measure_array("Energy_replica", &e_arr);
-        ctx.measure_array("Magnetization_replica", &m_arr);
-        ctx.measure_array("E2_replica", &e2_arr);
-        ctx.measure_array("M2_replica", &m2_arr);
-        ctx.measure_array("M4_replica", &m4_arr);
+        ctx.measure_array("Energy_replica", &e_arr)
+            .expect("Energy_replica length changed mid-run");
+        ctx.measure_array("Magnetization_replica", &m_arr)
+            .expect("Magnetization_replica length changed mid-run");
+        ctx.measure_array("E2_replica", &e2_arr)
+            .expect("E2_replica length changed mid-run");
+        ctx.measure_array("M2_replica", &m2_arr)
+            .expect("M2_replica length changed mid-run");
+        ctx.measure_array("M4_replica", &m4_arr)
+            .expect("M4_replica length changed mid-run");
 
         // Scalar fallback: replica 0 (matches prior behavior).
         // Mark with suffix so it's not confused with the array.

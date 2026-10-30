@@ -30,8 +30,9 @@
 //! After simulation completes, [`Measurements::finalize()`] returns estimates
 //! for each observable with mean and error.
 
+use crate::estimate::variance_ratio_autocorr;
 use crate::estimate::ComplexEstimate;
-use crate::Estimate;
+use crate::{ArrayEstimate, Estimate};
 use ndarray::{Array1, ArrayD};
 use std::collections::HashMap;
 
@@ -122,11 +123,16 @@ impl Accumulator {
         }
     }
 
-    /// Add an array sample (flat slice).
-    /// Shape is determined by the first call.
-    pub fn add_array(&mut self, values: &[f64]) {
+    /// Add an array sample (flat slice, row-major).
+    ///
+    /// Shape is determined by the first call; later samples must carry the
+    /// same element count. A mismatch is an explicit
+    /// [`CarloError::ShapeMismatch`](crate::CarloError::ShapeMismatch) in
+    /// every build profile — it is never silently truncated. Empty slices
+    /// are no-ops.
+    pub fn add_array(&mut self, values: &[f64]) -> Result<(), crate::CarloError> {
         if values.is_empty() {
-            return;
+            return Ok(());
         }
 
         if self.shape.is_empty() {
@@ -135,13 +141,13 @@ impl Accumulator {
             self.current_bin = Array1::zeros(values.len());
         }
 
-        debug_assert_eq!(
-            values.len(),
-            self.current_bin.len(),
-            "Shape mismatch: expected {}, got {}",
-            self.current_bin.len(),
-            values.len()
-        );
+        if values.len() != self.current_bin.len() {
+            return Err(crate::CarloError::ShapeMismatch {
+                observable: "accumulator".into(),
+                expected_len: self.current_bin.len(),
+                got_len: values.len(),
+            });
+        }
 
         for (dst, &src) in self.current_bin.iter_mut().zip(values.iter()) {
             *dst += src;
@@ -156,6 +162,57 @@ impl Accumulator {
             self.current_bin.fill(0.0);
             self.current_filling = 0;
         }
+        Ok(())
+    }
+
+    /// Finalize into one estimate per element.
+    ///
+    /// Returns `None` for scalar-shaped accumulators. Every element gets an
+    /// independent [`Estimate`] computed from its own bin column (completed
+    /// bins plus the normalized partial bin for the mean and stderr), with
+    /// the autocorrelation time estimated from the completed bins only —
+    /// exactly the convention of [`Accumulator::finalize`] for scalars, so
+    /// running one element through a scalar accumulator and through an array
+    /// accumulator yields identical statistics. This is the
+    /// element-preserving counterpart of `finalize`, which collapses array
+    /// bins to one element-averaged scalar for legacy callers.
+    pub fn finalize_array(&self) -> Option<ArrayEstimate> {
+        if self.shape.is_empty() {
+            return None;
+        }
+        let flat_size = self.shape.iter().product::<usize>();
+        if flat_size == 0 {
+            return None;
+        }
+
+        // Column i collects the bin means of element i across all bins.
+        let n_bins = self.bins.len();
+        let mut columns: Vec<Vec<f64>> = vec![Vec::with_capacity(n_bins + 1); flat_size];
+        for bin in &self.bins {
+            for (i, &value) in bin.iter().enumerate() {
+                columns[i].push(value);
+            }
+        }
+        // Completed-bin columns (before the partial bin) drive the
+        // autocorrelation estimate, mirroring `autocorr_time()`.
+        let completed: Vec<Vec<f64>> = columns.clone();
+        if self.current_filling > 0 && !self.current_bin.is_empty() {
+            let scale = 1.0 / self.current_filling as f64;
+            for (i, column) in columns.iter_mut().enumerate() {
+                column.push(self.current_bin[i] * scale);
+            }
+        }
+
+        let elements = columns
+            .iter()
+            .zip(&completed)
+            .map(|(column, completed_column)| {
+                let tau = variance_ratio_autocorr(completed_column);
+                Estimate::from_bins_with_autocorr(column, tau)
+            })
+            .collect();
+
+        ArrayEstimate::new(self.shape.clone(), elements).ok()
     }
 
     /// Finalize and return estimate.
@@ -241,42 +298,16 @@ impl Accumulator {
     }
 
     /// Compute autocorrelation time for scalar observables.
+    ///
+    /// Applies the variance-ratio estimator to the element-averaged bin
+    /// means; array observables should use [`Accumulator::finalize_array`],
+    /// which estimates one autocorrelation time per element.
     pub fn autocorr_time(&self) -> f64 {
         if self.bins.len() < 2 {
             return 1.0;
         }
-
         let means: Vec<f64> = self.bins.iter().map(|b| b.sum() / b.len() as f64).collect();
-
-        let n = means.len() as f64;
-        let mu = means.iter().sum::<f64>() / n;
-
-        // Variance without rebinning
-        let var_no_rebin: f64 = means.iter().map(|x| (x - mu).powi(2)).sum::<f64>() / (n - 1.0);
-
-        // Rebin: pair consecutive samples
-        let rebin_n = n as usize / 2;
-        if rebin_n < 2 {
-            return 1.0;
-        }
-
-        let rebin_means: Vec<f64> = (0..rebin_n)
-            .map(|i| (means[2 * i] + means[2 * i + 1]) / 2.0)
-            .collect();
-        let rebin_mu = rebin_means.iter().sum::<f64>() / rebin_n as f64;
-        let var_rebin: f64 = rebin_means
-            .iter()
-            .map(|x| (x - rebin_mu).powi(2))
-            .sum::<f64>()
-            / (rebin_n as f64 - 1.0);
-
-        // Expected variance without correlations: var_no_rebin / 2
-        let expected_var = var_no_rebin / 2.0;
-        if expected_var <= 0.0 {
-            return 1.0;
-        }
-
-        0.5 * (var_rebin / expected_var - 1.0).max(0.0)
+        variance_ratio_autocorr(&means)
     }
 
     /// Compute covariance matrix from bins.
@@ -463,8 +494,19 @@ impl Measurements {
             .add(value);
     }
 
-    /// Add an array sample to an observable.
-    pub fn add_sample_array(&mut self, name: &str, values: &[f64]) {
+    /// Add an array sample to an observable (auto-create if needed).
+    ///
+    /// The first sample fixes the element count; later samples with a
+    /// different length return [`CarloError::ShapeMismatch`](crate::CarloError::ShapeMismatch)
+    /// naming this observable.
+    pub fn add_sample_array(
+        &mut self,
+        name: &str,
+        values: &[f64],
+    ) -> Result<(), crate::CarloError> {
+        if values.is_empty() {
+            return Ok(());
+        }
         if !self.observables.contains_key(name) {
             self.observables.insert(
                 name.to_string(),
@@ -474,7 +516,19 @@ impl Measurements {
         self.observables
             .get_mut(name)
             .expect("observable just inserted")
-            .add_array(values);
+            .add_array(values)
+            .map_err(|err| match err {
+                crate::CarloError::ShapeMismatch {
+                    expected_len,
+                    got_len,
+                    ..
+                } => crate::CarloError::ShapeMismatch {
+                    observable: name.to_string(),
+                    expected_len,
+                    got_len,
+                },
+                other => other,
+            })
     }
 
     /// Register a scalar observable with custom binsize.
@@ -510,11 +564,44 @@ impl Measurements {
     }
 
     /// Finalize all observables and return estimates.
+    ///
+    /// Array observables are collapsed to one element-averaged scalar here
+    /// for legacy compatibility; use [`Measurements::finalize_split`] or
+    /// [`Measurements::finalize_arrays`] to keep their per-element
+    /// structure.
     pub fn finalize(&self) -> HashMap<String, Estimate> {
         self.observables
             .iter()
             .map(|(name, acc)| (name.clone(), acc.finalize()))
             .collect()
+    }
+
+    /// Finalize array observables into element-preserving estimates.
+    ///
+    /// Scalar observables are omitted; each returned [`ArrayEstimate`]
+    /// carries one [`Estimate`] per element with independent mean, stderr,
+    /// and autocorrelation time.
+    pub fn finalize_arrays(&self) -> HashMap<String, ArrayEstimate> {
+        self.observables
+            .iter()
+            .filter_map(|(name, acc)| acc.finalize_array().map(|est| (name.clone(), est)))
+            .collect()
+    }
+
+    /// Finalize scalar and array observables in one pass.
+    ///
+    /// The scalar map contains only scalar observables (with the exact
+    /// [`Measurements::finalize`] per-observable semantics); array
+    /// observables appear only in the array map, element-preserving via
+    /// [`Measurements::finalize_arrays`]. Nothing is reported twice.
+    pub fn finalize_split(&self) -> (HashMap<String, Estimate>, HashMap<String, ArrayEstimate>) {
+        let scalars = self
+            .observables
+            .iter()
+            .filter(|(_, acc)| acc.shape().is_empty())
+            .map(|(name, acc)| (name.clone(), acc.finalize()))
+            .collect();
+        (scalars, self.finalize_arrays())
     }
 
     /// Finalize complex observables and return estimates.

@@ -26,6 +26,14 @@ pub enum CarloError {
     #[error("Measurement '{name}' not found")]
     MeasurementNotFound { name: String },
 
+    /// A recorded sample does not fit the observable's accumulated shape.
+    #[error("Shape mismatch for '{observable}': expected {expected_len} elements, got {got_len}")]
+    ShapeMismatch {
+        observable: String,
+        expected_len: usize,
+        got_len: usize,
+    },
+
     /// A checkpoint file is corrupt or incompatible with the expected schema.
     #[error("Checkpoint corrupted: {detail}")]
     CheckpointCorrupted { detail: String },

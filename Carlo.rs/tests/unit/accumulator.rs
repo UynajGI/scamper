@@ -154,7 +154,7 @@ fn test_accumulator_with_shape_2d() {
 #[test]
 fn test_accumulator_add_array_basic() {
     let mut acc = Accumulator::new(2);
-    acc.add_array(&[1.0, 2.0, 3.0]);
+    acc.add_array(&[1.0, 2.0, 3.0]).unwrap();
 
     assert_eq!(acc.shape(), &[3]);
     assert_eq!(acc.total_count(), 1);
@@ -167,12 +167,12 @@ fn test_accumulator_add_array_completes_bins() {
 
     // Fill two bins (4 samples)
     for _ in 0..2 {
-        acc.add_array(&[1.0, 2.0]);
+        acc.add_array(&[1.0, 2.0]).unwrap();
     }
     assert_eq!(acc.num_bins(), 1);
 
     for _ in 0..2 {
-        acc.add_array(&[3.0, 4.0]);
+        acc.add_array(&[3.0, 4.0]).unwrap();
     }
     assert_eq!(acc.num_bins(), 2);
 }
@@ -183,8 +183,8 @@ fn test_accumulator_add_array_finalize() {
     let mut acc = Accumulator::new(bin_size);
 
     // Fill one bin: each sample is [10.0, 20.0]
-    acc.add_array(&[10.0, 20.0]);
-    acc.add_array(&[10.0, 20.0]);
+    acc.add_array(&[10.0, 20.0]).unwrap();
+    acc.add_array(&[10.0, 20.0]).unwrap();
 
     let est = acc.finalize();
     // Each bin stores mean per component: [10, 20]
@@ -197,7 +197,7 @@ fn test_accumulator_add_array_finalize() {
 #[test]
 fn test_accumulator_add_array_empty_ignored() {
     let mut acc = Accumulator::new(2);
-    acc.add_array(&[]);
+    acc.add_array(&[]).unwrap();
     assert_eq!(acc.total_count(), 0);
     assert!(acc.shape().is_empty());
 }
@@ -242,10 +242,10 @@ fn test_accumulator_rebin_means_empty() {
 #[test]
 fn test_accumulator_bin_matrix() {
     let mut acc = Accumulator::new(2);
-    acc.add_array(&[1.0, 2.0]);
-    acc.add_array(&[3.0, 4.0]); // completes bin 0: [2, 3]
-    acc.add_array(&[5.0, 6.0]);
-    acc.add_array(&[7.0, 8.0]); // completes bin 1: [6, 7]
+    acc.add_array(&[1.0, 2.0]).unwrap();
+    acc.add_array(&[3.0, 4.0]).unwrap(); // completes bin 0: [2, 3]
+    acc.add_array(&[5.0, 6.0]).unwrap();
+    acc.add_array(&[7.0, 8.0]).unwrap(); // completes bin 1: [6, 7]
 
     let matrix = acc.bin_matrix();
     assert_eq!(matrix.shape(), &[2, 2]);
@@ -290,10 +290,10 @@ fn test_accumulator_covariance_returns_none_for_scalar() {
 fn test_accumulator_covariance_array() {
     let mut acc = Accumulator::with_shape(1, &[2]);
     // 4 samples with 2 components each
-    acc.add_array(&[1.0, 2.0]);
-    acc.add_array(&[3.0, 4.0]);
-    acc.add_array(&[5.0, 6.0]);
-    acc.add_array(&[7.0, 8.0]);
+    acc.add_array(&[1.0, 2.0]).unwrap();
+    acc.add_array(&[3.0, 4.0]).unwrap();
+    acc.add_array(&[5.0, 6.0]).unwrap();
+    acc.add_array(&[7.0, 8.0]).unwrap();
 
     let cov = acc.covariance();
     assert!(cov.is_some());
@@ -304,8 +304,8 @@ fn test_accumulator_covariance_array() {
 #[test]
 fn test_accumulator_covariance_insufficient_bins() {
     let mut acc = Accumulator::with_shape(10, &[2]);
-    acc.add_array(&[1.0, 2.0]);
-    acc.add_array(&[3.0, 4.0]);
+    acc.add_array(&[1.0, 2.0]).unwrap();
+    acc.add_array(&[3.0, 4.0]).unwrap();
     // Only 0 complete bins
     assert!(acc.covariance().is_none());
 }
@@ -320,4 +320,142 @@ fn test_accumulator_num_bins() {
     acc.add(3.0);
     acc.add(4.0);
     assert_eq!(acc.num_bins(), 2);
+}
+
+#[test]
+fn test_add_array_shape_mismatch_is_explicit_error() {
+    use carlo_rs::CarloError;
+
+    let mut acc = Accumulator::new(10);
+    acc.add_array(&[1.0, 2.0]).unwrap();
+
+    // A shorter sample must be rejected, not silently zipped/truncated —
+    // in every build profile (this check is not a debug_assert).
+    let err = acc.add_array(&[3.0]).unwrap_err();
+    match &err {
+        CarloError::ShapeMismatch {
+            expected_len,
+            got_len,
+            ..
+        } => {
+            assert_eq!(*expected_len, 2);
+            assert_eq!(*got_len, 1);
+        }
+        other => panic!("expected ShapeMismatch, got {other:?}"),
+    }
+
+    // The rejected sample leaves no trace in the accumulator.
+    assert_eq!(acc.total_count(), 1);
+    assert_eq!(acc.shape(), &[2]);
+
+    // Empty samples remain no-ops.
+    assert!(acc.add_array(&[]).is_ok());
+    assert_eq!(acc.total_count(), 1);
+}
+
+#[test]
+fn test_finalize_array_none_for_scalar() {
+    let mut acc = Accumulator::new(2);
+    acc.add(1.0);
+    acc.add(2.0);
+    acc.add(3.0);
+    assert!(acc.finalize_array().is_none());
+}
+
+#[test]
+fn test_finalize_array_matches_independent_scalar_accumulators() {
+    // Element-preserving finalize must agree exactly with running each
+    // element through its own scalar accumulator fed the same samples.
+    let mut acc = Accumulator::new(2);
+    let samples: Vec<[f64; 2]> = vec![
+        [1.0, 10.0],
+        [3.0, 12.0],
+        [5.0, 20.0],
+        [7.0, 16.0],
+        [9.0, 30.0],
+    ];
+
+    let mut scalar_a = Accumulator::new(2);
+    let mut scalar_b = Accumulator::new(2);
+    for [a, b] in &samples {
+        acc.add_array(&[*a, *b]).unwrap();
+        scalar_a.add(*a);
+        scalar_b.add(*b);
+    }
+
+    let array = acc.finalize_array().expect("array accumulator");
+    assert_eq!(array.shape(), &[2]);
+    let est_a = array.element(0).unwrap();
+    let est_b = array.element(1).unwrap();
+
+    let ref_a = scalar_a.finalize();
+    let ref_b = scalar_b.finalize();
+    assert_eq!(est_a.n_bins, ref_a.n_bins);
+    assert_eq!(est_b.n_bins, ref_b.n_bins);
+    assert!((est_a.mean - ref_a.mean).abs() < 1e-12);
+    assert!((est_a.stderr - ref_a.stderr).abs() < 1e-12);
+    assert!((est_a.autocorr_time - ref_a.autocorr_time).abs() < 1e-12);
+    assert!((est_b.mean - ref_b.mean).abs() < 1e-12);
+    assert!((est_b.stderr - ref_b.stderr).abs() < 1e-12);
+    assert!((est_b.autocorr_time - ref_b.autocorr_time).abs() < 1e-12);
+}
+
+#[test]
+fn test_finalize_array_partial_bin_included_per_element() {
+    // 5 samples with bin capacity 2 → 2 complete bins + 1 partial sample.
+    // The partial bin must join each element's column as a normalized mean.
+    let mut acc = Accumulator::new(2);
+    acc.add_array(&[4.0, 8.0]).unwrap();
+    acc.add_array(&[4.0, 8.0]).unwrap(); // bin 0 mean: [4, 8]
+    acc.add_array(&[2.0, 6.0]).unwrap();
+    acc.add_array(&[2.0, 6.0]).unwrap(); // bin 1 mean: [2, 6]
+    acc.add_array(&[9.0, 3.0]).unwrap(); // partial: [9, 3]
+
+    let array = acc.finalize_array().expect("array accumulator");
+    let est = array.element(0).unwrap();
+    // Element 0 column: [4, 2, 9] → mean 5, n_bins 3.
+    assert_eq!(est.n_bins, 3);
+    assert!((est.mean - 5.0).abs() < 1e-12);
+    let est = array.element(1).unwrap();
+    assert!((est.mean - 17.0 / 3.0).abs() < 1e-12);
+}
+
+#[test]
+fn test_finalize_array_tau_ignores_partial_bin_like_scalar_path() {
+    // Review follow-up (2026-10-22): the scalar path estimates tau from
+    // completed bins only. Including the normalized partial bin in the
+    // per-element tau column let one outlier sample inflate var_rebin and
+    // spuriously raise tau (reviewer probe: 1.104 vs 1.0), so finalize_array
+    // now matches the scalar convention exactly. The partial bin still
+    // contributes to mean and stderr.
+    let mut acc = Accumulator::new(2);
+    let mut scalar = Accumulator::new(2);
+    // Completed-bin means alternate 0/1; the partial-bin sample is an
+    // outlier (500), which would dominate any variance that includes it.
+    for round in 0..4_u32 {
+        let value = f64::from(round % 2);
+        for _ in 0..2 {
+            acc.add_array(&[value, -value]).unwrap();
+            scalar.add(value);
+        }
+    }
+    acc.add_array(&[500.0, -500.0]).unwrap();
+    scalar.add(500.0);
+
+    let array = acc.finalize_array().expect("array accumulator");
+    let reference = scalar.finalize();
+    let element = array.element(0).unwrap();
+
+    // Exact parity with the scalar statistics on identical samples.
+    assert_eq!(element.autocorr_time, reference.autocorr_time);
+    assert!((element.mean - reference.mean).abs() < 1e-9);
+    assert!((element.stderr - reference.stderr).abs() < 1e-9);
+    assert_eq!(element.n_bins, reference.n_bins);
+
+    // The outlier partial sample is in the mean (not silently dropped)...
+    assert!(element.mean > 50.0);
+    // ...but does not leak into tau: the alternating completed bins leave
+    // the raw estimator at its floor, stored as 1.0 exactly as the scalar
+    // path reports it.
+    assert_eq!(element.autocorr_time, 1.0);
 }

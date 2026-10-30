@@ -11,9 +11,11 @@ keywords = ["monte-carlo", "classical", "lattice", "simulation", "physics"]
 categories = ["science", "simulation"]
 
 [dependencies]
+allocation-counter = { version = "0.8", optional = true }
 carlo-rs = { workspace = true }
 rand = "0.10.0"
 rand_xoshiro = "0.8"
+serde = { workspace = true, optional = true }
 serde_json = { workspace = true }
 smallvec = "1"
 
@@ -41,8 +43,113 @@ harness = false
 name = "dynamics_bench"
 harness = false
 
+[[bench]]
+name = "percolation_baseline"
+harness = false
+
+[[bench]]
+name = "topology_view"
+harness = false
+
+[[bench]]
+name = "percolation_laws"
+harness = false
+
+[[bench]]
+name = "percolation_components"
+harness = false
+
+[[bench]]
+name = "percolation_components_rss"
+harness = false
+
+[[bench]]
+name = "percolation_allocations"
+harness = false
+required-features = ["allocation-probe"]
+
+[[bench]]
+name = "percolation_winding"
+harness = false
+
+[[bench]]
+name = "percolation_newman_ziff"
+harness = false
+
+[[bench]]
+name = "percolation_network"
+harness = false
+
+[[bench]]
+name = "percolation_attack"
+harness = false
+
+[[bench]]
+name = "percolation_network_input"
+harness = false
+
+[[bench]]
+name = "percolation_network_io"
+harness = false
+required-features = ["io"]
+
+[[bench]]
+name = "directed_analysis"
+harness = false
+
+[[bench]]
+name = "directed_process"
+harness = false
+
+[[bench]]
+name = "kcore_percolation"
+harness = false
+
+[[bench]]
+name = "bootstrap_percolation"
+harness = false
+
+[[bench]]
+name = "continuum_pairs"
+harness = false
+
+[[bench]]
+name = "boolean_percolation"
+harness = false
+
+[[bench]]
+name = "achlioptas_process"
+harness = false
+
+[[bench]]
+name = "invasion_percolation"
+harness = false
+
+[[bench]]
+name = "first_passage"
+harness = false
+
+[[bench]]
+name = "incremental_process"
+harness = false
+
+[[bench]]
+name = "external_bonds"
+harness = false
+
+[[bench]]
+name = "edwards_sokal"
+harness = false
+
+[[bench]]
+name = "random_cluster_q1"
+harness = false
+
 [features]
 default = []
+allocation-probe = ["dep:allocation-counter"]
+io = ["dep:serde"]
+temporal = []
 cache-audit = []
 hdf5 = ["carlo-rs/hdf5"]
 mpi = ["carlo-rs/mpi"]

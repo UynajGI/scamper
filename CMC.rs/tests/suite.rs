@@ -46,8 +46,14 @@ mod worm_stage5;
 
 // ── Physics — deterministic exact validation (was physics_validation.rs) ─
 
+#[path = "physics/achlioptas_process.rs"]
+mod achlioptas_process;
 #[path = "physics/bkl_gillespie_equilibrium.rs"]
 mod bkl_gillespie_equilibrium;
+#[path = "physics/boolean_percolation.rs"]
+mod boolean_percolation;
+#[path = "physics/bootstrap_percolation.rs"]
+mod bootstrap_percolation;
 #[path = "physics/common.rs"]
 mod common;
 #[path = "physics/connectivity.rs"]
@@ -56,28 +62,60 @@ mod connectivity;
 mod continuous_cross_solver;
 #[path = "physics/continuous_spins.rs"]
 mod continuous_spins;
+#[path = "physics/continuum_pairs.rs"]
+mod continuum_pairs;
+#[path = "physics/continuum_winding.rs"]
+mod continuum_winding;
+#[path = "physics/directed_analysis.rs"]
+mod directed_analysis;
+#[path = "physics/directed_process.rs"]
+mod directed_process;
 #[path = "physics/dynamics_exact.rs"]
 mod dynamics_exact;
+#[path = "physics/edwards_sokal.rs"]
+mod edwards_sokal;
 #[path = "physics/ergodicity.rs"]
 mod ergodicity;
 #[path = "physics/ergodicity_extended.rs"]
 mod ergodicity_extended;
 #[path = "physics/event_chain_eos.rs"]
 mod event_chain_eos;
+#[path = "physics/external_bonds.rs"]
+mod external_bonds;
+#[path = "physics/first_passage.rs"]
+mod first_passage;
+#[path = "physics/first_passage_observables.rs"]
+mod first_passage_observables;
+#[path = "physics/first_passage_shape.rs"]
+mod first_passage_shape;
+#[path = "physics/fss_brackets.rs"]
+mod fss_brackets;
 #[path = "physics/generalized_exact.rs"]
 mod generalized_exact;
 #[path = "physics/heat_bath_exact.rs"]
 mod heat_bath_exact;
 #[path = "physics/hybrid_compositions.rs"]
 mod hybrid_compositions;
+#[path = "physics/incremental_process.rs"]
+mod incremental_process;
 #[path = "physics/input_validation.rs"]
 mod input_validation;
+#[path = "physics/invasion_percolation.rs"]
+mod invasion_percolation;
 #[path = "physics/kawasaki_exact.rs"]
 mod kawasaki_exact;
+#[path = "physics/kcore_percolation.rs"]
+mod kcore_percolation;
 #[path = "physics/lattice_exact.rs"]
 mod lattice_exact;
 #[path = "physics/long_convergence.rs"]
 mod long_convergence;
+#[path = "physics/long_range.rs"]
+mod long_range;
+#[path = "physics/long_range_diameter.rs"]
+mod long_range_diameter;
+#[path = "physics/long_range_distances.rs"]
+mod long_range_distances;
 #[path = "physics/molecule_equilibrium.rs"]
 mod molecule_equilibrium;
 #[path = "physics/molecule_external_field.rs"]
@@ -98,12 +136,63 @@ mod p2_validation;
 mod particle_zscore;
 #[path = "physics/particles_exact.rs"]
 mod particles_exact;
+#[path = "physics/percolation.rs"]
+mod percolation;
+#[path = "physics/percolation_attack.rs"]
+mod percolation_attack;
+#[path = "physics/percolation_components.rs"]
+mod percolation_components;
+#[path = "physics/percolation_correlated.rs"]
+mod percolation_correlated;
+#[path = "physics/percolation_custom_observable.rs"]
+mod percolation_custom_observable;
+#[path = "physics/percolation_heterogeneous.rs"]
+mod percolation_heterogeneous;
+#[path = "physics/percolation_heterogeneous_zscore.rs"]
+mod percolation_heterogeneous_zscore;
+#[path = "physics/percolation_law_extension.rs"]
+mod percolation_law_extension;
+#[path = "physics/percolation_law_zscore.rs"]
+mod percolation_law_zscore;
+#[path = "physics/percolation_multiplex_bracket.rs"]
+mod percolation_multiplex_bracket;
+#[path = "physics/percolation_network.rs"]
+mod percolation_network;
+#[path = "physics/percolation_network_input.rs"]
+mod percolation_network_input;
+#[path = "physics/percolation_policy_extension.rs"]
+mod percolation_policy_extension;
+#[path = "physics/percolation_potts_phase.rs"]
+mod percolation_potts_phase;
+#[path = "physics/percolation_process_policy_extension.rs"]
+mod percolation_process_policy_extension;
+#[path = "physics/percolation_scan.rs"]
+mod percolation_scan;
+#[path = "physics/percolation_scan_heterogeneous.rs"]
+mod percolation_scan_heterogeneous;
+#[path = "physics/percolation_spec.rs"]
+mod percolation_spec;
+#[path = "physics/percolation_sweeny.rs"]
+mod percolation_sweeny;
+#[cfg(feature = "temporal")]
+#[path = "physics/percolation_temporal.rs"]
+mod percolation_temporal;
+#[path = "physics/percolation_winding.rs"]
+mod percolation_winding;
+#[path = "physics/percolation_zscore.rs"]
+mod percolation_zscore;
 #[path = "physics/potts_exact.rs"]
 mod potts_exact;
+#[path = "physics/random_cluster_q1.rs"]
+mod random_cluster_q1;
 #[path = "physics/statistical_regression.rs"]
 mod statistical_regression;
 #[path = "physics/sw_continuous.rs"]
 mod sw_continuous;
+#[path = "physics/topology_directed.rs"]
+mod topology_directed;
+#[path = "physics/topology_view.rs"]
+mod topology_view;
 #[path = "physics/transition_balance.rs"]
 mod transition_balance;
 #[path = "physics/usage_exact.rs"]

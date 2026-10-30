@@ -443,7 +443,9 @@ impl MonteCarlo for IsingGraphWormMC {
                 context.measure("WormTail", tail as f64);
             }
             if tracking {
-                context.measure_array("WormEndpointPairs", &self.endpoint_sample);
+                context
+                    .measure_array("WormEndpointPairs", &self.endpoint_sample)
+                    .expect("WormEndpointPairs length changed mid-run");
             }
         }
     }

@@ -335,8 +335,8 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
         self.context.enter_phase(RunPhase::Finished);
         self.mc
             .on_phase_start(RunPhase::Finished, &mut self.context);
-        let estimates = self.context.finalize_measurements();
-        let mut results = Results::from_measurements(&estimates);
+        let (estimates, arrays) = self.context.finalize_measurements_split();
+        let mut results = Results::from_measurements_with_arrays(&estimates, &arrays);
         results.set_metadata(Metadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
             timestamp: chrono::Utc::now(),
@@ -344,6 +344,7 @@ impl<MC: MonteCarlo<Rng = R>, R: Rng + SeedableRng + Send> Run<MC, R> {
             thermalization_sweeps: self.config.thermalization_sweeps,
             measurement_sweeps: self.sweeps_done,
             n_tasks: 1,
+            attributes: std::collections::BTreeMap::new(),
         });
         (results, self.mc)
     }

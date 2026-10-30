@@ -270,8 +270,8 @@ fn test_context_measure_array_basic() {
     let rng = Xoshiro256PlusPlus::seed_from_u64(42);
     let mut ctx = Context::new_with_binsize(rng, 0, 2);
 
-    ctx.measure_array("Correlation", &[1.0, 2.0, 3.0]);
-    ctx.measure_array("Correlation", &[4.0, 5.0, 6.0]);
+    ctx.measure_array("Correlation", &[1.0, 2.0, 3.0]).unwrap();
+    ctx.measure_array("Correlation", &[4.0, 5.0, 6.0]).unwrap();
 
     let estimates = ctx.finalize_measurements();
     assert!(estimates.contains_key("Correlation"));
@@ -286,8 +286,8 @@ fn test_context_measure_array_finalize() {
     let mut ctx = Context::new_with_binsize(rng, 0, 1);
 
     // binsize=1, so each sample becomes one bin
-    ctx.measure_array("Vec", &[10.0, 20.0]);
-    ctx.measure_array("Vec", &[30.0, 40.0]);
+    ctx.measure_array("Vec", &[10.0, 20.0]).unwrap();
+    ctx.measure_array("Vec", &[30.0, 40.0]).unwrap();
 
     let estimates = ctx.finalize_measurements();
     let est = estimates.get("Vec").expect("Vec observable");
@@ -335,7 +335,7 @@ fn test_context_namespace_isolation() {
 
     ctx.set_measurement_namespace(Some("chainA".into()));
     ctx.measure("Mag", 0.5);
-    ctx.measure_array("Corr", &[1.0, 2.0]);
+    ctx.measure_array("Corr", &[1.0, 2.0]).unwrap();
 
     ctx.set_measurement_namespace(Some("chainB".into()));
     ctx.measure("Mag", 0.9);

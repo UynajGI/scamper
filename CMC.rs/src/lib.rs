@@ -45,6 +45,7 @@ pub mod classical_mc;
 pub mod multi_spin;
 pub mod postprocess;
 pub mod statistics;
+pub mod topology;
 pub mod worm;
 
 // Hierarchical modules
@@ -57,6 +58,7 @@ pub mod generalized;
 pub mod lattice;
 pub mod observables;
 pub mod particle;
+pub mod percolation;
 
 // ── Flat public re-exports (backward-compatible) ─────────────
 
@@ -91,7 +93,9 @@ pub use generalized::{
     WangLandauRefinement, WangLandauRunControl, WangLandauState, WangLandauTermination,
 };
 pub use lattice::graph::{
-    build_chain, build_honeycomb, build_hypercubic, build_kagome, build_square, build_triangular,
+    build_chain, build_chain_with_embedding, build_honeycomb, build_honeycomb_with_embedding,
+    build_hypercubic, build_hypercubic_with_embedding, build_kagome, build_kagome_with_embedding,
+    build_square, build_square_with_embedding, build_triangular, build_triangular_with_embedding,
     Bond, BondType, CsrLattice,
 };
 pub use lattice::interaction::{
@@ -119,11 +123,98 @@ pub use particle::{
     SimulationCell, TorsionDefinition, TorsionRotation, TranslateParticle, VolumeChangePatch,
     WeightedMove,
 };
+#[cfg(feature = "allocation-probe")]
+#[doc(hidden)]
+pub use percolation::WorkspaceCapacityAudit;
+#[cfg(feature = "allocation-probe")]
+#[doc(hidden)]
+pub use percolation::WorkspaceWindingCapacityAudit;
+pub use percolation::{
+    analyze, analyze_bonds, analyze_bonds_with_labels, analyze_strong_components,
+    analyze_weak_components, analyze_winding, analyze_with_labels,
+    candidate_pairs_from_configuration, candidate_pairs_with_cell_list, chemical_distance_run,
+    csr_from_edge_list, first_passage_run, geodesic_aging, geodesic_count_run, geodesic_path,
+    invasion_run, kcore_decompose, long_range_run, measure_diameter_ladder, overlap_pairs,
+    overlap_pairs_from_configuration, reachable, reweight, reweight_heterogeneous,
+    reweight_heterogeneous_with, reweight_with, scan_bond, scan_site, AchlioptasError,
+    AchlioptasGrid, AchlioptasProcessMC, AchlioptasRule, AchlioptasScore, AchlioptasStepRecord,
+    AchlioptasTie, AllActiveVertices, AnalysisError, AnalysisResult, AttackGrid, AttackOrder,
+    AttackOrderContext, AttackPolicy, BinderCumulant, BinderEstimator, BondBernoulli,
+    BondConfigurationError, BondSample, BooleanError, BooleanPercolationMC, BootstrapDynamics,
+    BootstrapError, BootstrapInterval, BootstrapOutcome, BootstrapPercolationMC, BootstrapSeedRule,
+    BootstrapSeeds, BootstrapThreshold, BootstrapThresholdRule, BootstrapWorkspace, BoundaryQuery,
+    BoundaryQueryError, BoundarySets, CandidatePairGraph, CandidateSampling, ChemicalDistanceError,
+    ChemicalDistanceEstimate, ChemicalDistanceEstimator, ChemicalDistanceOutcome,
+    ChemicalDistanceSampler, ChemicalDistanceWorkspace, ClusterQ, CollapsePoint, CollapseQuality,
+    ComponentLabel, ComponentSummary, ComponentWinding, ComponentWorkspace, ContinuumEmbedding,
+    ContinuumError, ContinuumWindingError, CoreThresholdRule, CoreThresholds, CorrelationPoint,
+    CrossingEstimate, DegreeAttackMC, DegreeScratch, DiameterLadder, DiameterLadderError,
+    DiameterRegime, DiameterRow, DiameterTracking, DirectedAnalysisError, Direction,
+    DpProcessError, DpSeedPolicy, DuplicateEdgePolicy, EdgeActivity, EdgeListSpec, EdgeUniverse,
+    EdgeWeightLaw, EdwardsSokalError, EdwardsSokalMC, EstimatorSpec, ExternalBondConfiguration,
+    FirstPassageError, FirstPassageOutcome, FirstPassageWorkspace, FixedSeries, FssCurve, FssError,
+    FssPoint, GeodesicAging, GeodesicCountOutcome, GeodesicCountWorkspace, GeodesicPathOutcome,
+    GeodesicTracking, HetReweightResult, HetReweightWorkspace, IncrementalError,
+    IncrementalSummary, IncrementalUnionWorkspace, InvasionError, InvasionMode, InvasionOutcome,
+    InvasionPercolationMC, InvasionStop, InvasionStopReason, InvasionStopRule, InvasionTrapping,
+    InvasionTrappingRule, InvasionWorkspace, KCoreError, KCoreMC, KCoreSummary, KCoreWorkspace,
+    LatticeKind, LayeredDirectedPercolationMC, LongRangeBox, LongRangeError, LongRangeOutcome,
+    LongRangePercolationMC, LongRangeWorkspace, MixedBernoulli, Moments, MultiplexCascadeMC,
+    MultiplexError, MultiplexNetwork, MutualComponent, NetworkError, NetworkInputError,
+    NetworkPercolationError, NetworkProfile, NewmanZiffWorkspace, ObservablePlan,
+    ObservablePlanError, ObservableSpec, OccupationLaw, OverlapGraph, PairGraph, PassageEstimate,
+    PassageEstimator, PassageGeometry, PassageObservablesError, PassageSampler, PercolationAdapter,
+    PercolationProvenance, PercolationSpec, PointProcess, Probability, ProbabilityField,
+    ProcessSpec, ProcessTrajectory, Radii, RandomClusterError, RandomClusterMC, RandomFailureMC,
+    ReachabilityWorkspace, ReweightError, ReweightWorkspace, ReweightedEstimate, SampleView,
+    SamplingError, ScalarObservable, ScalingWindow, ScanCurve, ScanError, ScanEstimator, ScanMode,
+    ScanObservable, ScanObservableSpec, ScanPoint, SelfLoopPolicy, SeriesPad, ShapeError,
+    ShapeEstimate, ShapeEstimator, ShapeGeometry, ShapeSampler, ShapeTarget, SiteBernoulli,
+    SpecError, StaticConfiguration, StaticLaw, StaticObservable, StaticPercolationError,
+    StaticPercolationMC, StrongComponentResult, StrongComponentSummary, StrongComponentWorkspace,
+    TiePolicy, TopologySpec, VertexActivity, WeakComponentResult, WeakComponentSummary,
+    WeakComponentWorkspace, WeightLaw, WindingError, WindingResult, WindingSummary,
+    WindingWorkspace, DIAMETER_VERTEX_CAP, NO_PREDECESSOR, SHAPE_SIDE_CAP,
+};
+pub use percolation::{
+    bootstrap, bracket, collapse_residual, critical_probability, crossing, flip_bracket,
+    inverse_normal_cdf, multiplex_from_edges, phase_scan, phase_scan_samples,
+    second_moment_correlation_length, two_mode_estimate, ChayesMachtaError, ChayesMachtaMC,
+    CorrelatedError, CorrelatedFieldSpec, CorrelatedGaussianField, CorrelatedPercolationMC,
+    CorrelatedSiteLaw, CorrelatedThresholdError, FlipBracket, FractalDimensionEstimate,
+    HarrisBracket, Hypergraph, HypergraphError, HypergraphSummary, IntervalEstimate, LinearFit,
+    NuEstimate, PcExtrapolation, PcShiftNuEstimate, PcShiftRung, PottsPhaseError,
+    PottsPhaseEstimate, PottsPhaseSamples, PottsPhaseSpec, RungObservables, RungSlope,
+    SweenyAcceptance, SweenyError, SweenyMC, SweenyProposal, SweenyRates, ThresholdLadder,
+    ThresholdLadderSpec, TwoModeEstimate, WeinribHalperinError, WeinribHalperinMap,
+    BOOTSTRAP_RESAMPLES, PEAK_FIT_RADIUS,
+};
+#[cfg(feature = "temporal")]
+pub use percolation::{
+    contact_ensemble, contact_process_run, ContactEnsemble, ContactError, ContactPatch,
+    ContactProcessModel, ContactRun, ContactState, TemporalError,
+};
+#[cfg(feature = "allocation-probe")]
+#[doc(hidden)]
+pub use percolation::{
+    HetReweightCapacityAudit, ReweightCapacityAudit, WorkspaceScanCapacityAudit,
+};
+#[cfg(feature = "io")]
+pub use percolation::{
+    NetworkDocument, NetworkEdge, NetworkIoError, EDGE_LIST_HEADER_V1, NETWORK_JSON_FORMAT,
+    NETWORK_JSON_VERSION,
+};
 pub use postprocess::{
     binder_cumulant, connected_order_parameter_fluctuation, specific_heat, susceptibility,
     zero_field_ising_susceptibility,
 };
 pub use statistics::{statistical_efficiency, StatisticalEfficiency};
+pub use topology::{
+    Arc, ArcId, ArcIncidence, BorrowedDirectedCsr, BorrowedDirectedOutCsr, BorrowedUndirectedCsr,
+    DirectedCsr, DirectedDisplacement, DirectedGraphView, DirectedInGraphView,
+    DirectedOutGraphView, EdgeId, EmbeddingError, GraphView, Incidence, LatticeEmbedding,
+    PeriodicEmbedding, TopologyError, UndirectedGraphView, VertexId,
+};
 pub use worm::{
     enumerate_ising_graph_expansion, EndpointPairHistogram, ExactIsingGraphExpansion,
     IsingComponentWorm, IsingGraphConfiguration, IsingGraphPatch, IsingGraphWormEnsemble,

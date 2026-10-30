@@ -348,3 +348,37 @@ fn hdf5_checkpoint_with_report_legacy_reports_missing_clocks() {
         e.mean
     );
 }
+
+#[test]
+fn hdf5_checkpoint_roundtrip_preserves_array_finalize() {
+    use hdf5::File as Hdf5File;
+
+    let path = make_temp_path("ctx_array.h5");
+
+    let mut ctx = Context::new_with_binsize(Xoshiro256PlusPlus::seed_from_u64(7), 0, 2);
+    ctx.enter_phase(carlo_rs::RunPhase::Measurement);
+    for i in 0..5 {
+        let x = i as f64;
+        ctx.measure_array("Curve", &[x, 10.0 * x])
+            .expect("curve length is fixed");
+        ctx.advance_sweep();
+    }
+
+    {
+        let file = Hdf5File::create(&path).unwrap();
+        let mut group = file.create_group("rank_0").unwrap();
+        ctx.write_checkpoint_hdf5(&mut group).unwrap();
+    }
+
+    let file = Hdf5File::open(&path).unwrap();
+    let group = file.group("rank_0").unwrap();
+    let restored = Context::<Xoshiro256PlusPlus>::read_checkpoint_hdf5_full(&group, 2).unwrap();
+
+    let (_, arrays) = restored.finalize_measurements_split();
+    let curve = arrays.get("Curve").expect("Curve survives checkpoint");
+    assert_eq!(curve.shape(), &[2]);
+    // Samples 0..5 with bin capacity 2 → bins [0.5, 5], [2.5, 25], partial [4, 40].
+    assert_eq!(curve.element(0).unwrap().n_bins, 3);
+    assert!((curve.element(0).unwrap().mean - (0.5 + 2.5 + 4.0) / 3.0).abs() < 1e-12);
+    assert!((curve.element(1).unwrap().mean - (5.0 + 25.0 + 40.0) / 3.0).abs() < 1e-12);
+}

@@ -47,14 +47,22 @@ fn run_multispin(beta: f64, seed: u64) -> (Estimate, Estimate, Estimate, Estimat
     let e2 = results.get("E2").expect("E2");
     let magnetization = results.get("Magnetization").expect("Magnetization");
     let replica_energy = results
-        .get("Energy_replica")
+        .get_array("Energy_replica")
         .expect("Energy_replica array observable");
+    // Average the per-replica element means: replicas-and-time ⟨E⟩, the
+    // same quantity the element-collapsed scalar used to carry.
+    let replica_mean = replica_energy
+        .elements()
+        .iter()
+        .map(|e| e.mean)
+        .sum::<f64>()
+        / replica_energy.n_elements() as f64;
     (
         (energy.mean, energy.stderr),
         (m2.mean, m2.stderr),
         (e2.mean, e2.stderr),
         (magnetization.mean, magnetization.stderr),
-        replica_energy.mean,
+        replica_mean,
     )
 }
 

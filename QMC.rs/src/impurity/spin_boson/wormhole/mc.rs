@@ -160,10 +160,14 @@ impl MonteCarlo for ImpurityQmc {
             observables.physical_correlation_s_half,
         );
 
-        ctx.measure_array("SampledCorrelationSx", &transverse.sampled_x);
-        ctx.measure_array("SampledCorrelationSy", &transverse.sampled_y);
-        ctx.measure_array("SampledCorrelationNormal", &transverse.normal);
-        ctx.measure_array("SampledCorrelationAnomalous", &transverse.anomalous);
+        ctx.measure_array("SampledCorrelationSx", &transverse.sampled_x)
+            .expect("SampledCorrelationSx length changed mid-run");
+        ctx.measure_array("SampledCorrelationSy", &transverse.sampled_y)
+            .expect("SampledCorrelationSy length changed mid-run");
+        ctx.measure_array("SampledCorrelationNormal", &transverse.normal)
+            .expect("SampledCorrelationNormal length changed mid-run");
+        ctx.measure_array("SampledCorrelationAnomalous", &transverse.anomalous)
+            .expect("SampledCorrelationAnomalous length changed mid-run");
         ctx.measure("SampledCorrelationSxHalf", transverse.sampled_x_half);
         ctx.measure("SampledCorrelationSyHalf", transverse.sampled_y_half);
         ctx.measure("ChiSampledXImproved", transverse.susceptibility_x);
@@ -190,7 +194,8 @@ impl MonteCarlo for ImpurityQmc {
                 .physical_for_sampled(sampled_axis);
             let label = physical.axis.label();
             // The sign cancels in same-axis two-point functions.
-            ctx.measure_array(&format!("PhysicalCorrelationS{label}"), correlations);
+            ctx.measure_array(&format!("PhysicalCorrelationS{label}"), correlations)
+                .expect("PhysicalCorrelation length changed mid-run");
             ctx.measure(&format!("PhysicalCorrelationS{label}Half"), half);
             ctx.measure(&format!("ChiPhysical{label}Improved"), susceptibility);
         }

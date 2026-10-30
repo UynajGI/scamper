@@ -1,0 +1,513 @@
+# Percolation platform roadmap v3 — pluggable research framework
+
+Status: **Proposed** (2026-10-25). This roadmap turns the validated v2
+stage collection into a general, customizable, research-enabling library
+in the spirit of CMC/QMC/MCMC. It is architecture-first: generic
+extension points are delivered and proven before new domains are added.
+
+Predecessors: [v1 platform roadmap](2026-09-03-percolation-platform-roadmap.md),
+[v2 roadmap](2026-10-23-percolation-roadmap-v2.md). Living evidence
+ledger: [PERCOLATION.md](../../CMC.rs/PERCOLATION.md). v2 audit:
+[2026-10-24-v2-final-audit.md](../reviews/2026-10-24-v2-final-audit.md).
+
+## 0. Context
+
+v2 delivered all 16 stages (14 Validated, 2 Experimental: C3's
+Weinrib–Halperin flip and Q3's phase diagram). The physics is
+validation-strong, but the **upper API is stage-shaped**:
+
+- 15 concrete `MonteCarlo` adapters repeat lattice/configuration/
+  workspace/plan validation and recording (~5 copies of the constructor
+  sequence, 8 copies of C0 padding).
+- 5 estimator types repeat count/sum/sum_sq logic.
+- Core extension points are closed enums: `StaticObservable`,
+  `StaticLaw`, `EdgeWeightLaw`, `AttackPolicy`, `ScanObservable`, and the
+  process policy enums.
+- Users can tune parameters and implement custom graph/activity types,
+  but cannot add a law, process, observable, or estimator without editing
+  CMC.rs.
+
+The goal of v3 is **one generic engine, traits at every extension point,
+and stage facades reduced to presets**. This is the percolation analogue
+of CMC's `Hamiltonian` + `Algorithm<H>` + `ObservableSet`, QMC's
+`QmcKernel` + `PositiveOperatorModel`, and MCMC's `LogDensity` +
+`TransitionKernel<T>`.
+
+## 1. Principles and constraints
+
+1. **Additive evolution.** New traits/objects arrive first; legacy
+   enums, adapters, and `ObservablePlan` remain as deprecated wrappers
+   for one minor release. Removal only at the next major.
+2. **Golden conservation.** No silent change to RNG draw order, Results
+   column names, observable indicators, C0 JSON/HDF5 schema, or numeric
+   semantics. Golden fixtures pin all of them.
+3. **Preserve the reusable core.** `GraphView`/`UndirectedGraphView`,
+   `VertexActivity`/`EdgeActivity`, generic `analyze`, `ComponentWorkspace`,
+   `IncrementalUnionWorkspace`, RNG-free cores, C0 arrays, and
+   `Run::from_parts` stay the foundation.
+4. **Anchor-first.** Every scientific stage archives a PDF/markdown
+   anchor and names the reproduced quantity, or records a definitional
+   anchor. Statistical claims are finite-size brackets, never exact
+   equalities.
+5. **No GPU in v3.** GPU architecture remains issue #2's independent
+   design track; percolation v3 is CPU-first.
+6. **No new facade without a generic extension point.** A stage that can
+   be expressed as a preset must not introduce another concrete adapter.
+7. **Research honesty.** A stage that cannot certify its strongest claim
+   stays Experimental with a precise negative result.
+
+## 2. Dependency graph
+
+```text
+A1 Observable trait + open plan
+ └─ A2 SampleView + OccupationLaw/WeightLaw
+     └─ A3 generic adapter + estimator + C0 writer
+         ├─ A4 policy traits (process/scan/attack, directed)
+         ├─ A5 generic FSS toolkit
+         └─ A6 generic specification/builder + provenance
+X1 network I/O ── X2 multiplex/interdependent ── X3 hypergraph/simplicial
+A2 + A4 + X1 ── X4 temporal/directed dynamics
+A5 ── R1 C3 certification, R2 Q3 phase diagram, R3 F3 large-scale research
+```
+
+## 3. Architecture track A
+
+Architecture stages have **definitional anchors**: bitwise/numerical
+parity with the v2 golden outputs and an external-crate extension test,
+not a physics paper.
+
+### A1 — Observable trait and open plan
+
+Problem: `StaticObservable` is a closed enum with a `pub(crate)` match;
+new observables require crate edits.
+
+Deliverable: `ScalarObservable` + `ObservableSpec` traits (name, required
+graph/activity capabilities, compute from a `SampleView`), an open
+`ObservablePlan` builder, built-ins reimplemented as zero-cost impls, and
+a `StaticObservable` shim (deprecation attribute at the v4 release
+boundary, once adapters no longer construct the enum internally). The
+trait is named `ScalarObservable` because the crate root already exports
+the Hamiltonian-generic `Observable` from `observables/`. `dyn` only for
+optional third-party observables; built-in hot paths stay statically
+dispatched.
+
+Gates: every v2 scalar/array golden output equal under the same seeds;
+an external test crate defines and runs a custom observable without CMC
+edits; plan validation/rejection ordering preserved; allocation parity;
+rustdoc example.
+
+Deps: v2. Risks: object safety vs performance; plan ordering/duplicate
+name semantics.
+
+### A2 — SampleView, OccupationLaw, WeightLaw
+
+Problem: `StaticConfiguration`, `ExternalBondConfiguration`,
+`BondSample`, and the process-specific states do not share a view;
+`StaticLaw` and `EdgeWeightLaw` are closed dispatch points.
+
+Deliverable: `SampleView` constructible by third-party adapters
+(counts, activity, labels, boundary queries); `OccupationLaw` trait for
+site/edge/correlated occupation; `WeightLaw` trait for FPP edge weights.
+Existing laws become blanket/built-in impls. Continuum and long-range
+draws discover their edges during sampling, so they stay processes under
+A4 rather than pretending to be occupation laws.
+
+Gates: bitwise RNG replay for every existing law and draw contract;
+typed rejection matrix; golden Results; zero steady-state allocation;
+borrow/lifetime examples for a borrowed custom view.
+
+Deps: A1. Risks: lifetime ergonomics; coherence with heterogeneous
+fields; long-range laws whose edge universe is not materialized.
+
+### A3 — Generic adapter, estimator, C0 writer
+
+Problem: 15 adapters and 5 estimators duplicate plumbing.
+
+Deliverable: one `PercolationAdapter<Law, Plan, Workspace>` with a single
+`MonteCarlo` impl; a generic `Estimator` abstraction (count/sum/sum_sq,
+mean/SEM) with reachability/defined-sample policies; a generic C0 vector
+writer replacing the repeated pad/truncate code. Stage adapters become
+thin presets (target: ≤3 adapter structs).
+
+Gates: all v2 adapter/parameter tests pass; Results schema and C0
+JSON/HDF5 round-trip unchanged; allocation parity; a custom law + custom
+observable composed through the generic adapter.
+
+Deps: A2. Risks: `FromParams` uniform-only constraint; column naming;
+special cases (winding, i.i.d. sampling, sequential processes).
+
+Progress note (2026-10-25): A3a adds `Moments` (count/sum/sum_sq,
+unbiased variance, SEM) used by the passage, shape, chemical-distance, and
+scan estimators. A3b makes the static adapter generic:
+`PercolationAdapter<L = StaticLaw>` keeps `StaticPercolationMC` as a
+compatibility alias, and a custom law composes with a custom observable
+through `Run::from_parts`. Custom laws use the F2 `SamplingError`
+vocabulary (`Error = SamplingError`) so construction-time rejections keep
+their typed `LawDomain` variant; laws with richer error contracts (the
+correlated field) keep dedicated adapters for now. A3c adds `FixedSeries`,
+a fixed-shape C0 buffer with the two documented padding conventions
+(repeat-last with a fallback, or a constant tail) and in-place rewriting,
+and `record_component_analysis`/`record_bond_analysis`, which own the
+analyze/label/record tail that seven adapters had duplicated; the
+invasion, bootstrap, k-core, and long-range adapters now share the C0
+writer with bitwise-identical contents. The remaining preset collapse
+(bond dynamics, continuum, scans) is outstanding.
+
+### A4 — Policy traits for processes, scans, and attacks
+
+Problem: `AttackPolicy`, `AttackGrid`, `ScanObservable`, and the
+Achlioptas/invasion/bootstrap/k-core policy enums are closed.
+
+Deliverable: policy/grid/rule traits with built-in impls; a directed
+incidence capability promoted to a first-class view trait; reference-order
+guarantees documented for each policy.
+
+Gates: reference-order equivalence for every built-in policy; directed
+reuse tests; typed policy rejections; no changes to recorded coordinates
+or provenance.
+
+Deps: A3. Risks: semantic drift in tie-breaking; directed provenance
+rules.
+
+Progress note (2026-10-30): A4c opens the value policies: `AchlioptasScore`
+and `AchlioptasTie` (with the closed enums as presets), `InvasionStopRule`
+and `InvasionTrappingRule`, `BootstrapThresholdRule` and
+`BootstrapSeedRule`, and `CoreThresholdRule`. Every adapter keeps the
+closed enum as its default type parameter, so existing constructions and
+the recorded reference orders are unchanged; external implementations
+reproduce the built-in trajectories bitwise, and a deliberately different
+tie/frontier rule changes the order as expected. Directed incidence is
+already first-class through D1's public `DirectedGraphView` /
+`DirectedOutGraphView` / `DirectedInGraphView`. The structural mode
+enums (site/bond invasion, with/without-replacement sampling,
+synchronous/queue clock) and the checkpoint grids remain closed because
+they select different algorithms rather than parameterizing one.
+
+### A5 — Generic finite-size-scaling toolkit
+
+Problem: C2/C3 estimators are stage-specific; crossing/Binder/
+correlation-length/FSS fits are not reusable.
+
+Deliverable: `percolation/fss/` — generic ladder runner, crossing
+estimator, Binder cumulant, second-moment correlation length, collapse
+fit, and bootstrap intervals. C2/C3 become instances.
+
+Gates: reproduce the v2 crossing calibration and brackets; exact
+small-lattice enumeration; Criterion target; documented finite-size
+caveats.
+
+Deps: A3. Risks: fit robustness; naming collisions with stage-specific
+estimators.
+
+Progress note (2026-10-25): A5a lands `BinderEstimator`
+(`U = 1 - <m^4>/(3<m^2>^2)`, `m = S_max/V`, first-order delta-method
+error including the `cov(m^2,m^4)` term) and `crossing` over two
+`FssCurve`s sharing an identical probability grid. Both are definitional
+anchors: no literature value or thermodynamic-limit claim is made. The
+remaining A5 tools (collapse fit and reproduction of the v2 C2/C3
+brackets) are outstanding. A5b adds `bootstrap`: a
+deterministic percentile bootstrap of any `FnMut(&[f64]) -> f64`
+statistic with a fixed index-draw contract, reused buffers, nearest-rank
+percentiles, and typed rejection of empty/non-finite inputs or
+non-finite statistic values. A5c adds `second_moment_correlation_length`
+(`xi^2 = sum r^2 C(r) / (2 d sum C(r))`, the standard normalization)
+over explicitly non-negative, finite correlation points, with typed
+rejections for zero dimensions, empty input, bad distances/values, and
+zero total weight. A5d adds `ScalingWindow`
+(`x = (p-p_c) L^{1/nu}`, `y = value L^{-exponent}`) and
+`collapse_residual`, which scores a candidate window by the RMS
+z-score of scaled-value differences over cross-size pairs inside a
+caller-supplied coordinate tolerance; exponent fitting stays caller-driven.
+A5e reproduces the v2 white-noise C2 crossing calibration with the generic
+toolkit alone (independent `SiteBernoulli` realizations, `BinderEstimator`
+curves, `crossing`): the nightly L=64/128 calibration lands at 0.5995
+against the v2 0.5987 and the exact 0.592746, and a fast L=32/48/64 ladder
+brackets the threshold within 0.06 per crossing (mean within 0.03) with a
+Binder crossing inside 0.05. The correlated C2 peak bracket and the C3
+`nu` bracket still use the v2 `ThresholdLadder` pc-shift estimator; their
+certification belongs to R1.
+
+### A6 — Generic specification, builder, and provenance
+
+Problem: only `StaticPercolationMC` has `FromParams`; most stages require
+bespoke construction and manually recorded provenance.
+
+Deliverable: a `PercolationSpec`/builder covering topology + law +
+process + plan + estimator, with `FromParams` presets and
+`Run::from_parts` for non-schema laws; provenance attributes
+(law/process/seed/estimator versions) recorded in Results.
+
+Gates: round-trip configuration for all v2 presets; JSON provenance;
+typed rejection matrix; no hidden defaults.
+
+Deps: A3. Risks: schema creep; compatibility with existing Results
+metadata.
+
+Progress note (2026-10-30): A6a lands `PercolationSpec` for the
+independent-occupation family: resolved topology (no parameter defaults
+survive into the spec), `StaticLaw`, process and estimator versions,
+built-in observables, and an explicit optional boundary query, with
+`from_params`/`to_params` round-trip for every parameter-preset shape.
+`build()` validates and composes the scheduler-ready adapter (embedding
+only when winding is requested, exactly the preset behavior), and
+`provenance()` emits the versioned `cmc.percolation.provenance` JSON
+object that `stamp()` records under the `percolation` Results attribute.
+Heterogeneous law fields, custom observables, and the non-static
+families stay on their constructors or `Run::from_parts` until the
+schema widens. Gates: 6 unit tests (round-trip across 15 preset shapes,
+preset parity, provenance JSON, typed rejections), 4 external tests
+(bitwise scheduler replay, JSON round-trip, non-schema law through
+`Run::from_parts`, topology parity), rustdoc, and clippy.
+
+## 4. Domain track X
+
+### X1 — Network I/O and schema
+
+Exactly **two** versioned formats: a text edge list (with weighted and
+optional multiplex columns) and a JSON multiplex schema. No format zoo,
+no silent coercion.
+
+Anchor: definitional (format specification and round-trip identity).
+Gates: round-trip and reference-graph equality; malformed-input
+rejections with line/field provenance; benchmark for million-edge files;
+feature-gated (`io`).
+
+Deps: A2. Risks: format creep; encoding/versioning.
+
+### X2 — Multiplex and interdependent networks
+
+Layer-aware `SampleView`, mutual-component/cascade analysis, and preset
+adapters for two or more layers.
+
+Anchor (archive and verify at T-time): Buldyrev et al., *Catastrophic
+cascade of failures in interdependent networks*, Nature 464, 1025 (2010);
+Gao et al., *Networks formed from interdependent networks*, Nat. Phys. 8,
+40 (2012). Gates: exact two-layer enumeration; anchor bracket; independent
+review; documented cascade semantics (mutual vs. single-layer giant).
+
+Deps: X1. Risks: under-specified cascade rules; node/layer identity.
+
+Progress note (2026-10-30): X2b adds explicit initial-activity masks
+(`mutual_component_from`) and the `MultiplexCascadeMC` adapter (random
+primary survival, then the cascade; records mutual fraction, mutual and
+initial vertex counts, contractions). Anchor bracket: on configuration-
+model Poisson ER layers with N=1024, the mutual fraction is ~0.001 below
+mean degree 2.2 and grows above it. The committed 10-seed ladder gives a
+0.2-fraction crossing of c=2.359; a 20-seed review ladder at
+N=512/1024/2048 gives 2.361/2.426/2.414, approaching Buldyrev's 2.4554
+from below (finite-size bracket, not a four-digit reproduction). The
+configuration-model layers now assert that their realized mean degree
+matches `c`. A layer-aware `SampleView` and more than two layers remain
+outstanding.
+
+### X3 — Hypergraph and simplicial percolation
+
+Incidence view + hypergraph component analysis + a documented canonical
+component-identity rule (vertex-min identity does not generalize
+directly).
+
+Anchor (archive and verify at T-time): Cooley–Kang–Koch high-order
+percolation; Bianconi–Ziff random simplicial complex. Gates: incidence
+hand cases; exact small-hypergraph enumeration; anchor bracket;
+independent review.
+
+Deps: X1. Risks: identity/tie rules; memory layout for incidence views.
+
+### X4 — Temporal and directed dynamic percolation
+
+Contact-process/directed dynamic percolation driven by the existing
+`TransitionRate` substrate; temporal-network input.
+
+Anchor: Hinrichsen, Adv. Phys. 49, 815 (2000) (archived) for absorbing-
+state/directed percolation; a temporal-network reference (e.g. Holme–
+Saramäki, Phys. Rep. 519, 97 (2012)) archived at T-time. Gates:
+analytic/mean-field bracket; independent Monte Carlo reference;
+statistical-only non-equilibrium caveats; independent review.
+
+Deps: A2, A4, X1. Risks: non-equilibrium validation is weaker than
+equilibrium exact enumeration.
+
+Progress note (2026-10-30): X4a lands the feature-gated (`temporal`)
+contact process on static topologies, driven by the existing
+`RejectionFreeModel`/`GillespieKernel` substrate. The event catalog is the
+direct reference order (recovery events in ascending vertex order, then
+transmission events in ascending edge order; zero-rate events are never
+selected), states are explicit activity masks, and `contact_ensemble`
+reports finite-time survival and density over seeded initial draws. The
+tree/branching value `lambda = 1/(k-1)` on a 3-regular random graph is a
+reference line, not a certified finite-size threshold: the T=15 ladder
+records finite-time activity (extinct below, active above, 0.05-density
+crossing lambda=0.535), while a T=100 negative control extinguishes
+lambda=0.55 on N<=2000. An independent first-reaction simulator agrees on
+extinction/activity (lambda=0.2: 0/6 vs 0/6; lambda=0.9: 4/6 vs 6/6).
+Temporal-network input (time-varying edge activity) and a scheduler
+adapter remain X4b; no quasi-stationary or thermodynamic-limit threshold
+is claimed.
+
+## 5. Research track R
+
+### R1 — C3 Weinrib–Halperin certification
+
+Current state: calibrated pc-shift estimator; iid control ν=1.379 (CI
+1.325–1.433); correlated rows ordered but prior-dominated and the
+1.5-vs-1.25 gap is 1.1σ at L≤2048.
+
+Outcome: promote C3 only with L≥4096–8192 or an independent 0.001-level
+`p_c(inf)` (Binder cumulant/very-large-L crossing); otherwise keep
+Experimental with the negative result. Deps: A5.
+
+Progress note (2026-10-30): R1 outcome recorded — **C3 stays
+Experimental**. The iid control is calibrated (pooled pc-shift nu=1.379,
+CI 1.325–1.433, contains 4/3) but the correlated rows are prior-dominated
+and the 1.5-vs-1.25 gap is 1.1 sigma at L<=2048; the one-off larger-L
+cross-check does not certify the branch flip. Promotion requires
+L>=4096–8192 or an independent 0.001-level `p_c(inf)`. No code change was
+made; the existing C3/Weinrib–Halperin gates and the ignored nightly iid
+control remain the evidence.
+
+### R2 — Q3 phase diagram
+
+Current state: exact self-dual curve; exploratory bimodality
+(0.363/0.400/0.519/0.654 at q=2/4/6/8, L=16).
+
+Outcome: latent-heat/two-mode estimator, q-ladder FSS, exact q≤4
+cross-checks; promote only if certified. Anchor: Wu 1982 / FK duality
+([note](../ref/md/Potts_FK_duality_note.md)). Deps: A5.
+
+Progress note (2026-10-30): R2 delivers the definitional two-mode
+estimator (`phase_scan_samples` + `two_mode_estimate`: deterministic 1D
+2-means, mode centers, gap, separation, weights) and a q-ladder. At L=12
+the separation orders as expected (q=1/2/4/8: 2.63/2.74/2.87/3.63) with
+q=8 gaps clearly wider, but this is one small size and a finite-size
+proxy, not a certified latent heat; q<=4 has no exact latent-heat
+cross-check beyond the exact self-dual curve. **Q3 stays Experimental**
+with this precise negative result; promotion needs a larger q-ladder with
+FSS control of the estimator.
+
+### R3 — F3 large-scale shape and aging
+
+Current state: directional time constants, exact geodesic counts, and an
+explicitly exploratory aging statistic.
+
+Outcome: ADH-anchored large-scale brackets for the shape/time constant
+and geodesic statistics; research-grade, may remain Experimental. Anchor:
+Auffinger–Damron–Hanson 2017 (archived). Deps: A5.
+
+Progress note (2026-10-30): R3 outcome recorded — the F3 layer is
+Validated at its recorded scale (directional time constants with CI,
+exact geodesic counts, the paired norm inequality), while the aging
+statistic remains explicitly exploratory and no large-scale
+shape-theorem bracket has been certified. **F3 large-scale remains
+Experimental**; the existing F3 gates are the evidence and no new
+asymptotic claim is made.
+
+## 6. Uniform definition of done (every stage)
+
+1. Scope and explicit non-targets documented.
+2. Archived anchor with named quantity, or a recorded definitional anchor.
+3. Rustdoc contract and a runnable example.
+4. Exact/reference gate on small systems.
+5. Statistical gate with CI, or a precise negative result.
+6. Bitwise draw-contract replay where randomness exists.
+7. Typed invalid-domain rejection matrix.
+8. Asserted zero-allocation/byte probe (or a documented reason).
+9. Criterion target (or a documented reason).
+10. `PERCOLATION.md` row/section, roadmap status, test registration,
+    independent review report, and status transition.
+
+## 7. Milestones (gate to proceed)
+
+| Milestone | Content | Gate |
+|---|---|---|
+| M1 | A1–A2 | External-crate observable/law test; zero golden drift; bitwise law replay |
+| M2 | A3–A4, A6 | Adapter collapse; Results/C0 schema parity; allocation parity; config round-trip |
+| M3 | A5, X1 | FSS bracket reproduction; I/O round-trip and malformed-input matrix |
+| M4 | X2–X4 | Exact two-layer/hypergraph gates; anchor brackets; independent reviews |
+| M5 | R1–R3 | Research outcomes recorded; final v3 audit `docs/reviews/2026-*-v3-final-audit.md` |
+
+## 8. PR sequence
+
+Stacked, one stage per PR (≤500 LOC where practical):
+`A1a` trait+shim → `A1b` migrate built-ins → `A2a` laws → `A2b`
+SampleView → `A3a` estimator → `A3b` adapter collapse → `A3c` C0 →
+`A6` config/provenance → `A4` → `A5` → `X1` → `X2`/`X3` (parallel) →
+`X4` → `R1`/`R2`/`R3` → final audit.
+
+No stage merges before its review report exists. Each stage updates its
+roadmap status, `PERCOLATION.md`, and the relevant anchor/bibliography.
+
+## 9. Compatibility and deprecation
+
+- New traits are additive; legacy enums/adapters remain as deprecated
+  wrappers for one minor release.
+- Golden fixtures pin RNG draw order, column names, indicators, and C0
+  schemas; a stage that changes them is rejected.
+- New domains are feature-gated (`io`, `multiplex`, `hypergraph`,
+  `temporal`); default features do not change behavior.
+- `thermalization_sweeps = 0` remains the i.i.d. convention.
+
+## 10. Documentation, validation, and CI
+
+- The roadmap (this file), `PERCOLATION.md`, and `VALIDATION.md` are
+  reconciled at every stage; stale status text is a release blocker.
+- Heavy statistical tests are `#[ignore]` and run in nightly release;
+  z-score tests honor `SCUTTLE_ZSCORE_SEEDS`.
+- Criterion targets and allocation probes are added for every new
+  algorithm family; the missing L/C/Q/F3 coverage from v2 is closed as
+  part of A3/A5 and the X stages.
+- Reviews follow `docs/reviews/YYYY-MM-DD-<stage>-review.md` with
+  verdict, claim table, independent methods, findings, follow-ups.
+
+## 11. Status
+
+| Stage | Status |
+|---|---|
+| A1 Observable trait/open plan | Done (A1a+A1b: `ScalarObservable` + `SampleView`, capability-driven label/winding/moment requests, built-in `ObservableSpec` impls, `StaticObservable` shim; external-crate, golden, and 0-allocation gates green) |
+| A2 SampleView/OccupationLaw/WeightLaw | Done (A2a: `OccupationLaw` for Bernoulli/correlated laws, `WeightLaw` for FPP with bitwise replay; A2b: public `SampleView::new`/`vacuum`/`from_analysis`, workspace-lifetime analyzer accessors, and checked public activity setters; external-crate law, golden, and rustdoc gates green) |
+| A3 generic adapter/estimator/C0 | In progress (A3a: shared `Moments` accumulator replaces four duplicated count/sum/sum_sq estimators; A3b: `PercolationAdapter<L>` with `StaticPercolationMC` preset and external custom-law composition; A3c: `FixedSeries` C0 writer and shared analyze/label/record helpers replace the hand-written pad/truncate and recording tails in seven adapters; remaining preset collapse pending) |
+| A4 policy traits | In progress (A4a: `AttackOrder`; A4b: `ScanObservableSpec`; A4c: `AchlioptasScore`/`AchlioptasTie`, `InvasionStopRule`/`InvasionTrappingRule`, `BootstrapThresholdRule`/`BootstrapSeedRule`, `CoreThresholdRule`, with enum presets and bitwise reference-order reuse; directed incidence is D1-first-class; structural modes and checkpoint grids remain closed) |
+| A5 FSS toolkit | In progress (A5a: Binder cumulant + common-grid linear crossing; A5b: deterministic percentile bootstrap; A5c: second-moment correlation length; A5d: scaling-window collapse score; A5e: generic-toolkit reproduction of the v2 white-noise C2 calibration, with fast and nightly FSS ladders) |
+| A6 specification/provenance | In progress (A6a: explicit `PercolationSpec` with Params round-trip, adapter builder, and versioned Results provenance for the independent-occupation family; other families pending) |
+| X1 network I/O | Done (feature-gated `io`: weighted edge-list v1 text + multiplex JSON v1 over one validated document; round-trip, reference-graph, rejection, and Criterion gates green; independent review pending) |
+| X2 multiplex/interdependent | In progress (X2a: two-layer one-to-one mutual-component/cascade analysis over a shared vertex set, independent reference-map enumeration, typed rejections; X2b: explicit initial activity, `MultiplexCascadeMC` preset adapter, and the Buldyrev c*=2.4554 finite-size bracket; layer-aware views and >2 layers pending) |
+| X3 hypergraph/simplicial | Done (dense incidence hypergraph with Bernoulli vertex/hyperedge activity, union-find component analysis, canonical lowest-ID rule, per-vertex labels; exact incidence-BFS enumeration and rejection matrix; independent review pending) |
+| X4 temporal/directed dynamics | In progress (X4a: feature-gated contact process on the Gillespie substrate with direct reference-order events, deterministic ensembles, an independent first-reaction reference, and a finite-time activity bracket at lambda=0.535; the T=100 negative control shows this is not a threshold; temporal-network input and scheduler adapter pending) |
+| R1 C3 certification | Done — Experimental (negative result recorded: iid control calibrated, correlated flip not certified at L<=2048; evidence above) |
+| R2 Q3 phase diagram | Done — Experimental (two-mode estimator + exploratory q-ladder delivered; L=12 ordering correct, no certified latent heat; evidence above) |
+| R3 F3 large-scale research | Done — Experimental (F3 Validated at its recorded scale; aging exploratory; no large-scale ADH bracket certified) |
+
+Final audit (2026-10-30): [2026-10-30-v3-final-audit.md](../reviews/2026-10-30-v3-final-audit.md).
+Physics review (2026-10-30): [2026-10-30-v3-physics-review.md](../reviews/2026-10-30-v3-physics-review.md).
+Verdict: conditional merge readiness — the quick suite and clippy are
+green, A3c/A4c/A5e/A6a/X2b/X4a are delivered, and R1–R3 record
+Experimental outcomes; A3 preset collapse, A4 grids/structural modes, A6
+breadth, X2 layer-aware/3+ layers, X4b temporal input, and independent
+reviews remain open.
+
+## 12. Non-goals
+
+- GPU execution/design (issue #2 remains separate).
+- Distributed/MPI percolation and parallel union-find.
+- Python bindings, visualization, or arbitrary I/O formats.
+- Rewriting Validated physics.
+- New stage-specific facades without a proven generic extension point.
+
+## 13. Risks and open questions
+
+- Static dispatch vs trait objects for observables and laws.
+- `SampleView` lifetime/borrow design across owned and borrowed samples.
+- Semantics of multiplex cascades and hypergraph component identity.
+- Research stages may not certify and must stay Experimental.
+- Deprecation window and semver-major timing.
+- CI capacity for the growing nightly statistical suite.
+
+## 14. Critical files
+
+- Architecture: `CMC.rs/src/percolation/{observable.rs,carlo.rs,law,analyzer,workspace}`,
+  `CMC.rs/src/topology/view.rs`.
+- Domains: new `percolation/{io,multiplex,hypergraph,temporal}` modules and
+  `topology/incidence.rs`.
+- Validation: `CMC.rs/tests/suite.rs`, `CMC.rs/benches/percolation_allocations.rs`,
+  `CMC.rs/Cargo.toml`, `.github/workflows/nightly.yml`, `justfile`.
+- Documentation: this file, `CMC.rs/PERCOLATION.md`, `CMC.rs/VALIDATION.md`,
+  `docs/ref/BIBLIOGRAPHY.md`, `docs/reviews/`.

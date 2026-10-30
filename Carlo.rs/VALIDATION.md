@@ -100,3 +100,84 @@
 | 2026-08-14 | C-P3.2 | ✅ MPI backend: np 1/2/4 exact fan-out, RNG stream pinning, single-init exclusivity |
 | 2026-08-14 | C-P3.3 | ✅ HDF5 legacy fallback: CheckpointLoadReport + warning + 2 tests |
 | 2026-08-14 | C-P3.4 | ✅ nightly carlo-framework job + `just mpi-test` (test-mpi was broken) |
+| 2026-10-22 | C0.1 | ✅ element-preserving ArrayEstimate + explicit shape errors + shape-safe merge/readback |
+| 2026-10-22 | C0.2 | ✅ generic extensible Metadata.attributes provenance |
+
+## Vector estimates and extensible provenance (2026-10-22, roadmap stage C0)
+
+Delivered on `feat/cmc-percolation` per `docs/plans/2026-09-03-percolation-platform-roadmap.md` §8.
+Unblocks vector-measurement adapters N3/D3/E2/E3/G2/G3 in CMC.rs.
+
+### [x] C0.1 — Element-preserving array estimates
+- **Problem:** `Accumulator::finalize()` averaged each array bin *across elements*, and
+  `Results`/JSON stored only scalar `Estimate` values — a percolation robustness curve or
+  survival profile lost its coordinate structure at finalize time. `add_array` validated shape
+  with `debug_assert` only: in release builds a shorter sample was silently zip-truncated.
+- **Fix:** `ArrayEstimate { shape, elements: Vec<Estimate> }` (validated construction,
+  row-major `at()` indexing); `Accumulator::finalize_array()` builds per-element bin columns
+  (completed bins + normalized partial bin) with per-element variance-ratio autocorrelation;
+  `Measurements::finalize_arrays()`/`finalize_split()`; `Results::from_measurements_with_arrays`,
+  `add_array`/`get_array`, and `array_observables` JSON. Scalar finalize and scalar JSON output
+  are unchanged (no `array_observables` key when empty).
+- **Shape errors are explicit:** `Accumulator::add_array`, `Measurements::add_sample_array`,
+  and `Context::measure_array` return `Result<(), CarloError>`; mismatches produce
+  `CarloError::ShapeMismatch { observable, expected_len, got_len }` in every profile and leave
+  the accumulator untouched. Empty samples remain no-ops and no longer auto-create a
+  degenerate observable. In-workspace callers (CMC multi_spin/worm, QMC spin_boson
+  cluster/wormhole/occupation) updated to `expect` with named messages.
+- **Merge/readback:** `Results::merge` merges arrays element-wise with the exact scalar
+  weighting (factored into `merge_weighted`); shape-disagreeing observables are skipped with a
+  `tracing::warn` instead of flattened; `Results::from_json` round-trips the `to_json` format
+  and accepts legacy files without `array_observables`. Run/scheduler/PT finalize chains now
+  call `finalize_measurements_split`.
+- **Tests:** 18 new — ArrayEstimate construction/serde, per-element finalize parity against
+  independent scalar accumulators (mean/stderr/tau exact), partial-bin columns, named shape
+  errors, split separation, legacy-collapse behavior, JSON round-trip, legacy fixture,
+  merge-equals-scalar-merge element-wise, mismatch skip, partial-observable merge, HDF5
+  checkpoint round-trip preserving `finalize_array`, end-to-end `Run` producing an
+  element-preserving curve.
+- **Behavior change (intentional):** complex-observable merge stderr now uses the same
+  weighted combination as scalars (previously it took `ests[0].stderr` unweighted).
+- **Benchmark:** `benches/array_finalize.rs` — `finalize_array` E=64/B=128 ≈ 96 µs,
+  E=256/B=128 ≈ 398 µs, E=1024/B=64 ≈ 1.0 ms (≈12 ns per element·bin, once per run);
+  legacy collapse ≈ 5.6–27 µs; full sample+finalize pipeline for N=1024 samples included.
+
+### [x] C0.2 — Extensible provenance attributes
+- **Problem:** `Metadata` had fixed fields; domain adapters (percolation attack policies,
+  process coordinates) had nowhere to record provenance without Carlo.rs adding
+  domain-specific columns.
+- **Fix:** `Metadata::attributes: BTreeMap<String, serde_json::Value>` with
+  `set_attribute`/`attribute`. Generic and domain-agnostic: Carlo.rs only stores, merges, and
+  round-trips values. Omitted from JSON when empty (legacy files byte-compatible).
+  `Results::merge` keeps agreeing attributes and drops conflicting ones with a warning.
+- **Tests:** round-trip (string + integer values), merge agreement/conflict semantics.
+
+## Independent review and follow-up fixes (2026-10-22)
+
+C0 passed independent review ([report](../docs/reviews/2026-10-22-c0-full-report.md));
+the reviewer hand-derived the per-element statistics, parsed a hand-written
+legacy-JSON fixture, and proved the pre-C0 release build silently
+zip-truncated mismatched array samples. Two review findings were fixed:
+
+### [x] C0.R1 — Merged stderr underestimated by sqrt(n_runs) (pre-existing, propagated by C0)
+- **Problem:** `Results::merge` computed the combined standard error as
+  `sqrt(sum_i s_i^2 / R^2 / N)`; the variance of the pooled-bin weighted mean
+  is `sum_i n_i s_i^2 / N^2`, so merging R equal runs reported error bars
+  sqrt(R) too small. Pre-dates C0 (scalar/complex merge), but C0 extended it
+  to `ArrayEstimate` elements — the curve outputs N3/D3/E2/E3/G2/G3 would
+  have inherited overconfident error bars.
+- **Fix:** `merge_weighted` now uses `sum_i n_i (stderr_i * sqrt(n_i))^2 / N^2`
+  (single-run and multi-run cases unify; single-run output is unchanged).
+  MPI/PT merged results now report correct, larger error bars. Regression
+  test `test_merge_stderr_is_pooled_bin_variance` asserts the exact formula
+  for equal and unequal bin counts.
+
+### [x] C0.R2 — Per-element tau included the partial bin
+- **Problem:** the scalar path estimates tau from completed bins only;
+  `finalize_array` included the normalized partial bin, so one outlier
+  sample could inflate tau (reviewer probe: 1.104 vs 1.0) and the
+  parity claim only held where both floored at 1.0.
+- **Fix:** `finalize_array` estimates tau from the completed-bin column and
+  keeps the partial bin for mean/stderr only — exact structural parity with
+  the scalar convention. Test `test_finalize_array_tau_ignores_partial_bin_like_scalar_path`
+  uses an outlier partial sample (mean moves, tau does not).

@@ -190,7 +190,7 @@ pub use clock::SimulationClock;
 pub use context::CheckpointLoadReport;
 pub use context::{Context, ContextCheckpoint};
 pub use error::CarloError;
-pub use estimate::{ComplexEstimate, Estimate};
+pub use estimate::{ArrayEstimate, ComplexEstimate, Estimate};
 pub use evaluable::{jackknife, Evaluator, MultiplexEvaluator};
 pub use job::{parse_duration, JobInfo, TaskInfo, TaskMaker};
 pub use measurements::{Accumulator, ComplexAccumulator, ComplexValue, Measurements};
