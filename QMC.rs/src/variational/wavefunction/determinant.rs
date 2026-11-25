@@ -748,10 +748,10 @@ impl WaveFunction for SlaterDeterminant {
             }
             let chain = BlockChain::build(self, coords, block, backflow);
             // Identity-Jacobian part: grad_k = O_k for own-block particles.
-            for i in 0..n_blk {
+            for (i, gradient) in chain.o.iter().enumerate() {
                 let base = DIM * (offset + i);
-                for k in 0..DIM {
-                    out[base + k] += chain.o[i][k];
+                for (component, value) in out[base..base + DIM].iter_mut().zip(gradient) {
+                    *component += value;
                 }
             }
             // Backflow part: grad_k = sum_{i in block} O_i . (dx_i / dr_k).
@@ -772,7 +772,7 @@ impl WaveFunction for SlaterDeterminant {
                             );
                         }
                     }
-                    for i in 0..n_blk {
+                    for (i, gradient) in chain.o.iter().enumerate() {
                         let global = offset + i;
                         if global == k {
                             continue;
@@ -780,7 +780,7 @@ impl WaveFunction for SlaterDeterminant {
                         add_jacobian_action(
                             &mut out[base..base + DIM],
                             &backflow.pair_jacobian(coords, global, k),
-                            &chain.o[i],
+                            gradient,
                             -1.0,
                         );
                     }
@@ -858,10 +858,8 @@ impl WaveFunction for SlaterDeterminant {
     #[inline]
     fn n_params(&self) -> usize {
         let mut count = 0;
-        for block in 0..2 {
-            for orbital in &self.orbitals[block] {
-                count += 1 + orbital.primitives().len();
-            }
+        for orbital in self.orbitals.iter().flatten() {
+            count += 1 + orbital.primitives().len();
         }
         if self.backflow.is_some() {
             count += 1;
@@ -921,7 +919,7 @@ impl WaveFunction for SlaterDeterminant {
                     continue;
                 }
                 let chain = BlockChain::build(self, coords, block, Some(backflow));
-                for i in 0..n_blk {
+                for (i, gradient) in chain.o.iter().enumerate() {
                     let global = offset + i;
                     let origin = read_particle(coords, global);
                     let mut direction = [0.0; DIM];
@@ -935,7 +933,7 @@ impl WaveFunction for SlaterDeterminant {
                             direction[k] += f * (origin[k] - other[k]);
                         }
                     }
-                    lambda_grad += dot3(&chain.o[i], &direction);
+                    lambda_grad += dot3(gradient, &direction);
                 }
             }
             out[cursor] += lambda_grad;
@@ -946,14 +944,12 @@ impl WaveFunction for SlaterDeterminant {
     fn update_params(&mut self, delta: &[f64]) {
         debug_assert_eq!(delta.len(), self.n_params());
         let mut cursor = 0;
-        for block in 0..2 {
-            for orbital in &mut self.orbitals[block] {
-                orbital.exponent += delta[cursor];
+        for orbital in self.orbitals.iter_mut().flatten() {
+            orbital.exponent += delta[cursor];
+            cursor += 1;
+            for (coefficient, _) in &mut orbital.primitives {
+                *coefficient += delta[cursor];
                 cursor += 1;
-                for (coefficient, _) in &mut orbital.primitives {
-                    *coefficient += delta[cursor];
-                    cursor += 1;
-                }
             }
         }
         if let Some(backflow) = &mut self.backflow {
@@ -1229,12 +1225,10 @@ fn point_distance(a: &Point, b: &Point) -> f64 {
 impl WaveFunctionParams for SlaterDeterminant {
     fn param_values(&self) -> Vec<f64> {
         let mut values = Vec::with_capacity(self.n_params());
-        for block in 0..2 {
-            for orbital in &self.orbitals[block] {
-                values.push(orbital.exponent);
-                for (coefficient, _) in &orbital.primitives {
-                    values.push(*coefficient);
-                }
+        for orbital in self.orbitals.iter().flatten() {
+            values.push(orbital.exponent);
+            for (coefficient, _) in &orbital.primitives {
+                values.push(*coefficient);
             }
         }
         if let Some(backflow) = &self.backflow {
@@ -1252,20 +1246,18 @@ impl WaveFunctionParams for SlaterDeterminant {
         }
         // Validate everything first: a rejection leaves self untouched.
         let mut cursor = 0;
-        for block in 0..2 {
-            for orbital in &self.orbitals[block] {
-                VariationalError::require_positive("exponent", values[cursor])?;
-                for _ in orbital.primitives() {
-                    if !values[cursor + 1].is_finite() {
-                        return Err(VariationalError::invalid(
-                            "coefficient",
-                            format!("must be finite, got {}", values[cursor + 1]),
-                        ));
-                    }
-                    cursor += 1;
+        for orbital in self.orbitals.iter().flatten() {
+            VariationalError::require_positive("exponent", values[cursor])?;
+            for _ in orbital.primitives() {
+                if !values[cursor + 1].is_finite() {
+                    return Err(VariationalError::invalid(
+                        "coefficient",
+                        format!("must be finite, got {}", values[cursor + 1]),
+                    ));
                 }
                 cursor += 1;
             }
+            cursor += 1;
         }
         if self.backflow.is_some() && !values[cursor].is_finite() {
             return Err(VariationalError::invalid(
@@ -1275,14 +1267,12 @@ impl WaveFunctionParams for SlaterDeterminant {
         }
         // Assign (validated above).
         let mut cursor = 0;
-        for block in 0..2 {
-            for orbital in &mut self.orbitals[block] {
-                orbital.exponent = values[cursor];
+        for orbital in self.orbitals.iter_mut().flatten() {
+            orbital.exponent = values[cursor];
+            cursor += 1;
+            for (coefficient, _) in &mut orbital.primitives {
+                *coefficient = values[cursor];
                 cursor += 1;
-                for (coefficient, _) in &mut orbital.primitives {
-                    *coefficient = values[cursor];
-                    cursor += 1;
-                }
             }
         }
         if let Some(backflow) = &mut self.backflow {
