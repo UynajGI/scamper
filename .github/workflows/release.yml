@@ -23,7 +23,8 @@ jobs:
   # ── Full test suite ────────────────────────────────────────────────────
   full-test:
     name: test (${{ inputs.rust-version || 'stable' }})
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04 provides HDF5 1.10, supported by hdf5-sys 0.8.
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4

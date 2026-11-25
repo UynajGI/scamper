@@ -23,7 +23,8 @@ env:
 jobs:
   validate:
     name: validate (${{ github.ref_name }})
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04 provides HDF5 1.10, supported by hdf5-sys 0.8.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read

@@ -36,7 +36,8 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   clippy:
     name: clippy
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04 provides HDF5 1.10, supported by hdf5-sys 0.8.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +61,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
