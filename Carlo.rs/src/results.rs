@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::{CarloError, ComplexEstimate, Estimate};
@@ -53,8 +53,8 @@ pub struct Metadata {
     /// Carlo version.
     pub version: String,
 
-    /// Timestamp.
-    pub timestamp: DateTime<Utc>,
+    /// UTC timestamp, serialized as an RFC 3339 string.
+    pub timestamp: Timestamp,
 
     /// Base seed used.
     pub base_seed: u64,
@@ -73,7 +73,7 @@ impl Default for Metadata {
     fn default() -> Self {
         Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             base_seed: 0,
             thermalization_sweeps: 0,
             measurement_sweeps: 0,
@@ -223,7 +223,7 @@ impl Results {
 
         let metadata = Metadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             base_seed: results[0].metadata.base_seed,
             thermalization_sweeps: results[0].metadata.thermalization_sweeps,
             measurement_sweeps: total_measurement_sweeps,

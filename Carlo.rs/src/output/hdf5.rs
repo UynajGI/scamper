@@ -41,7 +41,10 @@ pub fn save_hdf5(results: &Results, path: &Path) -> Result<(), CarloError> {
         .with_data(version_bytes)
         .create("version")?;
 
-    let timestamp_bytes = meta.timestamp.to_rfc3339();
+    let timestamp_bytes = meta
+        .timestamp
+        .display_with_offset(jiff::tz::Offset::UTC)
+        .to_string();
     let timestamp_bytes = timestamp_bytes.as_bytes();
     meta_group
         .new_dataset_builder()

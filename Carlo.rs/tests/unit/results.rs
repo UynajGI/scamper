@@ -1,5 +1,5 @@
 use carlo_rs::{ComplexEstimate, Estimate, Metadata, Results};
-use chrono::Utc;
+use jiff::Timestamp;
 use std::collections::HashMap;
 
 #[test]
@@ -155,7 +155,7 @@ fn test_results_metadata() {
     let mut results = Results::new();
     results.set_metadata(Metadata {
         version: "0.1.0".to_string(),
-        timestamp: Utc::now(),
+        timestamp: Timestamp::now(),
         base_seed: 42,
         thermalization_sweeps: 100,
         measurement_sweeps: 1000,
@@ -165,6 +165,24 @@ fn test_results_metadata() {
     let meta = results.metadata();
     assert_eq!(meta.base_seed, 42);
     assert_eq!(meta.measurement_sweeps, 1000);
+}
+
+#[test]
+fn legacy_rfc3339_timestamps_round_trip() {
+    let expected: Timestamp = "2026-09-03T02:10:25.123456789Z".parse().unwrap();
+    for legacy in [
+        "2026-09-03T02:10:25.123456789Z",
+        "2026-09-03T10:10:25.123456789+08:00",
+    ] {
+        let mut json = serde_json::to_value(Metadata::default()).unwrap();
+        json["timestamp"] = legacy.into();
+        let metadata: Metadata = serde_json::from_value(json).unwrap();
+        assert_eq!(metadata.timestamp, expected);
+        assert_eq!(
+            serde_json::to_value(metadata).unwrap()["timestamp"],
+            "2026-09-03T02:10:25.123456789Z"
+        );
+    }
 }
 
 // ── Complex results ───────────────────────────────────────────────────────

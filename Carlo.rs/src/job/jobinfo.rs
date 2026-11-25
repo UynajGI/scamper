@@ -4,7 +4,7 @@ use crate::{
     job::{TaskInfo, TaskProgress},
     CarloError,
 };
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::SystemTime;
@@ -36,7 +36,7 @@ pub fn parse_duration(s: &str) -> Result<Duration, CarloError> {
 pub fn run_time_from_slurm(grace_factor: f64, default: Duration) -> Duration {
     if let Some(end_time_str) = std::env::var_os("SLURM_JOB_END_TIME") {
         if let Ok(end_time_unix) = end_time_str.to_string_lossy().parse::<i64>() {
-            let now = Utc::now().timestamp();
+            let now = Timestamp::now().as_second();
             let remaining = (end_time_unix - now).max(0) as f64;
             return Duration::from_secs((remaining * grace_factor) as u64);
         }
@@ -102,17 +102,18 @@ impl JobInfo {
         &self.dir
     }
     /// Whether enough wall-clock time has elapsed since `last_checkpoint`.
-    pub fn is_checkpoint_time(&self, last_checkpoint: DateTime<Utc>) -> bool {
-        Utc::now()
-            >= last_checkpoint
-                + chrono::Duration::from_std(self.checkpoint_time)
-                    .expect("checkpoint_time duration out of range")
+    pub fn is_checkpoint_time(&self, last_checkpoint: Timestamp) -> bool {
+        let deadline = last_checkpoint
+            .checked_add(self.checkpoint_time)
+            .expect("checkpoint_time duration out of range");
+        Timestamp::now() >= deadline
     }
     /// Whether the job's total wall-clock budget has been exceeded since `start`.
-    pub fn is_end_time(&self, start: DateTime<Utc>) -> bool {
-        Utc::now()
-            >= start
-                + chrono::Duration::from_std(self.run_time).expect("run_time duration out of range")
+    pub fn is_end_time(&self, start: Timestamp) -> bool {
+        let deadline = start
+            .checked_add(self.run_time)
+            .expect("run_time duration out of range");
+        Timestamp::now() >= deadline
     }
 
     /// Returns the filename of the results JSON file.

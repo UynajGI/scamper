@@ -536,7 +536,7 @@ impl<MC: ParallelTemperingCompatible + FromParams<Rng = R>, R: Rng + SeedableRng
         let mut results = Results::from_measurements(&estimates);
         results.set_metadata(Metadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            timestamp: chrono::Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             base_seed: self.base_seed,
             thermalization_sweeps: self.ctx.thermalization_sweeps(),
             measurement_sweeps: self.sweeps_done,

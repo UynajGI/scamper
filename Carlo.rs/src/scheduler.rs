@@ -141,7 +141,7 @@ impl<B: Backend> Scheduler<B> {
         // Set metadata
         results.set_metadata(Metadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            timestamp: chrono::Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             base_seed: self.config.base_seed,
             thermalization_sweeps: self.config.thermalization_sweeps,
             measurement_sweeps: self.config.measurement_sweeps,
@@ -238,7 +238,7 @@ impl<B: Backend> Scheduler<B> {
         let mut results = Results::from_measurements(&estimates);
         results.set_metadata(Metadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            timestamp: chrono::Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             base_seed: self.config.base_seed,
             thermalization_sweeps,
             measurement_sweeps,
@@ -332,7 +332,7 @@ impl<B: Backend> Scheduler<B> {
         let mut results = Results::from_measurements(&estimates);
         results.set_metadata(Metadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            timestamp: chrono::Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             base_seed: self.config.base_seed,
             thermalization_sweeps,
             measurement_sweeps,
@@ -390,7 +390,7 @@ impl<B: Backend> Scheduler<B> {
                 let mut result = Results::from_measurements(&estimates);
                 result.set_metadata(Metadata {
                     version: env!("CARGO_PKG_VERSION").to_string(),
-                    timestamp: chrono::Utc::now(),
+                    timestamp: jiff::Timestamp::now(),
                     base_seed: task_seed.seed(),
                     thermalization_sweeps: config.thermalization_sweeps,
                     measurement_sweeps: config.measurement_sweeps,

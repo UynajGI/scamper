@@ -1,5 +1,5 @@
 use carlo_rs::{save_json, Estimate, Metadata, Results};
-use chrono::Utc;
+use jiff::Timestamp;
 
 #[test]
 fn test_save_json_writes_file() {
@@ -59,7 +59,7 @@ fn test_save_json_with_metadata() {
     results.add("E", Estimate::from_bins(&[1.0]));
     results.set_metadata(Metadata {
         version: "test-1.0".to_string(),
-        timestamp: Utc::now(),
+        timestamp: Timestamp::now(),
         base_seed: 999,
         thermalization_sweeps: 50,
         measurement_sweeps: 500,
@@ -75,6 +75,29 @@ fn test_save_json_with_metadata() {
     assert!(content.contains("test-1.0"));
     assert!(content.contains("999"));
     assert!(content.contains("500"));
+}
+
+#[cfg(feature = "hdf5")]
+#[test]
+fn hdf5_metadata_timestamp_keeps_the_utc_offset() {
+    let timestamp = "2026-09-03T02:10:25.123456789Z".parse().unwrap();
+    let mut results = Results::new();
+    results.set_metadata(Metadata {
+        timestamp,
+        ..Metadata::default()
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("results.h5");
+
+    carlo_rs::save_hdf5(&results, &path).unwrap();
+
+    let file = hdf5::File::open(path).unwrap();
+    let bytes = file
+        .dataset("metadata/timestamp")
+        .unwrap()
+        .read_raw::<u8>()
+        .unwrap();
+    assert_eq!(bytes, b"2026-09-03T02:10:25.123456789+00:00");
 }
 
 #[test]
